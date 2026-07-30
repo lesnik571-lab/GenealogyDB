@@ -1,7 +1,18 @@
-import viewer
+from pathlib import Path
+
 import importer
+import viewer
+from database import initialize_database
+
+
+def prepare_database():
+    Path("data").mkdir(parents=True, exist_ok=True)
+    initialize_database()
+
 
 def menu():
+    prepare_database()
+
     while True:
         print("\n=== GenealogyDB 1.1 ===")
         print("1. Импорт GEDCOM")
@@ -20,6 +31,7 @@ def menu():
             break
         else:
             print("Неверный выбор.")
+
 
 if __name__ == "__main__":
     menu()
