@@ -249,12 +249,45 @@ class GenealogyViewer:
         text.config(state="disabled")
 
     @staticmethod
-    def _remove_conflicting_relations(parents, spouses, children):
-        parent_ids = {person_id for person_id, _last_name, _first_name in parents}
-        child_ids = {person_id for person_id, _last_name, _first_name in children}
+    def _relative_key(relative):
+        _person_id, last_name, first_name = relative
+        return (
+            (last_name or "").strip().casefold(),
+            (first_name or "").strip().casefold(),
+        )
 
-        spouses = [relative for relative in spouses if relative[0] not in parent_ids and relative[0] not in child_ids]
-        children = [relative for relative in children if relative[0] not in parent_ids]
+    @classmethod
+    def _deduplicate_relatives(cls, relatives):
+        unique = []
+        seen = set()
+        for relative in relatives:
+            key = cls._relative_key(relative)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(relative)
+        return unique
+
+    @classmethod
+    def _remove_conflicting_relations(cls, parents, spouses, children):
+        parents = cls._deduplicate_relatives(parents)
+        spouses = cls._deduplicate_relatives(spouses)
+        children = cls._deduplicate_relatives(children)
+
+        parent_keys = {cls._relative_key(relative) for relative in parents}
+        child_keys = {cls._relative_key(relative) for relative in children}
+
+        spouses = [
+            relative
+            for relative in spouses
+            if cls._relative_key(relative) not in parent_keys
+            and cls._relative_key(relative) not in child_keys
+        ]
+        children = [
+            relative
+            for relative in children
+            if cls._relative_key(relative) not in parent_keys
+        ]
         return parents, spouses, children
 
     @staticmethod
