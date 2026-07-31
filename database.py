@@ -24,8 +24,17 @@ REQUIRED_COLUMNS = {
 }
 
 
-def load_schema():
-    return SCHEMA_PATH.read_text(encoding="utf-8")
+def load_schema(schema_path=SCHEMA_PATH):
+    path = Path(schema_path)
+    try:
+        schema = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise RuntimeError(f"Не удалось прочитать схему базы: {path}") from error
+
+    if not schema.strip():
+        raise RuntimeError(f"Файл схемы базы пуст: {path}")
+
+    return schema
 
 
 def _table_columns(connection, table_name):
@@ -52,15 +61,15 @@ def database_is_initialized(connection):
     return True
 
 
-def initialize_database(database_name=DB_NAME):
+def initialize_database(database_name=DB_NAME, schema_path=SCHEMA_PATH):
     database_path = Path(database_name)
     database_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with sqlite3.connect(database_name) as connection:
+    with sqlite3.connect(database_path) as connection:
         if database_is_initialized(connection):
             return False
 
-        connection.executescript(load_schema())
+        connection.executescript(load_schema(schema_path))
         return True
 
 
