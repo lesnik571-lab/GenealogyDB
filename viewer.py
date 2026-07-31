@@ -13,7 +13,8 @@ class GenealogyRepository:
     def close(self):
         self.connection.close()
 
-    def find_people(self, last_name):
+    def find_people(self, query):
+        search_value = f"%{query}%"
         self.cursor.execute(
             """
             SELECT
@@ -23,10 +24,19 @@ class GenealogyRepository:
                 birth_date,
                 death_date
             FROM people
-            WHERE last_name LIKE ?
-            ORDER BY last_name, first_name
+            WHERE
+                TRIM(COALESCE(last_name, '') || COALESCE(first_name, '')) <> ''
+                AND (
+                    last_name LIKE ?
+                    OR first_name LIKE ?
+                    OR TRIM(COALESCE(last_name, '') || ' ' || COALESCE(first_name, '')) LIKE ?
+                )
+            ORDER BY
+                CASE WHEN TRIM(COALESCE(last_name, '')) = '' THEN 1 ELSE 0 END,
+                last_name,
+                first_name
             """,
-            (last_name + "%",),
+            (search_value, search_value, search_value),
         )
         return self.cursor.fetchall()
 
@@ -100,7 +110,7 @@ class GenealogyViewer:
         top = tk.Frame(self.root)
         top.pack(fill="x", padx=10, pady=10)
 
-        tk.Label(top, text="Фамилия:").pack(side="left")
+        tk.Label(top, text="Имя или фамилия:").pack(side="left")
 
         self.search_entry = tk.Entry(top, width=30)
         self.search_entry.pack(side="left", padx=5)
@@ -143,10 +153,10 @@ class GenealogyViewer:
 
     def search_people(self):
         self._clear_results()
-        last_name = self.search_entry.get().strip()
+        query = self.search_entry.get().strip()
 
-        for person_id, last_name, first_name, birth_date, death_date in self.repository.find_people(last_name):
-            full_name = f"{last_name} {first_name}".strip()
+        for person_id, last_name, first_name, birth_date, death_date in self.repository.find_people(query):
+            full_name = f"{last_name or ''} {first_name or ''}".strip()
             self.tree.insert(
                 "",
                 "end",
@@ -175,7 +185,7 @@ class GenealogyViewer:
         gedcom_id, last_name, first_name, sex, birth_date, death_date, note = person
 
         window = tk.Toplevel(self.root)
-        window.title(f"{last_name} {first_name}")
+        window.title(f"{last_name or ''} {first_name or ''}".strip() or "Карточка человека")
         window.geometry("700x600")
 
         text = tk.Text(window, wrap="word")
@@ -215,8 +225,8 @@ class GenealogyViewer:
         death_date,
         note,
     ):
-        text.insert("end", f"Фамилия: {last_name}\n")
-        text.insert("end", f"Имя: {first_name}\n")
+        text.insert("end", f"Фамилия: {last_name or ''}\n")
+        text.insert("end", f"Имя: {first_name or ''}\n")
         text.insert("end", f"Пол: {sex or ''}\n")
         text.insert("end", f"Рождение: {birth_date or ''}\n")
         text.insert("end", f"Смерть: {death_date or ''}\n\n")
@@ -234,7 +244,8 @@ class GenealogyViewer:
             return
 
         for last_name, first_name in relatives:
-            text.insert("end", f"  {last_name} {first_name}\n")
+            full_name = f"{last_name or ''} {first_name or ''}".strip()
+            text.insert("end", f"  {full_name or 'Без имени'}\n")
 
     def close(self):
         self.repository.close()
