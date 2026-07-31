@@ -4,61 +4,70 @@ from config import DB_NAME
 from parser import parse_gedcom
 
 
-def import_gedcom(filename):
+class DatabaseCleaner:
+    def __init__(self, cursor):
+        self.cursor = cursor
 
-    data = parse_gedcom(filename)
+    def clear(self):
+        self.cursor.execute("DELETE FROM family_children")
+        self.cursor.execute("DELETE FROM families")
+        self.cursor.execute("DELETE FROM people")
 
-    people = data["people"]
-    families = data["families"]
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
+class PeopleImporter:
+    def __init__(self, cursor):
+        self.cursor = cursor
 
-    cur.execute("DELETE FROM family_children")
-    cur.execute("DELETE FROM families")
-    cur.execute("DELETE FROM people")
-    conn.commit()
+    def import_people(self, people):
+        imported_people = 0
 
-    imported_people = 0
-
-    for p in people:
-
-        cur.execute(
-            """
-            INSERT OR REPLACE INTO people
-            (
-                gedcom_id,
-                first_name,
-                last_name,
-                sex,
-                birth_date,
-                birth_place,
-                death_date,
-                death_place,
-                occupation,
-                note
+        for person in people:
+            self.cursor.execute(
+                """
+                INSERT OR REPLACE INTO people
+                (
+                    gedcom_id,
+                    first_name,
+                    last_name,
+                    sex,
+                    birth_date,
+                    birth_place,
+                    death_date,
+                    death_place,
+                    occupation,
+                    note
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    person["gedcom_id"],
+                    person["first_name"],
+                    person["last_name"],
+                    person["sex"],
+                    person["birth_date"],
+                    person["birth_place"],
+                    person["death_date"],
+                    person["death_place"],
+                    person["occupation"],
+                    person["note"],
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                p["gedcom_id"],
-                p["first_name"],
-                p["last_name"],
-                p["sex"],
-                p["birth_date"],
-                p["birth_place"],
-                p["death_date"],
-                p["death_place"],
-                p["occupation"],
-                p["note"],
-            ),
-        )
+            imported_people += 1
 
-        imported_people += 1
+        return imported_people
 
-    for fam in families:
 
-        cur.execute(
+class FamilyImporter:
+    def __init__(self, cursor):
+        self.cursor = cursor
+
+    def import_families(self, families):
+        for family in families:
+            self._insert_family(family)
+            self._insert_children(family)
+
+    def _insert_family(self, family):
+        self.cursor.execute(
             """
             INSERT OR REPLACE INTO families
             (
@@ -69,15 +78,15 @@ def import_gedcom(filename):
             VALUES (?, ?, ?)
             """,
             (
-                fam["gedcom_id"],
-                fam["husband"],
-                fam["wife"],
+                family["gedcom_id"],
+                family["husband"],
+                family["wife"],
             ),
         )
 
-        for child in fam["children"]:
-
-            cur.execute(
+    def _insert_children(self, family):
+        for child in family["children"]:
+            self.cursor.execute(
                 """
                 INSERT INTO family_children
                 (
@@ -87,13 +96,30 @@ def import_gedcom(filename):
                 VALUES (?, ?)
                 """,
                 (
-                    fam["gedcom_id"],
+                    family["gedcom_id"],
                     child,
                 ),
             )
 
-    conn.commit()
-    conn.close()
 
-    print(f"Импортировано людей: {imported_people}")
-    print(f"Импортировано семей: {len(families)}")
+class GedcomImporter:
+    def __init__(self, database_name=DB_NAME):
+        self.database_name = database_name
+
+    def import_file(self, filename):
+        data = parse_gedcom(filename)
+        people = data["people"]
+        families = data["families"]
+
+        with sqlite3.connect(self.database_name) as connection:
+            cursor = connection.cursor()
+            DatabaseCleaner(cursor).clear()
+            imported_people = PeopleImporter(cursor).import_people(people)
+            FamilyImporter(cursor).import_families(families)
+
+        print(f"Импортировано людей: {imported_people}")
+        print(f"Импортировано семей: {len(families)}")
+
+
+def import_gedcom(filename):
+    GedcomImporter().import_file(filename)
