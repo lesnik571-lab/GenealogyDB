@@ -69,6 +69,7 @@ class GenealogyRepository:
         self.cursor.execute(
             """
             SELECT DISTINCT
+                p.id,
                 TRIM(COALESCE(p.last_name, '')) AS last_name,
                 TRIM(COALESCE(p.first_name, '')) AS first_name
             FROM families AS f
@@ -88,6 +89,7 @@ class GenealogyRepository:
         self.cursor.execute(
             """
             SELECT DISTINCT
+                p.id,
                 TRIM(COALESCE(p.last_name, '')) AS last_name,
                 TRIM(COALESCE(p.first_name, '')) AS first_name
             FROM families AS f
@@ -107,6 +109,7 @@ class GenealogyRepository:
         self.cursor.execute(
             """
             SELECT DISTINCT
+                c.id,
                 TRIM(COALESCE(c.last_name, '')) AS last_name,
                 TRIM(COALESCE(c.first_name, '')) AS first_name
             FROM families AS f
@@ -227,7 +230,7 @@ class GenealogyViewer:
         window.title(f"{last_name or ''} {first_name or ''}".strip() or "Карточка человека")
         window.geometry("700x600")
 
-        text = tk.Text(window, wrap="word")
+        text = tk.Text(window, wrap="word", cursor="arrow")
         text.pack(fill="both", expand=True)
 
         self._insert_person_details(text, last_name, first_name, sex, birth_date, death_date, note)
@@ -249,17 +252,21 @@ class GenealogyViewer:
             text.insert("end", "Примечания:\n")
             text.insert("end", note + "\n\n")
 
-    @staticmethod
-    def _insert_relatives(text, title, relatives, empty_text):
+    def _insert_relatives(self, text, title, relatives, empty_text):
         text.insert("end", title + "\n")
 
         if not relatives:
             text.insert("end", f"  {empty_text}\n")
             return
 
-        for last_name, first_name in relatives:
-            full_name = f"{last_name or ''} {first_name or ''}".strip()
-            text.insert("end", f"  {full_name or 'Без имени'}\n")
+        for person_id, last_name, first_name in relatives:
+            full_name = f"{last_name or ''} {first_name or ''}".strip() or "Без имени"
+            tag_name = f"person_{person_id}_{text.index('end-1c').replace('.', '_')}"
+            text.insert("end", f"  {full_name}\n", tag_name)
+            text.tag_config(tag_name, foreground="blue", underline=True)
+            text.tag_bind(tag_name, "<Enter>", lambda _event, widget=text: widget.config(cursor="hand2"))
+            text.tag_bind(tag_name, "<Leave>", lambda _event, widget=text: widget.config(cursor="arrow"))
+            text.tag_bind(tag_name, "<Double-Button-1>", lambda _event, target_id=person_id: self.show_person(target_id))
 
     def close(self):
         self.repository.close()
