@@ -13,7 +13,7 @@ class GenealogyRepository:
     def close(self):
         self.connection.close()
 
-    def find_people(self, query, limit=500):
+    def find_people(self, query="", limit=500):
         search_value = f"%{query}%"
         self.cursor.execute(
             """
@@ -27,7 +27,8 @@ class GenealogyRepository:
             WHERE
                 TRIM(COALESCE(last_name, '') || COALESCE(first_name, '')) <> ''
                 AND (
-                    last_name LIKE ?
+                    ? = ''
+                    OR last_name LIKE ?
                     OR first_name LIKE ?
                     OR TRIM(COALESCE(last_name, '') || ' ' || COALESCE(first_name, '')) LIKE ?
                 )
@@ -43,21 +44,14 @@ class GenealogyRepository:
                 birth_date
             LIMIT ?
             """,
-            (search_value, search_value, search_value, limit),
+            (query, search_value, search_value, search_value, limit),
         )
         return self.cursor.fetchall()
 
     def get_person(self, person_id):
         self.cursor.execute(
             """
-            SELECT
-                gedcom_id,
-                last_name,
-                first_name,
-                sex,
-                birth_date,
-                death_date,
-                note
+            SELECT gedcom_id, last_name, first_name, sex, birth_date, death_date, note
             FROM people
             WHERE id = ?
             """,
@@ -68,18 +62,13 @@ class GenealogyRepository:
     def get_parents(self, gedcom_id):
         self.cursor.execute(
             """
-            SELECT DISTINCT
-                p.id,
+            SELECT DISTINCT p.id,
                 TRIM(COALESCE(p.last_name, '')) AS last_name,
                 TRIM(COALESCE(p.first_name, '')) AS first_name
             FROM families AS f
-            JOIN family_children AS fc
-                ON f.gedcom_id = fc.family_id
-            JOIN people AS p
-                ON p.gedcom_id = f.husband_id
-                OR p.gedcom_id = f.wife_id
-            WHERE fc.child_id = ?
-                AND p.gedcom_id <> ?
+            JOIN family_children AS fc ON f.gedcom_id = fc.family_id
+            JOIN people AS p ON p.gedcom_id = f.husband_id OR p.gedcom_id = f.wife_id
+            WHERE fc.child_id = ? AND p.gedcom_id <> ?
             ORDER BY last_name, first_name
             """,
             (gedcom_id, gedcom_id),
@@ -89,8 +78,7 @@ class GenealogyRepository:
     def get_spouses(self, gedcom_id):
         self.cursor.execute(
             """
-            SELECT DISTINCT
-                p.id,
+            SELECT DISTINCT p.id,
                 TRIM(COALESCE(p.last_name, '')) AS last_name,
                 TRIM(COALESCE(p.first_name, '')) AS first_name
             FROM families AS f
@@ -99,8 +87,7 @@ class GenealogyRepository:
                     WHEN f.husband_id = ? THEN f.wife_id
                     WHEN f.wife_id = ? THEN f.husband_id
                 END
-            WHERE (f.husband_id = ? OR f.wife_id = ?)
-                AND p.gedcom_id <> ?
+            WHERE (f.husband_id = ? OR f.wife_id = ?) AND p.gedcom_id <> ?
             ORDER BY last_name, first_name
             """,
             (gedcom_id, gedcom_id, gedcom_id, gedcom_id, gedcom_id),
@@ -110,17 +97,13 @@ class GenealogyRepository:
     def get_children(self, gedcom_id):
         self.cursor.execute(
             """
-            SELECT DISTINCT
-                c.id,
+            SELECT DISTINCT c.id,
                 TRIM(COALESCE(c.last_name, '')) AS last_name,
                 TRIM(COALESCE(c.first_name, '')) AS first_name
             FROM families AS f
-            JOIN family_children AS fc
-                ON f.gedcom_id = fc.family_id
-            JOIN people AS c
-                ON c.gedcom_id = fc.child_id
-            WHERE (f.husband_id = ? OR f.wife_id = ?)
-                AND c.gedcom_id <> ?
+            JOIN family_children AS fc ON f.gedcom_id = fc.family_id
+            JOIN people AS c ON c.gedcom_id = fc.child_id
+            WHERE (f.husband_id = ? OR f.wife_id = ?) AND c.gedcom_id <> ?
             ORDER BY last_name, first_name
             """,
             (gedcom_id, gedcom_id, gedcom_id),
@@ -132,51 +115,29 @@ class GenealogyViewer:
     def __init__(self, root):
         self.root = root
         self.repository = GenealogyRepository(DB_NAME)
-
         self.root.title("Genealogy Viewer")
         self.root.geometry("1000x700")
-
         self._create_widgets()
+        self.search_people()
         self.search_entry.focus_set()
 
     def _create_widgets(self):
         top = tk.Frame(self.root)
         top.pack(fill="x", padx=10, pady=10)
-
         tk.Label(top, text="Имя или фамилия:").pack(side="left")
-
         self.search_entry = tk.Entry(top, width=30)
         self.search_entry.pack(side="left", padx=5)
         self.search_entry.bind("<Return>", self._search_from_event)
-
         tk.Button(top, text="Поиск", command=self.search_people).pack(side="left")
-
-        self.status_label = tk.Label(top, text="Введите имя или фамилию")
+        self.status_label = tk.Label(top, text="Загрузка...")
         self.status_label.pack(side="left", padx=12)
 
-        self.tree = ttk.Treeview(
-            self.root,
-            columns=("id", "name", "birth", "death"),
-            show="headings",
-        )
-
-        headings = {
-            "id": "ID",
-            "name": "Имя",
-            "birth": "Рождение",
-            "death": "Смерть",
-        }
-        widths = {
-            "id": 80,
-            "name": 350,
-            "birth": 120,
-            "death": 120,
-        }
-
+        self.tree = ttk.Treeview(self.root, columns=("id", "name", "birth", "death"), show="headings")
+        headings = {"id": "ID", "name": "Имя", "birth": "Рождение", "death": "Смерть"}
+        widths = {"id": 80, "name": 350, "birth": 120, "death": 120}
         for column, heading in headings.items():
             self.tree.heading(column, text=heading)
             self.tree.column(column, width=widths[column])
-
         self.tree.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         self.tree.bind("<Double-1>", self.open_person)
 
@@ -190,45 +151,25 @@ class GenealogyViewer:
     def search_people(self):
         query = self.search_entry.get().strip()
         self._clear_results()
-
-        if not query:
-            self.status_label.config(text="Введите имя или фамилию")
-            self.search_entry.focus_set()
-            return
-
-        self.status_label.config(text="Поиск...")
+        self.status_label.config(text="Поиск..." if query else "Загрузка...")
         self.root.update_idletasks()
-
         people = self.repository.find_people(query)
         for person_id, last_name, first_name, birth_date, death_date in people:
             full_name = f"{last_name or ''} {first_name or ''}".strip()
-            self.tree.insert(
-                "",
-                "end",
-                values=(person_id, full_name, birth_date or "", death_date or ""),
-            )
-
-        if people:
-            self.status_label.config(text=f"Найдено: {len(people)}")
-        else:
-            self.status_label.config(text="Ничего не найдено")
+            self.tree.insert("", "end", values=(person_id, full_name, birth_date or "", death_date or ""))
+        self.status_label.config(text=f"Показано: {len(people)}" if people else "Ничего не найдено")
 
     def open_person(self, _event):
         selected = self.tree.selection()
-        if not selected:
-            return
-
-        person_id = self.tree.item(selected[0])["values"][0]
-        self.show_person(person_id)
+        if selected:
+            self.show_person(self.tree.item(selected[0])["values"][0])
 
     def show_person(self, person_id):
         person = self.repository.get_person(person_id)
         if not person:
             messagebox.showerror("Ошибка", "Человек не найден.")
             return
-
         gedcom_id, last_name, first_name, sex, birth_date, death_date, note = person
-
         parents = self.repository.get_parents(gedcom_id)
         spouses = self.repository.get_spouses(gedcom_id)
         children = self.repository.get_children(gedcom_id)
@@ -237,24 +178,18 @@ class GenealogyViewer:
         window = tk.Toplevel(self.root)
         window.title(f"{last_name or ''} {first_name or ''}".strip() or "Карточка человека")
         window.geometry("700x600")
-
         text = tk.Text(window, wrap="word", cursor="arrow")
         text.pack(fill="both", expand=True)
-
         self._insert_person_details(text, last_name, first_name, sex, birth_date, death_date, note)
         self._insert_relatives(text, "Родители:", parents, "неизвестны")
         self._insert_relatives(text, "\nСупруги:", spouses, "нет")
         self._insert_relatives(text, "\nДети:", children, "нет")
-
         text.config(state="disabled")
 
     @staticmethod
     def _relative_key(relative):
         _person_id, last_name, first_name = relative
-        return (
-            (last_name or "").strip().casefold(),
-            (first_name or "").strip().casefold(),
-        )
+        return ((last_name or "").strip().casefold(), (first_name or "").strip().casefold())
 
     @classmethod
     def _deduplicate_relatives(cls, relatives):
@@ -262,10 +197,9 @@ class GenealogyViewer:
         seen = set()
         for relative in relatives:
             key = cls._relative_key(relative)
-            if key in seen:
-                continue
-            seen.add(key)
-            unique.append(relative)
+            if key not in seen:
+                seen.add(key)
+                unique.append(relative)
         return unique
 
     @classmethod
@@ -273,21 +207,10 @@ class GenealogyViewer:
         parents = cls._deduplicate_relatives(parents)
         spouses = cls._deduplicate_relatives(spouses)
         children = cls._deduplicate_relatives(children)
-
         parent_keys = {cls._relative_key(relative) for relative in parents}
         child_keys = {cls._relative_key(relative) for relative in children}
-
-        spouses = [
-            relative
-            for relative in spouses
-            if cls._relative_key(relative) not in parent_keys
-            and cls._relative_key(relative) not in child_keys
-        ]
-        children = [
-            relative
-            for relative in children
-            if cls._relative_key(relative) not in parent_keys
-        ]
+        spouses = [relative for relative in spouses if cls._relative_key(relative) not in parent_keys and cls._relative_key(relative) not in child_keys]
+        children = [relative for relative in children if cls._relative_key(relative) not in parent_keys]
         return parents, spouses, children
 
     @staticmethod
@@ -297,18 +220,15 @@ class GenealogyViewer:
         text.insert("end", f"Пол: {sex or ''}\n")
         text.insert("end", f"Рождение: {birth_date or ''}\n")
         text.insert("end", f"Смерть: {death_date or ''}\n\n")
-
         if note:
             text.insert("end", "Примечания:\n")
             text.insert("end", note + "\n\n")
 
     def _insert_relatives(self, text, title, relatives, empty_text):
         text.insert("end", title + "\n")
-
         if not relatives:
             text.insert("end", f"  {empty_text}\n")
             return
-
         for person_id, last_name, first_name in relatives:
             full_name = f"{last_name or ''} {first_name or ''}".strip() or "Без имени"
             tag_name = f"person_{person_id}_{text.index('end-1c').replace('.', '_')}"
@@ -325,11 +245,9 @@ class GenealogyViewer:
 def main():
     root = tk.Tk()
     app = GenealogyViewer(root)
-
     def close_application():
         app.close()
         root.destroy()
-
     root.protocol("WM_DELETE_WINDOW", close_application)
     root.mainloop()
 
