@@ -1,5 +1,7 @@
+import re
 import sqlite3
 import tkinter as tk
+import unicodedata
 from tkinter import messagebox, ttk
 
 from config import DB_NAME
@@ -187,9 +189,14 @@ class GenealogyViewer:
         text.config(state="disabled")
 
     @staticmethod
-    def _relative_key(relative):
+    def _normalize_name(value):
+        value = unicodedata.normalize("NFKC", value or "").casefold().replace("ё", "е")
+        return " ".join(re.findall(r"[a-zа-я0-9]+", value))
+
+    @classmethod
+    def _relative_key(cls, relative):
         _person_id, last_name, first_name = relative
-        return ((last_name or "").strip().casefold(), (first_name or "").strip().casefold())
+        return cls._normalize_name(f"{last_name or ''} {first_name or ''}")
 
     @classmethod
     def _deduplicate_relatives(cls, relatives):
@@ -197,7 +204,7 @@ class GenealogyViewer:
         seen = set()
         for relative in relatives:
             key = cls._relative_key(relative)
-            if key not in seen:
+            if key and key not in seen:
                 seen.add(key)
                 unique.append(relative)
         return unique
@@ -207,10 +214,19 @@ class GenealogyViewer:
         parents = cls._deduplicate_relatives(parents)
         spouses = cls._deduplicate_relatives(spouses)
         children = cls._deduplicate_relatives(children)
+
         parent_keys = {cls._relative_key(relative) for relative in parents}
         child_keys = {cls._relative_key(relative) for relative in children}
-        spouses = [relative for relative in spouses if cls._relative_key(relative) not in parent_keys and cls._relative_key(relative) not in child_keys]
-        children = [relative for relative in children if cls._relative_key(relative) not in parent_keys]
+
+        spouses = [
+            relative for relative in spouses
+            if cls._relative_key(relative) not in parent_keys
+            and cls._relative_key(relative) not in child_keys
+        ]
+        children = [
+            relative for relative in children
+            if cls._relative_key(relative) not in parent_keys
+        ]
         return parents, spouses, children
 
     @staticmethod
@@ -245,9 +261,11 @@ class GenealogyViewer:
 def main():
     root = tk.Tk()
     app = GenealogyViewer(root)
+
     def close_application():
         app.close()
         root.destroy()
+
     root.protocol("WM_DELETE_WINDOW", close_application)
     root.mainloop()
 
