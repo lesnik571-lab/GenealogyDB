@@ -28,8 +28,20 @@ class GenealogyApplication:
         print("3. Статистика базы")
         print("0. Выход")
 
+    def read_input(self, prompt):
+        try:
+            return input(prompt).strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nРабота программы завершена.")
+            self.running = False
+            return None
+
     def import_gedcom(self):
-        raw_filename = input("Введите имя GEDCOM-файла: ").strip().strip('"')
+        raw_filename = self.read_input("Введите имя GEDCOM-файла: ")
+        if raw_filename is None:
+            return
+
+        raw_filename = raw_filename.strip('"')
         if not raw_filename:
             print("Импорт отменён: имя файла не указано.")
             return
@@ -44,30 +56,49 @@ class GenealogyApplication:
             return
 
         try:
-            importer.import_gedcom(str(filename))
+            result = importer.import_gedcom(str(filename))
         except (OSError, ValueError) as error:
             print(f"Ошибка импорта: {error}")
         except Exception as error:
             print(f"Не удалось импортировать GEDCOM: {error}")
+        else:
+            if result:
+                print(
+                    "Импорт завершён: "
+                    f"людей — {result['people']}, "
+                    f"семей — {result['families']}, "
+                    f"связей — {result['family_children']}."
+                )
 
     def open_viewer(self):
-        viewer.main()
+        try:
+            viewer.main()
+        except sqlite3.Error as error:
+            print(f"Не удалось открыть базу: {error}")
+        except Exception as error:
+            print(f"Не удалось открыть просмотрщик: {error}")
+
+    def get_statistics(self):
+        with sqlite3.connect(DB_NAME) as connection:
+            return {
+                "people": connection.execute("SELECT COUNT(*) FROM people").fetchone()[0],
+                "families": connection.execute("SELECT COUNT(*) FROM families").fetchone()[0],
+                "family_children": connection.execute(
+                    "SELECT COUNT(*) FROM family_children"
+                ).fetchone()[0],
+            }
 
     def show_statistics(self):
         try:
-            with sqlite3.connect(DB_NAME) as connection:
-                cursor = connection.cursor()
-                people_count = cursor.execute("SELECT COUNT(*) FROM people").fetchone()[0]
-                families_count = cursor.execute("SELECT COUNT(*) FROM families").fetchone()[0]
-                relations_count = cursor.execute("SELECT COUNT(*) FROM family_children").fetchone()[0]
+            statistics = self.get_statistics()
         except sqlite3.Error as error:
             print(f"Не удалось прочитать статистику базы: {error}")
             return
 
         print("\n--- Статистика базы ---")
-        print(f"Людей: {people_count}")
-        print(f"Семей: {families_count}")
-        print(f"Связей родитель—ребёнок: {relations_count}")
+        print(f"Людей: {statistics['people']}")
+        print(f"Семей: {statistics['families']}")
+        print(f"Связей родитель—ребёнок: {statistics['family_children']}")
 
     def exit_application(self):
         print("До свидания!")
@@ -78,9 +109,11 @@ class GenealogyApplication:
 
         while self.running:
             self.display_menu()
-            choice = input("Выберите пункт: ").strip()
-            action = self.actions.get(choice)
+            choice = self.read_input("Выберите пункт: ")
+            if choice is None:
+                break
 
+            action = self.actions.get(choice)
             if action is None:
                 print("Неверный выбор.")
                 continue
