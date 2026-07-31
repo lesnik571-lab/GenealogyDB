@@ -3,7 +3,7 @@ from pathlib import Path
 
 import importer
 import viewer
-from config import DATA_DIR, DB_NAME
+from config import DATA_DIR, DB_NAME, APP_VERSION
 from database import initialize_database
 
 
@@ -22,7 +22,7 @@ class GenealogyApplication:
         initialize_database()
 
     def display_menu(self):
-        print("\n=== GenealogyDB 1.1 ===")
+        print(f"\n=== GenealogyDB {APP_VERSION} ===")
         print("1. Импорт GEDCOM")
         print("2. Просмотр базы")
         print("3. Статистика базы")

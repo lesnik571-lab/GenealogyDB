@@ -2,7 +2,7 @@ import sqlite3
 from pathlib import Path
 
 from config import DB_NAME
-
+from repository import DatabaseRepository
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 REQUIRED_COLUMNS = {

@@ -1,0 +1,28 @@
+0 HEAD
+1 SOUR Test
+0 @I1@ INDI
+1 NAME John /Doe/
+1 SEX M
+1 BIRT
+2 DATE 1 JAN 2000
+2 PLAC Springfield
+1 OCCU Engineer
+1 NOTE Test note
+1 FAMC @F1@
+1 FAMS @F2@
+0 @I2@ INDI
+1 NAME Jane /Doe/
+1 SEX F
+1 DEAT
+2 DATE 2 JAN 2020
+2 PLAC Metropolis
+0 @F1@ FAM
+1 HUSB @I1@
+1 WIFE @I2@
+1 CHIL @I3@
+0 @I3@ INDI
+1 NAME Alice /Doe/
+1 SEX F
+0 @F2@ FAM
+1 HUSB @I1@
+1 WIFE @I2@

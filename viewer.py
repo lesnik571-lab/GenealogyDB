@@ -1,65 +1,77 @@
-import re
-import sqlite3
 import tkinter as tk
-import unicodedata
 from tkinter import messagebox, ttk
 
+from repository import PersonRepository
 from config import DB_NAME
 
 
-class GenealogyRepository:
-    def __init__(self, database_name):
-        self.connection = sqlite3.connect(database_name)
-        self.cursor = self.connection.cursor()
+class GenealogyViewer:
+    def __init__(self, root):
+        self.root = root
+        self.repository = PersonRepository(DB_NAME)
+        self.root.title("Genealogy Viewer")
+        self.root.geometry("800x600")
+
+        top = tk.Frame(self.root)
+        top.pack(fill="x", padx=10, pady=10)
+        tk.Label(top, text="Фамилия:").pack(side="left")
+
+        self.search_entry = tk.Entry(top, width=30)
+        self.search_entry.pack(side="left", padx=5)
+        self.search_entry.bind("<Return>", lambda _e: self.search_people())
+
+        tk.Button(top, text="Поиск", command=self.search_people).pack(side="left")
+
+        self.tree = ttk.Treeview(self.root, columns=("id", "name", "birth", "death"), show="headings")
+        self.tree.heading("id", text="ID")
+        self.tree.heading("name", text="Имя")
+        self.tree.heading("birth", text="Рождение")
+        self.tree.heading("death", text="Смерть")
+        self.tree.pack(fill="both", expand=True, padx=10, pady=10)
+        self.tree.bind("<Double-1>", self.open_person)
+
+        self.search_people()
+
+    def search_people(self):
+        query = self.search_entry.get().strip()
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        rows = self.repository.list_people(query)
+        for person_id, last_name, first_name, birth_date, death_date in rows:
+            full_name = f"{last_name or ''} {first_name or ''}".strip()
+            self.tree.insert("", "end", values=(person_id, full_name, birth_date or "", death_date or ""))
+
+    def open_person(self, _event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        person_id = self.tree.item(sel[0])["values"][0]
+        person = self.repository.get_person(person_id)
+        if not person:
+            messagebox.showerror("Ошибка", "Человек не найден.")
+            return
+        gedcom_id, last_name, first_name, sex, birth_date, birth_place, death_date, death_place, occupation, note = person
+        messagebox.showinfo("Карточка", f"{last_name or ''} {first_name or ''}\n{birth_date or ''} - {death_date or ''}")
 
     def close(self):
-        self.connection.close()
+        self.repository.close()
 
-    def find_people(self, query="", limit=500):
-        search_value = f"%{query}%"
-        self.cursor.execute(
-            """
-            SELECT
-                MIN(id) AS id,
-                TRIM(COALESCE(last_name, '')) AS last_name,
-                TRIM(COALESCE(first_name, '')) AS first_name,
-                TRIM(COALESCE(birth_date, '')) AS birth_date,
-                TRIM(COALESCE(death_date, '')) AS death_date
-            FROM people
-            WHERE
-                TRIM(COALESCE(last_name, '') || COALESCE(first_name, '')) <> ''
-                AND (
-                    ? = ''
-                    OR last_name LIKE ?
-                    OR first_name LIKE ?
-                    OR TRIM(COALESCE(last_name, '') || ' ' || COALESCE(first_name, '')) LIKE ?
-                )
-            GROUP BY
-                LOWER(TRIM(COALESCE(last_name, ''))),
-                LOWER(TRIM(COALESCE(first_name, ''))),
-                LOWER(TRIM(COALESCE(birth_date, ''))),
-                LOWER(TRIM(COALESCE(death_date, '')))
-            ORDER BY
-                CASE WHEN TRIM(COALESCE(last_name, '')) = '' THEN 1 ELSE 0 END,
-                last_name,
-                first_name,
-                birth_date
-            LIMIT ?
-            """,
-            (query, search_value, search_value, search_value, limit),
-        )
-        return self.cursor.fetchall()
 
-    def get_person(self, person_id):
-        self.cursor.execute(
-            """
-            SELECT gedcom_id, last_name, first_name, sex, birth_date, death_date, note
-            FROM people
-            WHERE id = ?
-            """,
-            (person_id,),
-        )
-        return self.cursor.fetchone()
+def main():
+    root = tk.Tk()
+    app = GenealogyViewer(root)
+
+    def close_application():
+        app.close()
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", close_application)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
+
 
     def update_person(self, person_id, last_name, first_name, sex, birth_date, death_date, note):
         self.cursor.execute(
@@ -330,6 +342,7 @@ class GenealogyViewer:
             self.current_person_id,
             last_name,
             first_name,
+<<<<<<< HEAD
             entries["Пол"].get().strip(),
             entries["Рождение"].get().strip(),
             entries["Смерть"].get().strip(),
@@ -342,6 +355,17 @@ class GenealogyViewer:
         self.search_people()
         self.show_person(self.current_person_id, add_to_history=False)
         messagebox.showinfo("Сохранено", "Данные человека обновлены.", parent=self.card_window)
+=======
+            sex,
+            birth_date,
+            birth_place,
+            death_date,
+            death_place,
+            occupation,
+            note,
+        ) = person
+        self.current_person_gedcom_id = gedcom_id
+>>>>>>> 1637f85 (GenealogyDB 2.0 - modular architecture, repositories, relationship navigation, graphical family tree)
 
     @staticmethod
     def _normalize_name(value):
@@ -353,6 +377,7 @@ class GenealogyViewer:
         _person_id, last_name, first_name = relative
         return cls._normalize_name(f"{last_name or ''} {first_name or ''}")
 
+<<<<<<< HEAD
     @classmethod
     def _deduplicate_relatives(cls, relatives):
         unique = []
@@ -381,6 +406,19 @@ class GenealogyViewer:
 
     @staticmethod
     def _insert_person_details(text, last_name, first_name, sex, birth_date, death_date, note):
+=======
+        self._populate_person_details(text, gedcom_id, last_name, first_name, sex, birth_date, birth_place, death_date, death_place, occupation, note)
+        text.config(state="disabled")
+
+        if self.view_mode.get() == "tree":
+            self._refresh_family_tree()
+
+    def _fetch_person(self, person_id):
+        return self.repository.get_person(person_id)
+
+    def _populate_person_details(self, text, gedcom_id, last_name, first_name, sex, birth_date, birth_place, death_date, death_place, occupation, note):
+        text.insert("end", f"GEDCOM ID: {gedcom_id or ''}\n")
+>>>>>>> 1637f85 (GenealogyDB 2.0 - modular architecture, repositories, relationship navigation, graphical family tree)
         text.insert("end", f"Фамилия: {last_name or ''}\n")
         text.insert("end", f"Имя: {first_name or ''}\n")
         text.insert("end", f"Пол: {sex or ''}\n")
@@ -390,6 +428,7 @@ class GenealogyViewer:
             text.insert("end", "Примечания:\n")
             text.insert("end", note + "\n\n")
 
+<<<<<<< HEAD
     def _insert_relatives(self, text, title, relatives, empty_text):
         text.insert("end", title + "\n")
         if not relatives:
@@ -407,6 +446,145 @@ class GenealogyViewer:
                 "<Double-Button-1>",
                 lambda _event, target_id=person_id: self.show_person(target_id),
             )
+=======
+        text.insert("end", "Родители:\n")
+        self.show_parents(text, gedcom_id)
+
+        text.insert("end", "\nСупруги:\n")
+        self.show_spouses(text, gedcom_id)
+
+        text.insert("end", "\nДети:\n")
+        self.show_children(text, gedcom_id)
+
+        text.insert("end", "\nБратья и сестры:\n")
+        self.show_siblings(text, gedcom_id)
+
+    def show_parents(self, text, person_gedcom_id):
+        if not person_gedcom_id:
+            text.insert("end", "  неизвестны\n")
+            return
+
+        rows = self.repository.get_parents(person_gedcom_id)
+        self.insert_people(text, rows, "неизвестны")
+
+    def show_spouses(self, text, person_gedcom_id):
+        if not person_gedcom_id:
+            text.insert("end", "  нет\n")
+            return
+
+        rows = self.repository.get_spouses(person_gedcom_id)
+        self.insert_people(text, rows, "нет")
+
+    def show_children(self, text, person_gedcom_id):
+        if not person_gedcom_id:
+            text.insert("end", "  нет\n")
+            return
+
+        rows = self.repository.get_children(person_gedcom_id)
+        self.insert_people(text, rows, "нет")
+
+    def show_siblings(self, text, person_gedcom_id):
+        if not person_gedcom_id:
+            text.insert("end", "  нет\n")
+            return
+
+        rows = self.repository.get_siblings(person_gedcom_id)
+        self.insert_people(text, rows, "нет")
+
+    def build_family_tree_nodes(self, gedcom_id):
+        person_id_row = self.repository.get_person_by_gedcom_id(gedcom_id)
+        if not person_id_row:
+            return []
+
+        person = self.repository.get_person(person_id_row[0])
+        if not person:
+            return []
+
+        center_name = self.format_name(person[1], person[2])
+        nodes = [{"id": gedcom_id, "name": center_name or gedcom_id, "role": "center", "x": 0, "y": 0}]
+
+        parents = self.repository.get_parents(gedcom_id)
+        for index, (last_name, first_name, parent_gedcom_id) in enumerate(parents):
+            nodes.append({
+                "id": parent_gedcom_id,
+                "name": self.format_name(last_name, first_name) or parent_gedcom_id,
+                "role": "parent",
+                "x": -220,
+                "y": -120 + index * 70,
+            })
+
+        spouses = self.repository.get_spouses(gedcom_id)
+        for index, (last_name, first_name, spouse_gedcom_id) in enumerate(spouses):
+            nodes.append({
+                "id": spouse_gedcom_id,
+                "name": self.format_name(last_name, first_name) or spouse_gedcom_id,
+                "role": "spouse",
+                "x": 220,
+                "y": -120 + index * 70,
+            })
+
+        children = self.repository.get_children(gedcom_id)
+        for index, (last_name, first_name, child_gedcom_id) in enumerate(children):
+            nodes.append({
+                "id": child_gedcom_id,
+                "name": self.format_name(last_name, first_name) or child_gedcom_id,
+                "role": "child",
+                "x": -120 + index * 120,
+                "y": 140,
+            })
+
+        siblings = self.repository.get_siblings(gedcom_id)
+        for index, (last_name, first_name, sibling_gedcom_id) in enumerate(siblings):
+            nodes.append({
+                "id": sibling_gedcom_id,
+                "name": self.format_name(last_name, first_name) or sibling_gedcom_id,
+                "role": "sibling",
+                "x": 120 + index * 120,
+                "y": 140,
+            })
+
+        return nodes
+
+    def _refresh_family_tree(self):
+        if not self.current_person_gedcom_id:
+            self.family_canvas.render_tree([])
+            return
+        self.family_canvas.render_tree(
+            self.build_family_tree_nodes(self.current_person_gedcom_id),
+            self._handle_tree_node_click,
+        )
+
+    def _handle_tree_node_click(self, gedcom_id):
+        person = self.repository.get_person_by_gedcom_id(gedcom_id)
+        if person:
+            self.show_person(person[0])
+
+    @staticmethod
+    def format_name(last_name, first_name):
+        return f"{last_name or ''} {first_name or ''}".strip()
+
+    def insert_people(self, text, rows, empty_text):
+        if not rows:
+            text.insert("end", f"  {empty_text}\n")
+            return
+
+        for last_name, first_name, gedcom_id in rows:
+            name = self.format_name(last_name, first_name)
+            display_text = f"  {name or '(без имени)'} [{gedcom_id}]"
+            tag_name = f"person:{gedcom_id}"
+            text.insert("end", display_text + "\n")
+            text.tag_add(tag_name, "end-1c", "end")
+            text.tag_configure(tag_name, foreground="blue", underline=True)
+            text.tag_bind(tag_name, "<Button-1>", lambda _event, target_id=gedcom_id: self.open_related_person(target_id))
+
+    def open_related_person(self, gedcom_id):
+        person = self.repository.get_person_by_gedcom_id(gedcom_id)
+        if not person:
+            messagebox.showerror("Ошибка", "Человек не найден.")
+            return
+
+        self.show_person(person[0])
+>>>>>>> 1637f85 (GenealogyDB 2.0 - modular architecture, repositories, relationship navigation, graphical family tree)
 
     def close(self):
         self.repository.close()

@@ -1,7 +1,6 @@
 import os
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent
 
 
@@ -20,3 +19,6 @@ DB_NAME = _resolve_path(
     os.getenv("GENEALOGYDB_DB_NAME"),
     DATA_DIR / "genealogy.db",
 )
+
+# application version
+APP_VERSION = os.getenv("GENEALOGYDB_APP_VERSION", "2.0")
