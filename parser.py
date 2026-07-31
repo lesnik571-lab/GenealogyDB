@@ -4,8 +4,7 @@ import re
 class PersonHandler:
     def __init__(self):
         self.current = None
-        self.birth_mode = False
-        self.death_mode = False
+        self.event = None
 
     def start(self, line):
         self.current = {
@@ -22,14 +21,12 @@ class PersonHandler:
             "famc": [],
             "fams": []
         }
-        self.birth_mode = False
-        self.death_mode = False
+        self.event = None
 
     def finish(self):
         person = self.current
         self.current = None
-        self.birth_mode = False
-        self.death_mode = False
+        self.event = None
         return person
 
     def handle(self, line):
@@ -37,6 +34,7 @@ class PersonHandler:
             return
 
         if line.startswith("1 NAME"):
+            self.event = None
             name = line[7:].strip()
             match = re.match(r"(.*?)/(.*?)/", name)
             if match:
@@ -45,29 +43,32 @@ class PersonHandler:
             else:
                 self.current["first_name"] = name
         elif line.startswith("1 SEX"):
+            self.event = None
             self.current["sex"] = line[6:].strip()
         elif line.startswith("1 BIRT"):
-            self.birth_mode, self.death_mode = True, False
+            self.event = "birth"
         elif line.startswith("1 DEAT"):
-            self.birth_mode, self.death_mode = False, True
+            self.event = "death"
+        elif line.startswith("1 "):
+            self.event = None
+            if line.startswith("1 OCCU"):
+                self.current["occupation"] = line[7:].strip()
+            elif line.startswith("1 NOTE"):
+                self.current["note"] = line[7:].strip()
+            elif line.startswith("1 FAMC"):
+                self.current["famc"].append(line.split("@")[1])
+            elif line.startswith("1 FAMS"):
+                self.current["fams"].append(line.split("@")[1])
         elif line.startswith("2 DATE"):
-            if self.birth_mode:
+            if self.event == "birth":
                 self.current["birth_date"] = line[7:].strip()
-            elif self.death_mode:
+            elif self.event == "death":
                 self.current["death_date"] = line[7:].strip()
         elif line.startswith("2 PLAC"):
-            if self.birth_mode:
+            if self.event == "birth":
                 self.current["birth_place"] = line[7:].strip()
-            elif self.death_mode:
+            elif self.event == "death":
                 self.current["death_place"] = line[7:].strip()
-        elif line.startswith("1 OCCU"):
-            self.current["occupation"] = line[7:].strip()
-        elif line.startswith("1 NOTE"):
-            self.current["note"] = line[7:].strip()
-        elif line.startswith("1 FAMC"):
-            self.current["famc"].append(line.split("@")[1])
-        elif line.startswith("1 FAMS"):
-            self.current["fams"].append(line.split("@")[1])
 
 
 class FamilyHandler:
@@ -118,6 +119,8 @@ class GedcomParser:
         self.event_handler = EventHandler()
 
     def parse(self, filename):
+        self._reset()
+
         with open(filename, "r", encoding="utf-8", errors="ignore") as source:
             for raw_line in source:
                 line = raw_line.rstrip()
@@ -130,6 +133,12 @@ class GedcomParser:
             "people": self.people,
             "families": self.families
         }
+
+    def _reset(self):
+        self.people = []
+        self.families = []
+        self.person_handler = PersonHandler()
+        self.family_handler = FamilyHandler()
 
     def _handle_line(self, line):
         if self.event_handler.is_person_start(line):
