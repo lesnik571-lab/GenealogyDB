@@ -13,7 +13,7 @@ class GenealogyRepository:
     def close(self):
         self.connection.close()
 
-    def find_people(self, query):
+    def find_people(self, query, limit=500):
         search_value = f"%{query}%"
         self.cursor.execute(
             """
@@ -35,8 +35,9 @@ class GenealogyRepository:
                 CASE WHEN TRIM(COALESCE(last_name, '')) = '' THEN 1 ELSE 0 END,
                 last_name,
                 first_name
+            LIMIT ?
             """,
-            (search_value, search_value, search_value),
+            (search_value, search_value, search_value, limit),
         )
         return self.cursor.fetchall()
 
@@ -105,6 +106,7 @@ class GenealogyViewer:
         self.root.geometry("1000x700")
 
         self._create_widgets()
+        self.search_entry.focus_set()
 
     def _create_widgets(self):
         top = tk.Frame(self.root)
@@ -117,6 +119,9 @@ class GenealogyViewer:
         self.search_entry.bind("<Return>", self._search_from_event)
 
         tk.Button(top, text="Поиск", command=self.search_people).pack(side="left")
+
+        self.status_label = tk.Label(top, text="Введите имя или фамилию")
+        self.status_label.pack(side="left", padx=12)
 
         self.tree = ttk.Treeview(
             self.root,
@@ -141,7 +146,7 @@ class GenealogyViewer:
             self.tree.heading(column, text=heading)
             self.tree.column(column, width=widths[column])
 
-        self.tree.pack(fill="both", expand=True, padx=10)
+        self.tree.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         self.tree.bind("<Double-1>", self.open_person)
 
     def _search_from_event(self, _event):
@@ -152,21 +157,30 @@ class GenealogyViewer:
             self.tree.delete(item)
 
     def search_people(self):
-        self._clear_results()
         query = self.search_entry.get().strip()
+        self._clear_results()
 
-        for person_id, last_name, first_name, birth_date, death_date in self.repository.find_people(query):
+        if not query:
+            self.status_label.config(text="Введите имя или фамилию")
+            self.search_entry.focus_set()
+            return
+
+        self.status_label.config(text="Поиск...")
+        self.root.update_idletasks()
+
+        people = self.repository.find_people(query)
+        for person_id, last_name, first_name, birth_date, death_date in people:
             full_name = f"{last_name or ''} {first_name or ''}".strip()
             self.tree.insert(
                 "",
                 "end",
-                values=(
-                    person_id,
-                    full_name,
-                    birth_date or "",
-                    death_date or "",
-                ),
+                values=(person_id, full_name, birth_date or "", death_date or ""),
             )
+
+        if people:
+            self.status_label.config(text=f"Найдено: {len(people)}")
+        else:
+            self.status_label.config(text="Ничего не найдено")
 
     def open_person(self, _event):
         selected = self.tree.selection()
@@ -191,40 +205,14 @@ class GenealogyViewer:
         text = tk.Text(window, wrap="word")
         text.pack(fill="both", expand=True)
 
-        self._insert_person_details(
-            text,
-            last_name,
-            first_name,
-            sex,
-            birth_date,
-            death_date,
-            note,
-        )
-        self._insert_relatives(
-            text,
-            "Родители:",
-            self.repository.get_parents(gedcom_id),
-            "неизвестны",
-        )
-        self._insert_relatives(
-            text,
-            "\nДети:",
-            self.repository.get_children(gedcom_id),
-            "нет",
-        )
+        self._insert_person_details(text, last_name, first_name, sex, birth_date, death_date, note)
+        self._insert_relatives(text, "Родители:", self.repository.get_parents(gedcom_id), "неизвестны")
+        self._insert_relatives(text, "\nДети:", self.repository.get_children(gedcom_id), "нет")
 
         text.config(state="disabled")
 
     @staticmethod
-    def _insert_person_details(
-        text,
-        last_name,
-        first_name,
-        sex,
-        birth_date,
-        death_date,
-        note,
-    ):
+    def _insert_person_details(text, last_name, first_name, sex, birth_date, death_date, note):
         text.insert("end", f"Фамилия: {last_name or ''}\n")
         text.insert("end", f"Имя: {first_name or ''}\n")
         text.insert("end", f"Пол: {sex or ''}\n")
