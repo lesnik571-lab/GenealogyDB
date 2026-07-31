@@ -61,6 +61,18 @@ class GenealogyRepository:
         )
         return self.cursor.fetchone()
 
+    def update_person(self, person_id, last_name, first_name, sex, birth_date, death_date, note):
+        self.cursor.execute(
+            """
+            UPDATE people
+            SET last_name = ?, first_name = ?, sex = ?, birth_date = ?, death_date = ?, note = ?
+            WHERE id = ?
+            """,
+            (last_name, first_name, sex, birth_date, death_date, note, person_id),
+        )
+        self.connection.commit()
+        return self.cursor.rowcount > 0
+
     def get_parents(self, gedcom_id):
         self.cursor.execute(
             """
@@ -121,6 +133,8 @@ class GenealogyViewer:
         self.card_text = None
         self.back_button = None
         self.forward_button = None
+        self.edit_button = None
+        self.current_person_id = None
         self.card_history = []
         self.card_history_index = -1
         self.root.title("Genealogy Viewer")
@@ -142,25 +156,14 @@ class GenealogyViewer:
 
         table_frame = tk.Frame(self.root)
         table_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-
-        self.tree = ttk.Treeview(
-            table_frame,
-            columns=("id", "name", "birth", "death"),
-            show="headings",
-        )
-        tree_scrollbar = ttk.Scrollbar(
-            table_frame,
-            orient="vertical",
-            command=self.tree.yview,
-        )
+        self.tree = ttk.Treeview(table_frame, columns=("id", "name", "birth", "death"), show="headings")
+        tree_scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=tree_scrollbar.set)
-
         headings = {"id": "ID", "name": "Имя", "birth": "Рождение", "death": "Смерть"}
         widths = {"id": 80, "name": 350, "birth": 120, "death": 120}
         for column, heading in headings.items():
             self.tree.heading(column, text=heading)
             self.tree.column(column, width=widths[column])
-
         self.tree.pack(side="left", fill="both", expand=True)
         tree_scrollbar.pack(side="right", fill="y")
         self.tree.bind("<Double-1>", self.open_person)
@@ -192,30 +195,19 @@ class GenealogyViewer:
         self.card_window = tk.Toplevel(self.root)
         self.card_window.geometry("700x600")
         self.card_window.protocol("WM_DELETE_WINDOW", self._close_person_window)
-
         navigation = tk.Frame(self.card_window)
         navigation.pack(fill="x", padx=8, pady=8)
-        self.back_button = tk.Button(
-            navigation,
-            text="← Назад",
-            command=lambda: self._move_in_history(-1),
-        )
+        self.back_button = tk.Button(navigation, text="← Назад", command=lambda: self._move_in_history(-1))
         self.back_button.pack(side="left")
-        self.forward_button = tk.Button(
-            navigation,
-            text="Вперёд →",
-            command=lambda: self._move_in_history(1),
-        )
+        self.forward_button = tk.Button(navigation, text="Вперёд →", command=lambda: self._move_in_history(1))
         self.forward_button.pack(side="left", padx=(8, 0))
+        self.edit_button = tk.Button(navigation, text="Изменить", command=self._open_edit_dialog)
+        self.edit_button.pack(side="right")
 
         content_frame = tk.Frame(self.card_window)
         content_frame.pack(fill="both", expand=True)
         self.card_text = tk.Text(content_frame, wrap="word", cursor="arrow")
-        text_scrollbar = ttk.Scrollbar(
-            content_frame,
-            orient="vertical",
-            command=self.card_text.yview,
-        )
+        text_scrollbar = ttk.Scrollbar(content_frame, orient="vertical", command=self.card_text.yview)
         self.card_text.configure(yscrollcommand=text_scrollbar.set)
         self.card_text.pack(side="left", fill="both", expand=True)
         text_scrollbar.pack(side="right", fill="y")
@@ -227,6 +219,8 @@ class GenealogyViewer:
         self.card_text = None
         self.back_button = None
         self.forward_button = None
+        self.edit_button = None
+        self.current_person_id = None
         self.card_history = []
         self.card_history_index = -1
 
@@ -239,20 +233,18 @@ class GenealogyViewer:
     def _update_navigation_buttons(self):
         if self.back_button is None or self.forward_button is None:
             return
-        back_state = "normal" if self.card_history_index > 0 else "disabled"
-        forward_state = "normal" if self.card_history_index < len(self.card_history) - 1 else "disabled"
-        self.back_button.config(state=back_state)
-        self.forward_button.config(state=forward_state)
+        self.back_button.config(state="normal" if self.card_history_index > 0 else "disabled")
+        self.forward_button.config(
+            state="normal" if self.card_history_index < len(self.card_history) - 1 else "disabled"
+        )
 
     def show_person(self, person_id, add_to_history=True):
         person = self.repository.get_person(person_id)
         if not person:
             messagebox.showerror("Ошибка", "Человек не найден.")
             return
-
         if self.card_window is None or not self.card_window.winfo_exists():
             self._create_person_window()
-
         if add_to_history:
             if self.card_history_index < len(self.card_history) - 1:
                 self.card_history = self.card_history[:self.card_history_index + 1]
@@ -260,17 +252,16 @@ class GenealogyViewer:
                 self.card_history.append(person_id)
             self.card_history_index = len(self.card_history) - 1
 
+        self.current_person_id = person_id
         gedcom_id, last_name, first_name, sex, birth_date, death_date, note = person
         parents = self.repository.get_parents(gedcom_id)
         spouses = self.repository.get_spouses(gedcom_id)
         children = self.repository.get_children(gedcom_id)
         parents, spouses, children = self._remove_conflicting_relations(parents, spouses, children)
-
         title = f"{last_name or ''} {first_name or ''}".strip() or "Карточка человека"
         self.card_window.title(title)
         self.card_window.deiconify()
         self.card_window.lift()
-
         self.card_text.config(state="normal")
         self.card_text.delete("1.0", "end")
         self._insert_person_details(self.card_text, last_name, first_name, sex, birth_date, death_date, note)
@@ -280,6 +271,77 @@ class GenealogyViewer:
         self.card_text.config(state="disabled")
         self.card_text.yview_moveto(0)
         self._update_navigation_buttons()
+
+    def _open_edit_dialog(self):
+        if self.current_person_id is None:
+            return
+        person = self.repository.get_person(self.current_person_id)
+        if not person:
+            messagebox.showerror("Ошибка", "Человек не найден.")
+            return
+        _gedcom_id, last_name, first_name, sex, birth_date, death_date, note = person
+        dialog = tk.Toplevel(self.card_window)
+        dialog.title("Изменение данных")
+        dialog.geometry("520x470")
+        dialog.transient(self.card_window)
+        dialog.grab_set()
+
+        form = tk.Frame(dialog)
+        form.pack(fill="both", expand=True, padx=12, pady=12)
+        fields = [
+            ("Фамилия", last_name or ""),
+            ("Имя", first_name or ""),
+            ("Пол", sex or ""),
+            ("Рождение", birth_date or ""),
+            ("Смерть", death_date or ""),
+        ]
+        entries = {}
+        for row, (label, value) in enumerate(fields):
+            tk.Label(form, text=label + ":", anchor="w").grid(row=row, column=0, sticky="w", pady=4)
+            entry = tk.Entry(form)
+            entry.insert(0, value)
+            entry.grid(row=row, column=1, sticky="ew", padx=(10, 0), pady=4)
+            entries[label] = entry
+
+        tk.Label(form, text="Примечания:", anchor="nw").grid(row=5, column=0, sticky="nw", pady=4)
+        note_text = tk.Text(form, height=10, wrap="word")
+        note_text.insert("1.0", note or "")
+        note_text.grid(row=5, column=1, sticky="nsew", padx=(10, 0), pady=4)
+        form.columnconfigure(1, weight=1)
+        form.rowconfigure(5, weight=1)
+
+        buttons = tk.Frame(dialog)
+        buttons.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Button(buttons, text="Отмена", command=dialog.destroy).pack(side="right")
+        tk.Button(
+            buttons,
+            text="Сохранить",
+            command=lambda: self._save_person_changes(dialog, entries, note_text),
+        ).pack(side="right", padx=(0, 8))
+        entries["Фамилия"].focus_set()
+
+    def _save_person_changes(self, dialog, entries, note_text):
+        last_name = entries["Фамилия"].get().strip()
+        first_name = entries["Имя"].get().strip()
+        if not last_name and not first_name:
+            messagebox.showwarning("Проверка данных", "Укажите имя или фамилию.", parent=dialog)
+            return
+        updated = self.repository.update_person(
+            self.current_person_id,
+            last_name,
+            first_name,
+            entries["Пол"].get().strip(),
+            entries["Рождение"].get().strip(),
+            entries["Смерть"].get().strip(),
+            note_text.get("1.0", "end-1c").strip(),
+        )
+        if not updated:
+            messagebox.showerror("Ошибка", "Не удалось сохранить изменения.", parent=dialog)
+            return
+        dialog.destroy()
+        self.search_people()
+        self.show_person(self.current_person_id, add_to_history=False)
+        messagebox.showinfo("Сохранено", "Данные человека обновлены.", parent=self.card_window)
 
     @staticmethod
     def _normalize_name(value):
@@ -307,19 +369,14 @@ class GenealogyViewer:
         parents = cls._deduplicate_relatives(parents)
         spouses = cls._deduplicate_relatives(spouses)
         children = cls._deduplicate_relatives(children)
-
         parent_keys = {cls._relative_key(relative) for relative in parents}
         child_keys = {cls._relative_key(relative) for relative in children}
-
         spouses = [
             relative for relative in spouses
             if cls._relative_key(relative) not in parent_keys
             and cls._relative_key(relative) not in child_keys
         ]
-        children = [
-            relative for relative in children
-            if cls._relative_key(relative) not in parent_keys
-        ]
+        children = [relative for relative in children if cls._relative_key(relative) not in parent_keys]
         return parents, spouses, children
 
     @staticmethod
