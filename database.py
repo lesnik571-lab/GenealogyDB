@@ -1,16 +1,21 @@
 import sqlite3
+from pathlib import Path
+
 from config import DB_NAME
 
 
+SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+
+
+def load_schema():
+    return SCHEMA_PATH.read_text(encoding="utf-8")
+
+
 def initialize_database():
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
+    schema = load_schema()
 
-    with open("schema.sql", "r", encoding="utf-8") as f:
-        cur.executescript(f.read())
-
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(DB_NAME) as conn:
+        conn.executescript(schema)
 
 
 if __name__ == "__main__":
