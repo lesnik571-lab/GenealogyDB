@@ -2,6 +2,7 @@ from pathlib import Path
 
 import importer
 import viewer
+from config import DATA_DIR
 from database import initialize_database
 
 
@@ -15,7 +16,7 @@ class GenealogyApplication:
         self.running = True
 
     def prepare_database(self):
-        Path("data").mkdir(parents=True, exist_ok=True)
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
         initialize_database()
 
     def display_menu(self):
@@ -25,8 +26,26 @@ class GenealogyApplication:
         print("0. Выход")
 
     def import_gedcom(self):
-        filename = input("Введите имя GEDCOM-файла: ")
-        importer.import_gedcom(filename)
+        raw_filename = input("Введите имя GEDCOM-файла: ").strip().strip('"')
+        if not raw_filename:
+            print("Импорт отменён: имя файла не указано.")
+            return
+
+        filename = Path(raw_filename).expanduser()
+        if not filename.is_file():
+            print(f"Файл не найден: {filename}")
+            return
+
+        if filename.suffix.lower() != ".ged":
+            print(f"Выбран не GEDCOM-файл: {filename}")
+            return
+
+        try:
+            importer.import_gedcom(str(filename))
+        except (OSError, ValueError) as error:
+            print(f"Ошибка импорта: {error}")
+        except Exception as error:
+            print(f"Не удалось импортировать GEDCOM: {error}")
 
     def open_viewer(self):
         viewer.main()
@@ -40,7 +59,7 @@ class GenealogyApplication:
 
         while self.running:
             self.display_menu()
-            choice = input("Выберите пункт: ")
+            choice = input("Выберите пункт: ").strip()
             action = self.actions.get(choice)
 
             if action is None:
@@ -51,7 +70,7 @@ class GenealogyApplication:
 
 
 def prepare_database():
-    Path("data").mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     initialize_database()
 
 
