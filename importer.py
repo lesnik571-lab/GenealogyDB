@@ -62,9 +62,15 @@ class FamilyImporter:
         self.cursor = cursor
 
     def import_families(self, families):
+        imported_families = 0
+        imported_children = 0
+
         for family in families:
             self._insert_family(family)
-            self._insert_children(family)
+            imported_families += 1
+            imported_children += self._insert_children(family)
+
+        return imported_families, imported_children
 
     def _insert_family(self, family):
         self.cursor.execute(
@@ -85,10 +91,12 @@ class FamilyImporter:
         )
 
     def _insert_children(self, family):
-        for child in family["children"]:
+        imported_children = 0
+
+        for child in dict.fromkeys(family["children"]):
             self.cursor.execute(
                 """
-                INSERT INTO family_children
+                INSERT OR IGNORE INTO family_children
                 (
                     family_id,
                     child_id
@@ -100,6 +108,9 @@ class FamilyImporter:
                     child,
                 ),
             )
+            imported_children += self.cursor.rowcount
+
+        return imported_children
 
 
 class GedcomImporter:
@@ -115,11 +126,21 @@ class GedcomImporter:
             cursor = connection.cursor()
             DatabaseCleaner(cursor).clear()
             imported_people = PeopleImporter(cursor).import_people(people)
-            FamilyImporter(cursor).import_families(families)
+            imported_families, imported_children = FamilyImporter(
+                cursor
+            ).import_families(families)
 
-        print(f"Импортировано людей: {imported_people}")
-        print(f"Импортировано семей: {len(families)}")
+        result = {
+            "people": imported_people,
+            "families": imported_families,
+            "family_children": imported_children,
+        }
+
+        print(f"Импортировано людей: {result['people']}")
+        print(f"Импортировано семей: {result['families']}")
+        print(f"Импортировано связей с детьми: {result['family_children']}")
+        return result
 
 
 def import_gedcom(filename):
-    GedcomImporter().import_file(filename)
+    return GedcomImporter().import_file(filename)
