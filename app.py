@@ -1,8 +1,9 @@
+import sqlite3
 from pathlib import Path
 
 import importer
 import viewer
-from config import DATA_DIR
+from config import DATA_DIR, DB_NAME
 from database import initialize_database
 
 
@@ -11,6 +12,7 @@ class GenealogyApplication:
         self.actions = {
             "1": self.import_gedcom,
             "2": self.open_viewer,
+            "3": self.show_statistics,
             "0": self.exit_application,
         }
         self.running = True
@@ -23,6 +25,7 @@ class GenealogyApplication:
         print("\n=== GenealogyDB 1.1 ===")
         print("1. Импорт GEDCOM")
         print("2. Просмотр базы")
+        print("3. Статистика базы")
         print("0. Выход")
 
     def import_gedcom(self):
@@ -49,6 +52,22 @@ class GenealogyApplication:
 
     def open_viewer(self):
         viewer.main()
+
+    def show_statistics(self):
+        try:
+            with sqlite3.connect(DB_NAME) as connection:
+                cursor = connection.cursor()
+                people_count = cursor.execute("SELECT COUNT(*) FROM people").fetchone()[0]
+                families_count = cursor.execute("SELECT COUNT(*) FROM families").fetchone()[0]
+                relations_count = cursor.execute("SELECT COUNT(*) FROM family_children").fetchone()[0]
+        except sqlite3.Error as error:
+            print(f"Не удалось прочитать статистику базы: {error}")
+            return
+
+        print("\n--- Статистика базы ---")
+        print(f"Людей: {people_count}")
+        print(f"Семей: {families_count}")
+        print(f"Связей родитель—ребёнок: {relations_count}")
 
     def exit_application(self):
         print("До свидания!")
