@@ -82,15 +82,20 @@ class GenealogyRepository:
         self.cursor.execute(
             """
             SELECT DISTINCT
-                c.last_name,
-                c.first_name
+                COALESCE(c.last_name, ''),
+                CASE
+                    WHEN c.gedcom_id IS NULL THEN '[нет записи: ' || fc.child_id || ']'
+                    WHEN TRIM(COALESCE(c.last_name, '') || COALESCE(c.first_name, '')) = ''
+                        THEN '[без имени: ' || fc.child_id || ']'
+                    ELSE COALESCE(c.first_name, '')
+                END
             FROM families AS f
             JOIN family_children AS fc
                 ON f.gedcom_id = fc.family_id
-            JOIN people AS c
+            LEFT JOIN people AS c
                 ON c.gedcom_id = fc.child_id
             WHERE f.husband_id = ? OR f.wife_id = ?
-            ORDER BY c.last_name, c.first_name
+            ORDER BY 1, 2
             """,
             (gedcom_id, gedcom_id),
         )
