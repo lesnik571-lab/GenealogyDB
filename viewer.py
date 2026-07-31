@@ -84,6 +84,25 @@ class GenealogyRepository:
         )
         return self.cursor.fetchall()
 
+    def get_spouses(self, gedcom_id):
+        self.cursor.execute(
+            """
+            SELECT DISTINCT
+                TRIM(COALESCE(p.last_name, '')) AS last_name,
+                TRIM(COALESCE(p.first_name, '')) AS first_name
+            FROM families AS f
+            JOIN people AS p
+                ON p.gedcom_id = CASE
+                    WHEN f.husband_id = ? THEN f.wife_id
+                    WHEN f.wife_id = ? THEN f.husband_id
+                END
+            WHERE f.husband_id = ? OR f.wife_id = ?
+            ORDER BY last_name, first_name
+            """,
+            (gedcom_id, gedcom_id, gedcom_id, gedcom_id),
+        )
+        return self.cursor.fetchall()
+
     def get_children(self, gedcom_id):
         self.cursor.execute(
             """
@@ -213,6 +232,7 @@ class GenealogyViewer:
 
         self._insert_person_details(text, last_name, first_name, sex, birth_date, death_date, note)
         self._insert_relatives(text, "Родители:", self.repository.get_parents(gedcom_id), "неизвестны")
+        self._insert_relatives(text, "\nСупруги:", self.repository.get_spouses(gedcom_id), "нет")
         self._insert_relatives(text, "\nДети:", self.repository.get_children(gedcom_id), "нет")
 
         text.config(state="disabled")
