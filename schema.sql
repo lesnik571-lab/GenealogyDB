@@ -27,3 +27,21 @@ CREATE TABLE family_children (
     family_id TEXT,
     child_id TEXT
 );
+
+CREATE INDEX idx_people_last_first_name
+    ON people(last_name, first_name);
+
+CREATE INDEX idx_people_gedcom_id
+    ON people(gedcom_id);
+
+CREATE INDEX idx_families_husband_id
+    ON families(husband_id);
+
+CREATE INDEX idx_families_wife_id
+    ON families(wife_id);
+
+CREATE INDEX idx_family_children_family_id
+    ON family_children(family_id);
+
+CREATE INDEX idx_family_children_child_id
+    ON family_children(child_id);
