@@ -134,13 +134,29 @@ class GenealogyViewer:
         self.status_label = tk.Label(top, text="Загрузка...")
         self.status_label.pack(side="left", padx=12)
 
-        self.tree = ttk.Treeview(self.root, columns=("id", "name", "birth", "death"), show="headings")
+        table_frame = tk.Frame(self.root)
+        table_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        self.tree = ttk.Treeview(
+            table_frame,
+            columns=("id", "name", "birth", "death"),
+            show="headings",
+        )
+        tree_scrollbar = ttk.Scrollbar(
+            table_frame,
+            orient="vertical",
+            command=self.tree.yview,
+        )
+        self.tree.configure(yscrollcommand=tree_scrollbar.set)
+
         headings = {"id": "ID", "name": "Имя", "birth": "Рождение", "death": "Смерть"}
         widths = {"id": 80, "name": 350, "birth": 120, "death": 120}
         for column, heading in headings.items():
             self.tree.heading(column, text=heading)
             self.tree.column(column, width=widths[column])
-        self.tree.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        self.tree.pack(side="left", fill="both", expand=True)
+        tree_scrollbar.pack(side="right", fill="y")
         self.tree.bind("<Double-1>", self.open_person)
 
     def _search_from_event(self, _event):
@@ -180,8 +196,20 @@ class GenealogyViewer:
         window = tk.Toplevel(self.root)
         window.title(f"{last_name or ''} {first_name or ''}".strip() or "Карточка человека")
         window.geometry("700x600")
-        text = tk.Text(window, wrap="word", cursor="arrow")
-        text.pack(fill="both", expand=True)
+
+        content_frame = tk.Frame(window)
+        content_frame.pack(fill="both", expand=True)
+
+        text = tk.Text(content_frame, wrap="word", cursor="arrow")
+        text_scrollbar = ttk.Scrollbar(
+            content_frame,
+            orient="vertical",
+            command=text.yview,
+        )
+        text.configure(yscrollcommand=text_scrollbar.set)
+        text.pack(side="left", fill="both", expand=True)
+        text_scrollbar.pack(side="right", fill="y")
+
         self._insert_person_details(text, last_name, first_name, sex, birth_date, death_date, note)
         self._insert_relatives(text, "Родители:", parents, "неизвестны")
         self._insert_relatives(text, "\nСупруги:", spouses, "нет")
