@@ -18,11 +18,11 @@ class GenealogyRepository:
         self.cursor.execute(
             """
             SELECT
-                id,
-                last_name,
-                first_name,
-                birth_date,
-                death_date
+                MIN(id) AS id,
+                TRIM(COALESCE(last_name, '')) AS last_name,
+                TRIM(COALESCE(first_name, '')) AS first_name,
+                TRIM(COALESCE(birth_date, '')) AS birth_date,
+                TRIM(COALESCE(death_date, '')) AS death_date
             FROM people
             WHERE
                 TRIM(COALESCE(last_name, '') || COALESCE(first_name, '')) <> ''
@@ -31,10 +31,16 @@ class GenealogyRepository:
                     OR first_name LIKE ?
                     OR TRIM(COALESCE(last_name, '') || ' ' || COALESCE(first_name, '')) LIKE ?
                 )
+            GROUP BY
+                LOWER(TRIM(COALESCE(last_name, ''))),
+                LOWER(TRIM(COALESCE(first_name, ''))),
+                LOWER(TRIM(COALESCE(birth_date, ''))),
+                LOWER(TRIM(COALESCE(death_date, '')))
             ORDER BY
                 CASE WHEN TRIM(COALESCE(last_name, '')) = '' THEN 1 ELSE 0 END,
                 last_name,
-                first_name
+                first_name,
+                birth_date
             LIMIT ?
             """,
             (search_value, search_value, search_value, limit),
@@ -63,8 +69,8 @@ class GenealogyRepository:
         self.cursor.execute(
             """
             SELECT DISTINCT
-                p.last_name,
-                p.first_name
+                TRIM(COALESCE(p.last_name, '')) AS last_name,
+                TRIM(COALESCE(p.first_name, '')) AS first_name
             FROM families AS f
             JOIN family_children AS fc
                 ON f.gedcom_id = fc.family_id
@@ -72,7 +78,7 @@ class GenealogyRepository:
                 ON p.gedcom_id = f.husband_id
                 OR p.gedcom_id = f.wife_id
             WHERE fc.child_id = ?
-            ORDER BY p.last_name, p.first_name
+            ORDER BY last_name, first_name
             """,
             (gedcom_id,),
         )
@@ -82,15 +88,15 @@ class GenealogyRepository:
         self.cursor.execute(
             """
             SELECT DISTINCT
-                c.last_name,
-                c.first_name
+                TRIM(COALESCE(c.last_name, '')) AS last_name,
+                TRIM(COALESCE(c.first_name, '')) AS first_name
             FROM families AS f
             JOIN family_children AS fc
                 ON f.gedcom_id = fc.family_id
             JOIN people AS c
                 ON c.gedcom_id = fc.child_id
             WHERE f.husband_id = ? OR f.wife_id = ?
-            ORDER BY c.last_name, c.first_name
+            ORDER BY last_name, first_name
             """,
             (gedcom_id, gedcom_id),
         )
