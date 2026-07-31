@@ -40,8 +40,14 @@ CREATE INDEX idx_families_husband_id
 CREATE INDEX idx_families_wife_id
     ON families(wife_id);
 
+CREATE INDEX idx_families_spouses
+    ON families(husband_id, wife_id);
+
 CREATE INDEX idx_family_children_family_id
     ON family_children(family_id);
 
 CREATE INDEX idx_family_children_child_id
     ON family_children(child_id);
+
+CREATE INDEX idx_family_children_relation
+    ON family_children(family_id, child_id);
