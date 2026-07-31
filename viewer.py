@@ -117,6 +117,12 @@ class GenealogyViewer:
     def __init__(self, root):
         self.root = root
         self.repository = GenealogyRepository(DB_NAME)
+        self.card_window = None
+        self.card_text = None
+        self.back_button = None
+        self.forward_button = None
+        self.card_history = []
+        self.card_history_index = -1
         self.root.title("Genealogy Viewer")
         self.root.geometry("1000x700")
         self._create_widgets()
@@ -182,39 +188,98 @@ class GenealogyViewer:
         if selected:
             self.show_person(self.tree.item(selected[0])["values"][0])
 
-    def show_person(self, person_id):
+    def _create_person_window(self):
+        self.card_window = tk.Toplevel(self.root)
+        self.card_window.geometry("700x600")
+        self.card_window.protocol("WM_DELETE_WINDOW", self._close_person_window)
+
+        navigation = tk.Frame(self.card_window)
+        navigation.pack(fill="x", padx=8, pady=8)
+        self.back_button = tk.Button(
+            navigation,
+            text="← Назад",
+            command=lambda: self._move_in_history(-1),
+        )
+        self.back_button.pack(side="left")
+        self.forward_button = tk.Button(
+            navigation,
+            text="Вперёд →",
+            command=lambda: self._move_in_history(1),
+        )
+        self.forward_button.pack(side="left", padx=(8, 0))
+
+        content_frame = tk.Frame(self.card_window)
+        content_frame.pack(fill="both", expand=True)
+        self.card_text = tk.Text(content_frame, wrap="word", cursor="arrow")
+        text_scrollbar = ttk.Scrollbar(
+            content_frame,
+            orient="vertical",
+            command=self.card_text.yview,
+        )
+        self.card_text.configure(yscrollcommand=text_scrollbar.set)
+        self.card_text.pack(side="left", fill="both", expand=True)
+        text_scrollbar.pack(side="right", fill="y")
+
+    def _close_person_window(self):
+        if self.card_window is not None:
+            self.card_window.destroy()
+        self.card_window = None
+        self.card_text = None
+        self.back_button = None
+        self.forward_button = None
+        self.card_history = []
+        self.card_history_index = -1
+
+    def _move_in_history(self, offset):
+        target_index = self.card_history_index + offset
+        if 0 <= target_index < len(self.card_history):
+            self.card_history_index = target_index
+            self.show_person(self.card_history[target_index], add_to_history=False)
+
+    def _update_navigation_buttons(self):
+        if self.back_button is None or self.forward_button is None:
+            return
+        back_state = "normal" if self.card_history_index > 0 else "disabled"
+        forward_state = "normal" if self.card_history_index < len(self.card_history) - 1 else "disabled"
+        self.back_button.config(state=back_state)
+        self.forward_button.config(state=forward_state)
+
+    def show_person(self, person_id, add_to_history=True):
         person = self.repository.get_person(person_id)
         if not person:
             messagebox.showerror("Ошибка", "Человек не найден.")
             return
+
+        if self.card_window is None or not self.card_window.winfo_exists():
+            self._create_person_window()
+
+        if add_to_history:
+            if self.card_history_index < len(self.card_history) - 1:
+                self.card_history = self.card_history[:self.card_history_index + 1]
+            if not self.card_history or self.card_history[-1] != person_id:
+                self.card_history.append(person_id)
+            self.card_history_index = len(self.card_history) - 1
+
         gedcom_id, last_name, first_name, sex, birth_date, death_date, note = person
         parents = self.repository.get_parents(gedcom_id)
         spouses = self.repository.get_spouses(gedcom_id)
         children = self.repository.get_children(gedcom_id)
         parents, spouses, children = self._remove_conflicting_relations(parents, spouses, children)
 
-        window = tk.Toplevel(self.root)
-        window.title(f"{last_name or ''} {first_name or ''}".strip() or "Карточка человека")
-        window.geometry("700x600")
+        title = f"{last_name or ''} {first_name or ''}".strip() or "Карточка человека"
+        self.card_window.title(title)
+        self.card_window.deiconify()
+        self.card_window.lift()
 
-        content_frame = tk.Frame(window)
-        content_frame.pack(fill="both", expand=True)
-
-        text = tk.Text(content_frame, wrap="word", cursor="arrow")
-        text_scrollbar = ttk.Scrollbar(
-            content_frame,
-            orient="vertical",
-            command=text.yview,
-        )
-        text.configure(yscrollcommand=text_scrollbar.set)
-        text.pack(side="left", fill="both", expand=True)
-        text_scrollbar.pack(side="right", fill="y")
-
-        self._insert_person_details(text, last_name, first_name, sex, birth_date, death_date, note)
-        self._insert_relatives(text, "Родители:", parents, "неизвестны")
-        self._insert_relatives(text, "\nСупруги:", spouses, "нет")
-        self._insert_relatives(text, "\nДети:", children, "нет")
-        text.config(state="disabled")
+        self.card_text.config(state="normal")
+        self.card_text.delete("1.0", "end")
+        self._insert_person_details(self.card_text, last_name, first_name, sex, birth_date, death_date, note)
+        self._insert_relatives(self.card_text, "Родители:", parents, "неизвестны")
+        self._insert_relatives(self.card_text, "\nСупруги:", spouses, "нет")
+        self._insert_relatives(self.card_text, "\nДети:", children, "нет")
+        self.card_text.config(state="disabled")
+        self.card_text.yview_moveto(0)
+        self._update_navigation_buttons()
 
     @staticmethod
     def _normalize_name(value):
@@ -280,7 +345,11 @@ class GenealogyViewer:
             text.tag_config(tag_name, foreground="blue", underline=True)
             text.tag_bind(tag_name, "<Enter>", lambda _event, widget=text: widget.config(cursor="hand2"))
             text.tag_bind(tag_name, "<Leave>", lambda _event, widget=text: widget.config(cursor="arrow"))
-            text.tag_bind(tag_name, "<Double-Button-1>", lambda _event, target_id=person_id: self.show_person(target_id))
+            text.tag_bind(
+                tag_name,
+                "<Double-Button-1>",
+                lambda _event, target_id=person_id: self.show_person(target_id),
+            )
 
     def close(self):
         self.repository.close()
