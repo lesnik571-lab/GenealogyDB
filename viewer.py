@@ -1,66 +1,21 @@
 import sqlite3
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import messagebox, ttk
 
 from config import DB_NAME
 
 
-class GenealogyViewer:
+class GenealogyRepository:
+    def __init__(self, database_name):
+        self.connection = sqlite3.connect(database_name)
+        self.cursor = self.connection.cursor()
 
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Genealogy Viewer")
-        self.root.geometry("1000x700")
+    def close(self):
+        self.connection.close()
 
-        self.conn = sqlite3.connect(DB_NAME)
-        self.cur = self.conn.cursor()
-
-        self.create_widgets()
-
-    def create_widgets(self):
-
-        top = tk.Frame(self.root)
-        top.pack(fill="x", padx=10, pady=10)
-
-        tk.Label(top, text="Фамилия:").pack(side="left")
-
-        self.search_entry = tk.Entry(top, width=30)
-        self.search_entry.pack(side="left", padx=5)
-
-        tk.Button(
-            top,
-            text="Поиск",
-            command=self.search_people
-        ).pack(side="left")
-
-        self.tree = ttk.Treeview(
-            self.root,
-            columns=("id", "name", "birth", "death"),
-            show="headings"
-        )
-
-        self.tree.heading("id", text="ID")
-        self.tree.heading("name", text="Имя")
-        self.tree.heading("birth", text="Рождение")
-        self.tree.heading("death", text="Смерть")
-
-        self.tree.column("id", width=80)
-        self.tree.column("name", width=350)
-        self.tree.column("birth", width=120)
-        self.tree.column("death", width=120)
-
-        self.tree.pack(fill="both", expand=True, padx=10)
-
-        self.tree.bind("<Double-1>", self.open_person)
-
-    def search_people(self):
-
-        last_name = self.search_entry.get().strip()
-
-        for row in self.tree.get_children():
-            self.tree.delete(row)
-
-        self.cur.execute("""
+    def find_people(self, last_name):
+        self.cursor.execute(
+            """
             SELECT
                 id,
                 last_name,
@@ -70,41 +25,16 @@ class GenealogyViewer:
             FROM people
             WHERE last_name LIKE ?
             ORDER BY last_name, first_name
-        """, (last_name + "%",))
+            """,
+            (last_name + "%",),
+        )
+        return self.cursor.fetchall()
 
-        rows = self.cur.fetchall()
-
-        for person in rows:
-
-            pid = person[0]
-            full_name = f"{person[1]} {person[2]}".strip()
-
-            self.tree.insert(
-                "",
-                "end",
-                values=(
-                    pid,
-                    full_name,
-                    person[3] or "",
-                    person[4] or ""
-                )
-            )
-
-    def open_person(self, event):
-
-        selected = self.tree.selection()
-
-        if not selected:
-            return
-
-        person_id = self.tree.item(selected[0])["values"][0]
-        self.show_person(person_id)
-
-    def show_person(self, person_id):
-       
-
-        self.cur.execute("""
+    def get_person(self, person_id):
+        self.cursor.execute(
+            """
             SELECT
+                gedcom_id,
                 last_name,
                 first_name,
                 sex,
@@ -112,107 +42,213 @@ class GenealogyViewer:
                 death_date,
                 note
             FROM people
-            WHERE id=?
-        """, (person_id,))
+            WHERE id = ?
+            """,
+            (person_id,),
+        )
+        return self.cursor.fetchone()
 
-        person = self.cur.fetchone()
-
-        if not person:
-            messagebox.showerror("Ошибка", "Человек не найден.")
-            return
-
-        win = tk.Toplevel(self.root)
-        win.title(f"{person[0]} {person[1]}")
-        win.geometry("700x600")
-
-        text = tk.Text(win, wrap="word")
-        text.pack(fill="both", expand=True)
-
-        text.insert("end", f"Фамилия: {person[0]}\n")
-        text.insert("end", f"Имя: {person[1]}\n")
-        text.insert("end", f"Пол: {person[2] or ''}\n")
-        text.insert("end", f"Рождение: {person[3] or ''}\n")
-        text.insert("end", f"Смерть: {person[4] or ''}\n\n")
-
-        if person[5]:
-            text.insert("end", "Примечания:\n")
-            text.insert("end", person[5] + "\n\n")
-
-        text.insert("end", "Родители:\n")
-        self.show_parents(text, person_id)
-
-        text.insert("end", "\nДети:\n")
-        self.show_children(text, person_id)
-
-        text.config(state="disabled")
-
-    def show_parents(self, text, person_id):
-
-        self.cur.execute("""
+    def get_parents(self, gedcom_id):
+        self.cursor.execute(
+            """
             SELECT DISTINCT
                 p.last_name,
                 p.first_name
-            FROM families f
-            JOIN family_children fc
+            FROM families AS f
+            JOIN family_children AS fc
                 ON f.gedcom_id = fc.family_id
-            JOIN people p
+            JOIN people AS p
                 ON p.gedcom_id = f.husband_id
                 OR p.gedcom_id = f.wife_id
             WHERE fc.child_id = ?
             ORDER BY p.last_name, p.first_name
-        """, (person_id,))
+            """,
+            (gedcom_id,),
+        )
+        return self.cursor.fetchall()
 
-        rows = self.cur.fetchall()
-        if not rows:
-            text.insert("end", "  неизвестны\n")
-            return
-
-        for last_name, first_name in rows:
-            text.insert("end", f"  {last_name} {first_name}\n")
-
-    def show_children(self, text, person_id):
-      
-        self.cur.execute("""
+    def get_children(self, gedcom_id):
+        self.cursor.execute(
+            """
             SELECT DISTINCT
                 c.last_name,
                 c.first_name
-            FROM families f
-            JOIN family_children fc
+            FROM families AS f
+            JOIN family_children AS fc
                 ON f.gedcom_id = fc.family_id
-            JOIN people c
+            JOIN people AS c
                 ON c.gedcom_id = fc.child_id
-            WHERE
-                f.husband_id = (SELECT gedcom_id FROM people WHERE id=?)
-                OR
-                f.wife_id = (SELECT gedcom_id FROM people WHERE id=?)
-            ORDER BY
-                c.last_name,
-                c.first_name
-        """, (person_id, person_id))
+            WHERE f.husband_id = ? OR f.wife_id = ?
+            ORDER BY c.last_name, c.first_name
+            """,
+            (gedcom_id, gedcom_id),
+        )
+        return self.cursor.fetchall()
 
-        rows = self.cur.fetchall()
 
-        if not rows:
-            text.insert("end", "  нет\n")
+class GenealogyViewer:
+    def __init__(self, root):
+        self.root = root
+        self.repository = GenealogyRepository(DB_NAME)
+
+        self.root.title("Genealogy Viewer")
+        self.root.geometry("1000x700")
+
+        self._create_widgets()
+
+    def _create_widgets(self):
+        top = tk.Frame(self.root)
+        top.pack(fill="x", padx=10, pady=10)
+
+        tk.Label(top, text="Фамилия:").pack(side="left")
+
+        self.search_entry = tk.Entry(top, width=30)
+        self.search_entry.pack(side="left", padx=5)
+        self.search_entry.bind("<Return>", self._search_from_event)
+
+        tk.Button(top, text="Поиск", command=self.search_people).pack(side="left")
+
+        self.tree = ttk.Treeview(
+            self.root,
+            columns=("id", "name", "birth", "death"),
+            show="headings",
+        )
+
+        headings = {
+            "id": "ID",
+            "name": "Имя",
+            "birth": "Рождение",
+            "death": "Смерть",
+        }
+        widths = {
+            "id": 80,
+            "name": 350,
+            "birth": 120,
+            "death": 120,
+        }
+
+        for column, heading in headings.items():
+            self.tree.heading(column, text=heading)
+            self.tree.column(column, width=widths[column])
+
+        self.tree.pack(fill="both", expand=True, padx=10)
+        self.tree.bind("<Double-1>", self.open_person)
+
+    def _search_from_event(self, _event):
+        self.search_people()
+
+    def _clear_results(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+    def search_people(self):
+        self._clear_results()
+        last_name = self.search_entry.get().strip()
+
+        for person_id, last_name, first_name, birth_date, death_date in self.repository.find_people(last_name):
+            full_name = f"{last_name} {first_name}".strip()
+            self.tree.insert(
+                "",
+                "end",
+                values=(
+                    person_id,
+                    full_name,
+                    birth_date or "",
+                    death_date or "",
+                ),
+            )
+
+    def open_person(self, _event):
+        selected = self.tree.selection()
+        if not selected:
             return
 
-        for last_name, first_name in rows:
+        person_id = self.tree.item(selected[0])["values"][0]
+        self.show_person(person_id)
+
+    def show_person(self, person_id):
+        person = self.repository.get_person(person_id)
+        if not person:
+            messagebox.showerror("Ошибка", "Человек не найден.")
+            return
+
+        gedcom_id, last_name, first_name, sex, birth_date, death_date, note = person
+
+        window = tk.Toplevel(self.root)
+        window.title(f"{last_name} {first_name}")
+        window.geometry("700x600")
+
+        text = tk.Text(window, wrap="word")
+        text.pack(fill="both", expand=True)
+
+        self._insert_person_details(
+            text,
+            last_name,
+            first_name,
+            sex,
+            birth_date,
+            death_date,
+            note,
+        )
+        self._insert_relatives(
+            text,
+            "Родители:",
+            self.repository.get_parents(gedcom_id),
+            "неизвестны",
+        )
+        self._insert_relatives(
+            text,
+            "\nДети:",
+            self.repository.get_children(gedcom_id),
+            "нет",
+        )
+
+        text.config(state="disabled")
+
+    @staticmethod
+    def _insert_person_details(
+        text,
+        last_name,
+        first_name,
+        sex,
+        birth_date,
+        death_date,
+        note,
+    ):
+        text.insert("end", f"Фамилия: {last_name}\n")
+        text.insert("end", f"Имя: {first_name}\n")
+        text.insert("end", f"Пол: {sex or ''}\n")
+        text.insert("end", f"Рождение: {birth_date or ''}\n")
+        text.insert("end", f"Смерть: {death_date or ''}\n\n")
+
+        if note:
+            text.insert("end", "Примечания:\n")
+            text.insert("end", note + "\n\n")
+
+    @staticmethod
+    def _insert_relatives(text, title, relatives, empty_text):
+        text.insert("end", title + "\n")
+
+        if not relatives:
+            text.insert("end", f"  {empty_text}\n")
+            return
+
+        for last_name, first_name in relatives:
             text.insert("end", f"  {last_name} {first_name}\n")
 
     def close(self):
-        self.conn.close()
+        self.repository.close()
+
 
 def main():
-
     root = tk.Tk()
-
     app = GenealogyViewer(root)
 
-    root.protocol(
-        "WM_DELETE_WINDOW",
-        lambda: (app.close(), root.destroy())
-    )
+    def close_application():
+        app.close()
+        root.destroy()
 
+    root.protocol("WM_DELETE_WINDOW", close_application)
     root.mainloop()
 
 
