@@ -79,9 +79,10 @@ class GenealogyRepository:
                 ON p.gedcom_id = f.husband_id
                 OR p.gedcom_id = f.wife_id
             WHERE fc.child_id = ?
+                AND p.gedcom_id <> ?
             ORDER BY last_name, first_name
             """,
-            (gedcom_id,),
+            (gedcom_id, gedcom_id),
         )
         return self.cursor.fetchall()
 
@@ -98,10 +99,11 @@ class GenealogyRepository:
                     WHEN f.husband_id = ? THEN f.wife_id
                     WHEN f.wife_id = ? THEN f.husband_id
                 END
-            WHERE f.husband_id = ? OR f.wife_id = ?
+            WHERE (f.husband_id = ? OR f.wife_id = ?)
+                AND p.gedcom_id <> ?
             ORDER BY last_name, first_name
             """,
-            (gedcom_id, gedcom_id, gedcom_id, gedcom_id),
+            (gedcom_id, gedcom_id, gedcom_id, gedcom_id, gedcom_id),
         )
         return self.cursor.fetchall()
 
@@ -117,10 +119,11 @@ class GenealogyRepository:
                 ON f.gedcom_id = fc.family_id
             JOIN people AS c
                 ON c.gedcom_id = fc.child_id
-            WHERE f.husband_id = ? OR f.wife_id = ?
+            WHERE (f.husband_id = ? OR f.wife_id = ?)
+                AND c.gedcom_id <> ?
             ORDER BY last_name, first_name
             """,
-            (gedcom_id, gedcom_id),
+            (gedcom_id, gedcom_id, gedcom_id),
         )
         return self.cursor.fetchall()
 
@@ -226,6 +229,11 @@ class GenealogyViewer:
 
         gedcom_id, last_name, first_name, sex, birth_date, death_date, note = person
 
+        parents = self.repository.get_parents(gedcom_id)
+        spouses = self.repository.get_spouses(gedcom_id)
+        children = self.repository.get_children(gedcom_id)
+        parents, spouses, children = self._remove_conflicting_relations(parents, spouses, children)
+
         window = tk.Toplevel(self.root)
         window.title(f"{last_name or ''} {first_name or ''}".strip() or "Карточка человека")
         window.geometry("700x600")
@@ -234,11 +242,20 @@ class GenealogyViewer:
         text.pack(fill="both", expand=True)
 
         self._insert_person_details(text, last_name, first_name, sex, birth_date, death_date, note)
-        self._insert_relatives(text, "Родители:", self.repository.get_parents(gedcom_id), "неизвестны")
-        self._insert_relatives(text, "\nСупруги:", self.repository.get_spouses(gedcom_id), "нет")
-        self._insert_relatives(text, "\nДети:", self.repository.get_children(gedcom_id), "нет")
+        self._insert_relatives(text, "Родители:", parents, "неизвестны")
+        self._insert_relatives(text, "\nСупруги:", spouses, "нет")
+        self._insert_relatives(text, "\nДети:", children, "нет")
 
         text.config(state="disabled")
+
+    @staticmethod
+    def _remove_conflicting_relations(parents, spouses, children):
+        parent_ids = {person_id for person_id, _last_name, _first_name in parents}
+        child_ids = {person_id for person_id, _last_name, _first_name in children}
+
+        spouses = [relative for relative in spouses if relative[0] not in parent_ids and relative[0] not in child_ids]
+        children = [relative for relative in children if relative[0] not in parent_ids]
+        return parents, spouses, children
 
     @staticmethod
     def _insert_person_details(text, last_name, first_name, sex, birth_date, death_date, note):
