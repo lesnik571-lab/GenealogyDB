@@ -30,12 +30,28 @@ def create_family(gedcom_id):
 def parse_person_line(line, current_person, birth_mode, death_mode):
     if line.startswith("1 NAME"):
         name = line[7:].strip()
-        match = re.match(r"(.*?)/(.*?)/", name)
-        if match:
-            current_person["first_name"] = match.group(1).strip()
-            current_person["last_name"] = match.group(2).strip()
+
+        if not name:
+            current_person["first_name"] = ""
+            current_person["last_name"] = ""
         else:
-            current_person["first_name"] = name
+            cleaned_name = name.strip().strip('/')
+            if "/" in cleaned_name:
+                parts = [part.strip() for part in cleaned_name.split('/') if part.strip()]
+                if len(parts) >= 2:
+                    current_person["first_name"] = parts[0]
+                    current_person["last_name"] = parts[1]
+                else:
+                    current_person["first_name"] = cleaned_name
+                    current_person["last_name"] = ""
+            else:
+                parts = [part.strip() for part in re.split(r"\s+", cleaned_name) if part.strip()]
+                if len(parts) >= 2:
+                    current_person["first_name"] = parts[0]
+                    current_person["last_name"] = parts[-1]
+                else:
+                    current_person["first_name"] = cleaned_name
+                    current_person["last_name"] = ""
     elif line.startswith("1 SEX"):
         current_person["sex"] = line[6:].strip()
     elif line.startswith("1 BIRT"):

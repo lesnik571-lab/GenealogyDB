@@ -79,7 +79,11 @@ class GenealogyViewer:
                 return self.repository.find_people(query)
             except TypeError:
                 pass
-        return self.repository.list_people(first_name=query, last_name=query, surname=query)
+
+        if not query:
+            return self.repository.list_people()
+
+        return self.repository.list_people(surname=query, first_name=query, last_name=query)
 
     def search_people(self):
         query = self.search_entry.get().strip()
@@ -87,8 +91,15 @@ class GenealogyViewer:
         self.status_label.config(text="Поиск..." if query else "Загрузка...")
         self.root.update_idletasks()
         rows = self._query_people(query)
-        for person_id, last_name, first_name, birth_date, death_date in rows:
-            full_name = self.format_name(last_name, first_name)
+        for row in rows:
+            if not row:
+                continue
+            person_id = row[0]
+            last_name = row[1]
+            first_name = row[2]
+            birth_date = row[3]
+            death_date = row[4]
+            full_name = f"{first_name} {last_name}".strip()
             self.tree.insert("", "end", values=(person_id, full_name, birth_date or "", death_date or ""))
         self.status_label.config(text=f"Показано: {len(rows)}" if rows else "Ничего не найдено")
 
