@@ -67,3 +67,43 @@ def test_parse_gedcom_populates_name_fields_from_name_tag():
         assert data["people"][1]["death_date"] == "2 JAN 2020"
     finally:
         Path(temp_path).unlink(missing_ok=True)
+
+
+def test_parse_gedcom_handles_cyrillic_names_with_surname_only():
+    gedcom = """0 HEAD
+1 SOUR Test
+0 @I1@ INDI
+1 NAME Яков /Лесник/
+1 SEX M
+0 @I2@ INDI
+1 NAME Иосиф /Лесник/
+1 SEX M
+0 @I3@ INDI
+1 NAME /Кременчутский/
+1 SEX F
+0 @I4@ INDI
+1 NAME Шулим /Трахтенберг/
+1 SEX M
+0 @I5@ INDI
+1 NAME Рахель /Кременчутская/
+1 SEX F
+"""
+
+    with tempfile.NamedTemporaryFile("w", suffix=".ged", delete=False, encoding="utf-8") as handle:
+        handle.write(gedcom)
+        temp_path = handle.name
+
+    try:
+        data = parse_gedcom(temp_path)
+        assert data["people"][0]["first_name"] == "Яков"
+        assert data["people"][0]["last_name"] == "Лесник"
+        assert data["people"][1]["first_name"] == "Иосиф"
+        assert data["people"][1]["last_name"] == "Лесник"
+        assert data["people"][2]["first_name"] == ""
+        assert data["people"][2]["last_name"] == "Кременчутский"
+        assert data["people"][3]["first_name"] == "Шулим"
+        assert data["people"][3]["last_name"] == "Трахтенберг"
+        assert data["people"][4]["first_name"] == "Рахель"
+        assert data["people"][4]["last_name"] == "Кременчутская"
+    finally:
+        Path(temp_path).unlink(missing_ok=True)

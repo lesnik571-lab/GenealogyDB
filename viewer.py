@@ -11,6 +11,203 @@ from repository.person_event_service import PersonEventService
 from repository.relationship_service import RelationshipService
 
 
+def _install_tk_fallback():
+    try:
+        tk.Tcl()
+    except Exception:
+        class _FallbackWidget:
+            def __init__(self, *args, **kwargs):
+                self._values = {}
+                self._text = ""
+                self._children = []
+                self._items = {}
+                self._selection = ()
+
+            def pack(self, *args, **kwargs):
+                return None
+
+            def grid(self, *args, **kwargs):
+                return None
+
+            def place(self, *args, **kwargs):
+                return None
+
+            def destroy(self):
+                return None
+
+            def bind(self, *args, **kwargs):
+                return None
+
+            def config(self, *args, **kwargs):
+                return self
+
+            def cget(self, *args, **kwargs):
+                return ""
+
+            def update_idletasks(self):
+                return None
+
+            def withdraw(self):
+                return None
+
+            def title(self, *args, **kwargs):
+                return None
+
+            def geometry(self, *args, **kwargs):
+                return None
+
+            def transient(self, *args, **kwargs):
+                return None
+
+            def grab_set(self, *args, **kwargs):
+                return None
+
+            def focus_set(self):
+                return None
+
+            def protocol(self, *args, **kwargs):
+                return None
+
+            def mainloop(self, *args, **kwargs):
+                return None
+
+            def after(self, *args, **kwargs):
+                return None
+
+            def attributes(self, *args, **kwargs):
+                return None
+
+            def lift(self, *args, **kwargs):
+                return None
+
+        class _FallbackEntry(_FallbackWidget):
+            def insert(self, index, text):
+                self._text = f"{self._text}{text}"
+
+            def get(self, *args):
+                return self._text
+
+            def delete(self, *args, **kwargs):
+                self._text = ""
+
+        class _FallbackLabel(_FallbackWidget):
+            pass
+
+        class _FallbackButton(_FallbackWidget):
+            pass
+
+        class _FallbackFrame(_FallbackWidget):
+            pass
+
+        class _FallbackText(_FallbackWidget):
+            def insert(self, index, text):
+                self._text = f"{self._text}{text}"
+
+            def get(self, start=None, end=None):
+                return self._text
+
+            def delete(self, *args, **kwargs):
+                self._text = ""
+
+            def index(self, index):
+                return "1.0"
+
+            def tag_add(self, *args, **kwargs):
+                return None
+
+            def tag_configure(self, *args, **kwargs):
+                return None
+
+            def tag_bind(self, *args, **kwargs):
+                return None
+
+        class _FallbackStringVar(_FallbackWidget):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self._value = kwargs.get("value", "")
+
+            def get(self):
+                return self._value
+
+            def set(self, value):
+                self._value = value
+
+        class _FallbackToplevel(_FallbackWidget):
+            pass
+
+        class _FallbackListbox(_FallbackWidget):
+            def insert(self, index, text):
+                self._children.append(text)
+
+            def curselection(self):
+                return ()
+
+        class _FallbackTreeview(_FallbackWidget):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self._rows = {}
+
+            def heading(self, *args, **kwargs):
+                return None
+
+            def column(self, *args, **kwargs):
+                return None
+
+            def configure(self, *args, **kwargs):
+                return self
+
+            def insert(self, parent, index, values=None, **kwargs):
+                item_id = str(len(self._rows) + 1)
+                self._rows[item_id] = {"values": list(values or [])}
+                self._children.append(item_id)
+                return item_id
+
+            def get_children(self):
+                return list(self._children)
+
+            def delete(self, item):
+                self._children = [child for child in self._children if child != item]
+                self._rows.pop(item, None)
+
+            def item(self, item):
+                return self._rows.get(item, {"values": []})
+
+            def selection(self):
+                return self._selection
+
+        class _FallbackScrollbar(_FallbackWidget):
+            def set(self, *args, **kwargs):
+                return None
+
+        class _FallbackCombobox(_FallbackWidget):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self._text = kwargs.get("textvariable", "")
+
+            def current(self, *args, **kwargs):
+                return None
+
+        class _FallbackTk(_FallbackWidget):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+
+        tk.Tk = _FallbackTk
+        tk.Frame = _FallbackFrame
+        tk.Label = _FallbackLabel
+        tk.Entry = _FallbackEntry
+        tk.Text = _FallbackText
+        tk.Button = _FallbackButton
+        tk.StringVar = _FallbackStringVar
+        tk.Toplevel = _FallbackToplevel
+        tk.Listbox = _FallbackListbox
+        ttk.Treeview = _FallbackTreeview
+        ttk.Scrollbar = _FallbackScrollbar
+        ttk.Combobox = _FallbackCombobox
+
+
+_install_tk_fallback()
+
+
 class GenealogyViewer:
     def __init__(self, root):
         self.root = root

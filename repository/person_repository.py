@@ -57,11 +57,8 @@ class PersonRepository:
         for row in rows:
             person_id, person_last_name, person_first_name, birth_date, death_date, person_sex = row
 
-            if surname and not self._matches_prefix(person_last_name, surname):
-                continue
-            if first_name and not self._matches_search(person_first_name, first_name):
-                continue
-            if last_name and not self._matches_search(person_last_name, last_name):
+            search_text = next((value for value in (surname, first_name, last_name) if value), None)
+            if search_text and not self._matches_name_query(person_first_name, person_last_name, search_text):
                 continue
             if birth_year is not None and birth_year != "" and not self._matches_year(birth_date, birth_year):
                 continue
@@ -83,6 +80,32 @@ class PersonRepository:
     @staticmethod
     def _matches_search(value, text):
         return (text or "") in (value or "")
+
+    @staticmethod
+    def _matches_name_query(first_name, last_name, text):
+        if not text:
+            return True
+
+        normalized_text = _normalize_text(text)
+        if not normalized_text:
+            return True
+
+        parts = normalized_text.split()
+        if len(parts) == 1:
+            term = parts[0]
+            return term in _normalize_text(first_name) or term in _normalize_text(last_name)
+
+        if len(parts) == 2:
+            first_term, second_term = parts
+            first_name_normalized = _normalize_text(first_name)
+            last_name_normalized = _normalize_text(last_name)
+            return (
+                first_term in first_name_normalized and second_term in last_name_normalized
+            ) or (
+                second_term in first_name_normalized and first_term in last_name_normalized
+            )
+
+        return False
 
     @staticmethod
     def _matches_year(value, year):

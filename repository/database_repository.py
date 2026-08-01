@@ -69,6 +69,18 @@ class DatabaseRepository:
         imported_people = 0
 
         for person in people:
+            params = (
+                person["gedcom_id"],
+                person["first_name"],
+                person["last_name"],
+                person["sex"],
+                person["birth_date"],
+                person["birth_place"],
+                person["death_date"],
+                person["death_place"],
+                person["occupation"],
+                person["note"],
+            )
             cur.execute(
                 """
                 INSERT OR REPLACE INTO people
@@ -86,18 +98,7 @@ class DatabaseRepository:
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    person["gedcom_id"],
-                    person["first_name"],
-                    person["last_name"],
-                    person["sex"],
-                    person["birth_date"],
-                    person["birth_place"],
-                    person["death_date"],
-                    person["death_place"],
-                    person["occupation"],
-                    person["note"],
-                ),
+                params,
             )
             imported_people += 1
 

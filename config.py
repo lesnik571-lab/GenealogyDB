@@ -15,9 +15,10 @@ DATA_DIR = _resolve_path(
     os.getenv("GENEALOGYDB_DATA_DIR"),
     PROJECT_ROOT / "data",
 )
+DEFAULT_DB_PATH = (DATA_DIR / "genealogy.db").resolve()
 DB_NAME = str(_resolve_path(
     os.getenv("GENEALOGYDB_DB_NAME"),
-    DATA_DIR / "genealogy.db",
+    DEFAULT_DB_PATH,
 ))
 
 # application version

@@ -1,6 +1,8 @@
 from pathlib import Path
 import sqlite3
 
+import pytest
+
 from viewer import GenealogyViewer
 
 
@@ -40,3 +42,41 @@ def test_viewer_search_uses_filters(tmp_path):
 
     rows = viewer.repository.list_people(first_name="John")
     assert len(rows) == 1
+
+
+@pytest.mark.parametrize(
+    "query, expected_last_names",
+    [
+        ("Лесник", ["Лесник", "Лесник"]),
+        ("Борис", ["Лесник"]),
+        ("Борис Лесник", ["Лесник"]),
+        ("Лесник Борис", ["Лесник"]),
+    ],
+)
+def test_repository_search_matches_name_queries(tmp_path, query, expected_last_names):
+    db_path = tmp_path / "name_search.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        schema_sql = Path("schema.sql").read_text(encoding="utf-8")
+        conn.executescript(schema_sql)
+        conn.execute(
+            "INSERT INTO people (gedcom_id, first_name, last_name, sex, birth_date, death_date) VALUES (?, ?, ?, ?, ?, ?)",
+            ("I1", "Борис", "Лесник", "M", "22 OCT 1934", ""),
+        )
+        conn.execute(
+            "INSERT INTO people (gedcom_id, first_name, last_name, sex, birth_date, death_date) VALUES (?, ?, ?, ?, ?, ?)",
+            ("I2", "Иосиф", "Лесник", "M", "", "1985"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    from repository.person_repository import PersonRepository
+
+    repo = PersonRepository(str(db_path))
+    try:
+        rows = repo.list_people(surname=query, first_name=query, last_name=query)
+    finally:
+        repo.close()
+
+    assert [row[1] for row in rows] == expected_last_names
