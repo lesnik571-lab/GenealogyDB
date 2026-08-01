@@ -67,6 +67,62 @@ def test_person_repository_relationship_methods(temp_db):
     repo.close()
 
 
+def test_person_repository_filters_by_name_year_and_sex(temp_db):
+    repo = PersonRepository(str(temp_db))
+
+    conn = sqlite3.connect(temp_db)
+    conn.execute(
+        "INSERT INTO people (gedcom_id, first_name, last_name, sex, birth_date, death_date) VALUES (?, ?, ?, ?, ?, ?)",
+        ("I1", "John", "Doe", "M", "1 JAN 1900", "1 JAN 1950"),
+    )
+    conn.execute(
+        "INSERT INTO people (gedcom_id, first_name, last_name, sex, birth_date, death_date) VALUES (?, ?, ?, ?, ?, ?)",
+        ("I2", "Jane", "Smith", "F", "2 JAN 1910", "2 JAN 1960"),
+    )
+    conn.execute(
+        "INSERT INTO people (gedcom_id, first_name, last_name, sex, birth_date, death_date) VALUES (?, ?, ?, ?, ?, ?)",
+        ("I3", "John", "Smith", "M", "3 JAN 1920", "3 JAN 1980"),
+    )
+    conn.commit()
+    conn.close()
+
+    name_matches = repo.list_people(first_name="John")
+    assert len(name_matches) == 2
+    assert {row[2] for row in name_matches} == {"John"}
+
+    combined_matches = repo.list_people(last_name="Smith", birth_year=1920, death_year=1980, sex="M")
+    assert len(combined_matches) == 1
+    assert combined_matches[0][1:3] == ("Smith", "John")
+
+    repo.close()
+
+
+def test_duplicate_detection_reports_exact_and_near_matches(temp_db):
+    repo = PersonRepository(str(temp_db))
+
+    conn = sqlite3.connect(temp_db)
+    conn.execute(
+        "INSERT INTO people (gedcom_id, first_name, last_name, birth_date, death_date) VALUES (?, ?, ?, ?, ?)",
+        ("I1", "John", "Doe", "1 JAN 1900", "2 JAN 1950"),
+    )
+    conn.execute(
+        "INSERT INTO people (gedcom_id, first_name, last_name, birth_date, death_date) VALUES (?, ?, ?, ?, ?)",
+        ("I2", "Jöhn", "Döe", "01 Jan 1900", "02 JAN 1950"),
+    )
+    conn.execute(
+        "INSERT INTO people (gedcom_id, first_name, last_name, birth_date, death_date) VALUES (?, ?, ?, ?, ?)",
+        ("I3", "Jane", "Smith", "3 JAN 1910", "4 JAN 1960"),
+    )
+    conn.commit()
+    conn.close()
+
+    candidates = repo.find_duplicate_candidates()
+    assert any(candidate["confidence"] >= 0.95 for candidate in candidates)
+    assert any(candidate["confidence"] >= 0.8 for candidate in candidates)
+
+    repo.close()
+
+
 def test_database_repository_initializes_schema_and_imports_data(temp_db):
     repo = DatabaseRepository(str(temp_db))
     conn = repo.connect()
