@@ -28,6 +28,16 @@ CREATE TABLE family_children (
     child_id TEXT
 );
 
+CREATE TABLE person_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    event_date TEXT,
+    event_place TEXT,
+    description TEXT,
+    FOREIGN KEY(person_id) REFERENCES people(id) ON DELETE CASCADE
+);
+
 CREATE INDEX idx_people_last_first_name
     ON people(last_name, first_name);
 

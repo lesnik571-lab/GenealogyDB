@@ -211,6 +211,98 @@ class PersonRepository:
         self.conn.commit()
         return family_id
 
+    def create_person_event(self, data):
+        self.cur.execute(
+            """
+            INSERT INTO person_events (person_id, event_type, event_date, event_place, description)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                data.get("person_id") or "",
+                data.get("event_type") or "custom",
+                data.get("date") or "",
+                data.get("place") or "",
+                data.get("description") or "",
+            ),
+        )
+        self.conn.commit()
+        return self.cur.lastrowid
+
+    def update_person_event(self, event_id, data):
+        if not event_id:
+            return False
+        self.cur.execute(
+            """
+            UPDATE person_events
+            SET event_type = ?, event_date = ?, event_place = ?, description = ?
+            WHERE id = ?
+            """,
+            (
+                data.get("event_type") or "custom",
+                data.get("date") or "",
+                data.get("place") or "",
+                data.get("description") or "",
+                event_id,
+            ),
+        )
+        self.conn.commit()
+        return self.cur.rowcount > 0
+
+    def delete_person_event(self, event_id):
+        if not event_id:
+            return False
+        self.cur.execute("DELETE FROM person_events WHERE id = ?", (event_id,))
+        self.conn.commit()
+        return self.cur.rowcount > 0
+
+    def list_person_events(self, person_id):
+        if not person_id:
+            return []
+        self.cur.execute(
+            """
+            SELECT id, person_id, event_type, event_date, event_place, description
+            FROM person_events
+            WHERE person_id = ?
+            ORDER BY id
+            """,
+            (person_id,),
+        )
+        rows = self.cur.fetchall()
+        return [
+            {
+                "id": row[0],
+                "person_id": row[1],
+                "event_type": row[2],
+                "date": row[3],
+                "place": row[4],
+                "description": row[5],
+            }
+            for row in rows
+        ]
+
+    def get_person_event(self, event_id):
+        if not event_id:
+            return None
+        self.cur.execute(
+            """
+            SELECT id, person_id, event_type, event_date, event_place, description
+            FROM person_events
+            WHERE id = ?
+            """,
+            (event_id,),
+        )
+        row = self.cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "person_id": row[1],
+            "event_type": row[2],
+            "date": row[3],
+            "place": row[4],
+            "description": row[5],
+        }
+
     def update_family(self, family_id, data):
         if not family_id:
             return False

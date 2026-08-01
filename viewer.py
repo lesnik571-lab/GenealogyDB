@@ -7,6 +7,7 @@ from tkinter import filedialog, messagebox, ttk
 from config import DB_NAME
 from database import backup_database, restore_database
 from repository import PersonRepository
+from repository.person_event_service import PersonEventService
 from repository.relationship_service import RelationshipService
 
 
@@ -15,6 +16,7 @@ class GenealogyViewer:
         self.root = root
         self.repository = PersonRepository(DB_NAME)
         self.relationship_service = RelationshipService(self.repository)
+        self.event_service = PersonEventService(self.repository)
         self.current_person_id = None
         self.current_person_gedcom_id = None
         self.root.title("Genealogy Viewer")
@@ -111,7 +113,117 @@ class GenealogyViewer:
         if note:
             message += f"\n\nПримечания:\n{note}"
         self._refresh_family_tree()
+        self._show_person_events(person_id)
         messagebox.showinfo("Карточка", message)
+
+    def _show_person_events(self, person_id):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("События")
+        dialog.geometry("640x420")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        tk.Label(dialog, text="События человека").pack(anchor="w", padx=12, pady=(12, 6))
+        listbox = tk.Listbox(dialog, height=10)
+        listbox.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+
+        for event in self.event_service.list_events(person_id):
+            event_type = event.get("event_type", "custom")
+            date = event.get("date") or ""
+            place = event.get("place") or ""
+            description = event.get("description") or ""
+            listbox.insert("end", f"{event_type}: {date} | {place} | {description}")
+
+        controls = tk.Frame(dialog)
+        controls.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Button(controls, text="Добавить", command=lambda: self._manage_person_event(dialog, person_id, None)).pack(side="left")
+        tk.Button(controls, text="Изменить", command=lambda: self._edit_person_event(dialog, person_id, listbox)).pack(side="left", padx=(8, 0))
+        tk.Button(controls, text="Удалить", command=lambda: self._delete_person_event(dialog, person_id, listbox)).pack(side="left", padx=(8, 0))
+
+    def _manage_person_event(self, dialog, person_id, event_id):
+        event_window = tk.Toplevel(dialog)
+        event_window.title("Событие")
+        event_window.geometry("480x320")
+        event_window.transient(dialog)
+        event_window.grab_set()
+
+        fields = {}
+        form = tk.Frame(event_window)
+        form.pack(fill="both", expand=True, padx=12, pady=12)
+
+        event_types = ["birth", "death", "marriage", "divorce", "burial", "residence", "occupation", "custom"]
+        default_type = "custom"
+        if event_id:
+            event = self.repository.get_person_event(event_id)
+            if event:
+                default_type = event.get("event_type", "custom")
+
+        tk.Label(form, text="Тип").grid(row=0, column=0, sticky="w", pady=4)
+        event_type_var = tk.StringVar(value=default_type)
+        combobox = ttk.Combobox(form, textvariable=event_type_var, values=event_types, state="readonly")
+        combobox.grid(row=0, column=1, sticky="ew", padx=(8, 0), pady=4)
+        fields["event_type"] = event_type_var
+
+        for label, key, default in [("Дата", "date", ""), ("Место", "place", ""), ("Описание", "description", "")]:
+            tk.Label(form, text=label).grid(row=len(fields), column=0, sticky="w", pady=4)
+            entry = tk.Entry(form)
+            if event_id:
+                event = self.repository.get_person_event(event_id)
+                if event:
+                    entry.insert(0, event.get(key, ""))
+            entry.grid(row=len(fields), column=1, sticky="ew", padx=(8, 0), pady=4)
+            fields[key] = entry
+
+        def save():
+            try:
+                if event_id:
+                    self.event_service.update_event(
+                        event_id,
+                        event_type=event_type_var.get().strip(),
+                        date=fields["date"].get().strip(),
+                        place=fields["place"].get().strip(),
+                        description=fields["description"].get().strip(),
+                    )
+                else:
+                    self.event_service.create_event(
+                        person_id,
+                        event_type=event_type_var.get().strip(),
+                        date=fields["date"].get().strip(),
+                        place=fields["place"].get().strip(),
+                        description=fields["description"].get().strip(),
+                    )
+                event_window.destroy()
+                dialog.destroy()
+                self.show_person(person_id)
+            except ValueError as error:
+                messagebox.showerror("Ошибка", str(error), parent=event_window)
+
+        tk.Button(form, text="Сохранить", command=save).grid(row=4, column=1, sticky="e", pady=(12, 0))
+
+    def _edit_person_event(self, dialog, person_id, listbox):
+        selection = listbox.curselection()
+        if not selection:
+            messagebox.showwarning("Выбор", "Сначала выберите событие.")
+            return
+        events = self.event_service.list_events(person_id)
+        if not events:
+            return
+        event_id = events[selection[0]]["id"]
+        self._manage_person_event(dialog, person_id, event_id)
+
+    def _delete_person_event(self, dialog, person_id, listbox):
+        selection = listbox.curselection()
+        if not selection:
+            messagebox.showwarning("Выбор", "Сначала выберите событие.")
+            return
+        events = self.event_service.list_events(person_id)
+        if not events:
+            return
+        event_id = events[selection[0]]["id"]
+        if messagebox.askyesno("Удаление", "Удалить выбранное событие?"):
+            self.event_service.delete_event(event_id)
+            dialog.destroy()
+            self.show_person(person_id)
 
     def build_family_tree_nodes(self, gedcom_id):
         row = self.repository.get_person_by_gedcom_id(gedcom_id)

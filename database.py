@@ -23,6 +23,7 @@ REQUIRED_COLUMNS = {
     },
     "families": {"id", "gedcom_id", "husband_id", "wife_id"},
     "family_children": {"family_id", "child_id"},
+    "person_events": {"id", "person_id", "event_type", "event_date", "event_place", "description"},
 }
 
 
@@ -69,10 +70,51 @@ def initialize_database(database_name=DB_NAME, schema_path=SCHEMA_PATH):
 
     with sqlite3.connect(database_path) as connection:
         if database_is_initialized(connection):
+            _ensure_person_events_table(connection)
             return False
 
         connection.executescript(load_schema(schema_path))
+        _ensure_person_events_table(connection)
         return True
+
+
+def _ensure_person_events_table(connection):
+    existing_tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "person_events" not in existing_tables:
+        connection.execute(
+            """
+            CREATE TABLE person_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                person_id INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                event_date TEXT,
+                event_place TEXT,
+                description TEXT,
+                FOREIGN KEY(person_id) REFERENCES people(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.commit()
+        return
+
+    required_columns = {"id", "person_id", "event_type", "event_date", "event_place", "description"}
+    columns = {row[1] for row in connection.execute('PRAGMA table_info("person_events")')}
+    missing_columns = sorted(required_columns - columns)
+    if missing_columns:
+        for column_name in missing_columns:
+            if column_name == "event_date":
+                connection.execute("ALTER TABLE person_events ADD COLUMN event_date TEXT")
+            elif column_name == "event_place":
+                connection.execute("ALTER TABLE person_events ADD COLUMN event_place TEXT")
+            elif column_name == "description":
+                connection.execute("ALTER TABLE person_events ADD COLUMN description TEXT")
+            elif column_name == "person_id":
+                connection.execute("ALTER TABLE person_events ADD COLUMN person_id INTEGER")
+            elif column_name == "event_type":
+                connection.execute("ALTER TABLE person_events ADD COLUMN event_type TEXT")
+            elif column_name == "id":
+                connection.execute("ALTER TABLE person_events ADD COLUMN id INTEGER")
+        connection.commit()
 
 
 def validate_database_file(database_path):

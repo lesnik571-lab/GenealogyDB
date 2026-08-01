@@ -16,7 +16,45 @@ class DatabaseRepository:
 
     def initialize_schema(self, conn):
         cur = conn.cursor()
-        cur.executescript(self.load_schema_sql())
+        cur.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS people (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                gedcom_id TEXT UNIQUE,
+                first_name TEXT,
+                last_name TEXT,
+                sex TEXT,
+                birth_date TEXT,
+                birth_place TEXT,
+                death_date TEXT,
+                death_place TEXT,
+                occupation TEXT,
+                note TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS families (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                gedcom_id TEXT UNIQUE,
+                husband_id TEXT,
+                wife_id TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS family_children (
+                family_id TEXT,
+                child_id TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS person_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                person_id INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                event_date TEXT,
+                event_place TEXT,
+                description TEXT,
+                FOREIGN KEY(person_id) REFERENCES people(id) ON DELETE CASCADE
+            );
+            """
+        )
         conn.commit()
 
     def clear_tables(self, conn):
