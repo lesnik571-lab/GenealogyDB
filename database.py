@@ -1,4 +1,6 @@
+import shutil
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 from config import DB_NAME
@@ -71,6 +73,88 @@ def initialize_database(database_name=DB_NAME, schema_path=SCHEMA_PATH):
 
         connection.executescript(load_schema(schema_path))
         return True
+
+
+def validate_database_file(database_path):
+    path = Path(database_path).expanduser()
+    if not path.exists():
+        raise ValueError(f"Файл базы не найден: {path}")
+    if not path.is_file():
+        raise ValueError(f"Путь к базе не является файлом: {path}")
+
+    try:
+        with sqlite3.connect(path) as connection:
+            integrity_check = connection.execute("PRAGMA integrity_check").fetchone()
+            if not integrity_check or str(integrity_check[0]).upper() != "OK":
+                raise ValueError(f"Файл базы повреждён: {path}")
+
+            existing_tables = {row[0] for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )}
+            missing_tables = [name for name in REQUIRED_COLUMNS if name not in existing_tables]
+            if missing_tables:
+                raise ValueError(
+                    f"Файл базы не содержит ожидаемых таблиц: {', '.join(sorted(missing_tables))}"
+                )
+
+            for table_name, required_columns in REQUIRED_COLUMNS.items():
+                columns = {row[1] for row in connection.execute(f'PRAGMA table_info("{table_name}")')}
+                missing_columns = sorted(required_columns - columns)
+                if missing_columns:
+                    raise ValueError(
+                        f"Таблица {table_name} не содержит ожидаемых столбцов: {', '.join(missing_columns)}"
+                    )
+    except sqlite3.DatabaseError as error:
+        raise ValueError(f"Не удалось прочитать файл SQLite: {path}") from error
+
+    return True
+
+
+def _build_backup_path(source_path, destination_path=None):
+    source = Path(source_path).expanduser()
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    if destination_path is None:
+        return source.with_name(f"{source.stem}-{timestamp}{source.suffix}")
+
+    destination = Path(destination_path).expanduser()
+    if destination.exists() and destination.is_dir():
+        return destination / f"{source.stem}-{timestamp}{source.suffix}"
+    if destination.suffix:
+        return destination.with_name(f"{destination.stem}-{timestamp}{destination.suffix}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    return destination / f"{source.stem}-{timestamp}{source.suffix}"
+
+
+def backup_database(source_path, destination_path=None):
+    source = Path(source_path).expanduser()
+    if not source.exists():
+        raise FileNotFoundError(f"Файл базы не найден: {source}")
+
+    validate_database_file(source)
+    destination = _build_backup_path(source, destination_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+    validate_database_file(destination)
+    return destination
+
+
+def restore_database(source_path, target_path, create_safety_backup=True):
+    source = Path(source_path).expanduser()
+    target = Path(target_path).expanduser()
+
+    if not source.exists():
+        raise FileNotFoundError(f"Файл резервной копии не найден: {source}")
+
+    validate_database_file(source)
+
+    backup_path = None
+    if create_safety_backup and target.exists():
+        backup_path = backup_database(target, target.parent / f"{target.stem}-before-restore{target.suffix}")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+    validate_database_file(target)
+    return backup_path
 
 
 if __name__ == "__main__":

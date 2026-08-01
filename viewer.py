@@ -1,14 +1,22 @@
+import re
 import tkinter as tk
-from tkinter import messagebox, ttk
+import unicodedata
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
 
-from repository import PersonRepository
 from config import DB_NAME
+from database import backup_database, restore_database
+from repository import PersonRepository
+from repository.relationship_service import RelationshipService
 
 
 class GenealogyViewer:
     def __init__(self, root):
         self.root = root
         self.repository = PersonRepository(DB_NAME)
+        self.relationship_service = RelationshipService(self.repository)
+        self.current_person_id = None
+        self.current_person_gedcom_id = None
         self.root.title("Genealogy Viewer")
         self.root.geometry("1000x700")
         self._create_widgets()
@@ -26,6 +34,13 @@ class GenealogyViewer:
         tk.Button(top, text="Поиск", command=self.search_people).pack(side="left", padx=(10, 5))
         self.status_label = tk.Label(top, text="")
         self.status_label.pack(side="left", padx=12)
+
+        self.backup_button = tk.Button(top, text="Backup database", command=self.backup_database)
+        self.backup_button.pack(side="left", padx=(10, 5))
+        self.restore_button = tk.Button(top, text="Restore database", command=self.restore_database)
+        self.restore_button.pack(side="left", padx=(0, 5))
+        self.relationship_button = tk.Button(top, text="Edit relationships", command=self.open_relationship_editor)
+        self.relationship_button.pack(side="left")
 
         table_frame = tk.Frame(self.root)
         table_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -47,6 +62,11 @@ class GenealogyViewer:
 
         self.tree.bind("<Double-1>", self.open_person)
 
+        self.family_tree_text = tk.Text(self.root, height=8, wrap="word")
+        self.family_tree_text.pack(fill="x", padx=10, pady=(0, 10))
+        self.family_tree_text.insert("end", "Выберите человека, чтобы увидеть семейное дерево.\n")
+        self.family_tree_text.config(state="disabled")
+
     def _clear_tree(self):
         for item in self.tree.get_children():
             self.tree.delete(item)
@@ -66,7 +86,7 @@ class GenealogyViewer:
         self.root.update_idletasks()
         rows = self._query_people(query)
         for person_id, last_name, first_name, birth_date, death_date in rows:
-            full_name = f"{last_name or ''} {first_name or ''}".strip()
+            full_name = self.format_name(last_name, first_name)
             self.tree.insert("", "end", values=(person_id, full_name, birth_date or "", death_date or ""))
         self.status_label.config(text=f"Показано: {len(rows)}" if rows else "Ничего не найдено")
 
@@ -82,12 +102,15 @@ class GenealogyViewer:
         if not person:
             messagebox.showerror("Ошибка", "Человек не найден.")
             return
+        self.current_person_id = person_id
+        self.current_person_gedcom_id = person[0]
         gedcom_id, last_name, first_name, sex, birth_date, birth_place, death_date, death_place, occupation, note = person
         message = f"{last_name or ''} {first_name or ''}\n{birth_date or ''} - {death_date or ''}"
         if occupation:
             message += f"\n\nЗанятие: {occupation}"
         if note:
             message += f"\n\nПримечания:\n{note}"
+        self._refresh_family_tree()
         messagebox.showinfo("Карточка", message)
 
     def build_family_tree_nodes(self, gedcom_id):
@@ -101,7 +124,7 @@ class GenealogyViewer:
         nodes = [
             {
                 "id": gedcom_id,
-                "name": f"{last_name or ''} {first_name or ''}".strip() or gedcom_id,
+                "name": self.format_name(last_name, first_name) or gedcom_id,
                 "role": "center",
                 "x": 0,
                 "y": 0,
@@ -111,7 +134,7 @@ class GenealogyViewer:
             nodes.append(
                 {
                     "id": p_gedcom,
-                    "name": f"{p_last or ''} {p_first or ''}".strip() or p_gedcom,
+                    "name": self.format_name(p_last, p_first) or p_gedcom,
                     "role": "parent",
                     "x": -220,
                     "y": -120 + index * 70,
@@ -121,7 +144,7 @@ class GenealogyViewer:
             nodes.append(
                 {
                     "id": s_gedcom,
-                    "name": f"{s_last or ''} {s_first or ''}".strip() or s_gedcom,
+                    "name": self.format_name(s_last, s_first) or s_gedcom,
                     "role": "spouse",
                     "x": 220,
                     "y": -120 + index * 70,
@@ -131,7 +154,7 @@ class GenealogyViewer:
             nodes.append(
                 {
                     "id": c_gedcom,
-                    "name": f"{c_last or ''} {c_first or ''}".strip() or c_gedcom,
+                    "name": self.format_name(c_last, c_first) or c_gedcom,
                     "role": "child",
                     "x": -120 + index * 120,
                     "y": 140,
@@ -144,7 +167,7 @@ class GenealogyViewer:
             text.insert("end", f"  {empty_text}\n")
             return
         for last_name, first_name, gedcom_id in rows:
-            name = f"{last_name or ''} {first_name or ''}".strip() or "(без имени)"
+            name = self.format_name(last_name, first_name) or "(без имени)"
             display_text = f"  {name} [{gedcom_id}]\n"
             text.insert("end", display_text)
             tag_name = f"person:{gedcom_id}"
@@ -161,433 +184,197 @@ class GenealogyViewer:
             return
         self.show_person(person[0])
 
-    def close(self):
-        self.repository.close()
-
-
-def main():
-    root = tk.Tk()
-    app = GenealogyViewer(root)
-
-    def close_application():
-        app.close()
-        root.destroy()
-
-    root.protocol("WM_DELETE_WINDOW", close_application)
-    root.mainloop()
-
-
-if __name__ == "__main__":
-    main()
-
-
-    def update_person(self, person_id, last_name, first_name, sex, birth_date, death_date, note):
-        self.cursor.execute(
-            """
-            UPDATE people
-            SET last_name = ?, first_name = ?, sex = ?, birth_date = ?, death_date = ?, note = ?
-            WHERE id = ?
-            """,
-            (last_name, first_name, sex, birth_date, death_date, note, person_id),
-        )
-        self.connection.commit()
-        return self.cursor.rowcount > 0
-
-    def get_parents(self, gedcom_id):
-        self.cursor.execute(
-            """
-            SELECT DISTINCT p.id,
-                TRIM(COALESCE(p.last_name, '')) AS last_name,
-                TRIM(COALESCE(p.first_name, '')) AS first_name
-            FROM families AS f
-            JOIN family_children AS fc ON f.gedcom_id = fc.family_id
-            JOIN people AS p ON p.gedcom_id = f.husband_id OR p.gedcom_id = f.wife_id
-            WHERE fc.child_id = ? AND p.gedcom_id <> ?
-            ORDER BY last_name, first_name
-            """,
-            (gedcom_id, gedcom_id),
-        )
-        return self.cursor.fetchall()
-
-    def get_spouses(self, gedcom_id):
-        self.cursor.execute(
-            """
-            SELECT DISTINCT p.id,
-                TRIM(COALESCE(p.last_name, '')) AS last_name,
-                TRIM(COALESCE(p.first_name, '')) AS first_name
-            FROM families AS f
-            JOIN people AS p
-                ON p.gedcom_id = CASE
-                    WHEN f.husband_id = ? THEN f.wife_id
-                    WHEN f.wife_id = ? THEN f.husband_id
-                END
-            WHERE (f.husband_id = ? OR f.wife_id = ?) AND p.gedcom_id <> ?
-            ORDER BY last_name, first_name
-            """,
-            (gedcom_id, gedcom_id, gedcom_id, gedcom_id, gedcom_id),
-        )
-        return self.cursor.fetchall()
-
-    def get_children(self, gedcom_id):
-        self.cursor.execute(
-            """
-            SELECT DISTINCT c.id,
-                TRIM(COALESCE(c.last_name, '')) AS last_name,
-                TRIM(COALESCE(c.first_name, '')) AS first_name
-            FROM families AS f
-            JOIN family_children AS fc ON f.gedcom_id = fc.family_id
-            JOIN people AS c ON c.gedcom_id = fc.child_id
-            WHERE (f.husband_id = ? OR f.wife_id = ?) AND c.gedcom_id <> ?
-            ORDER BY last_name, first_name
-            """,
-            (gedcom_id, gedcom_id, gedcom_id),
-        )
-        return self.cursor.fetchall()
-
-
-class GenealogyViewer:
-    def __init__(self, root):
-        self.root = root
-        self.repository = GenealogyRepository(DB_NAME)
-        self.card_window = None
-        self.card_text = None
-        self.back_button = None
-        self.forward_button = None
-        self.edit_button = None
-        self.current_person_id = None
-        self.card_history = []
-        self.card_history_index = -1
-        self.root.title("Genealogy Viewer")
-        self.root.geometry("1000x700")
-        self._create_widgets()
-        self.search_people()
-        self.search_entry.focus_set()
-
-    def _create_widgets(self):
-        top = tk.Frame(self.root)
-        top.pack(fill="x", padx=10, pady=10)
-        tk.Label(top, text="Имя или фамилия:").pack(side="left")
-        self.search_entry = tk.Entry(top, width=30)
-        self.search_entry.pack(side="left", padx=5)
-        self.search_entry.bind("<Return>", self._search_from_event)
-        tk.Button(top, text="Поиск", command=self.search_people).pack(side="left")
-        self.status_label = tk.Label(top, text="Загрузка...")
-        self.status_label.pack(side="left", padx=12)
-
-        table_frame = tk.Frame(self.root)
-        table_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        self.tree = ttk.Treeview(table_frame, columns=("id", "name", "birth", "death"), show="headings")
-        tree_scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=tree_scrollbar.set)
-        headings = {"id": "ID", "name": "Имя", "birth": "Рождение", "death": "Смерть"}
-        widths = {"id": 80, "name": 350, "birth": 120, "death": 120}
-        for column, heading in headings.items():
-            self.tree.heading(column, text=heading)
-            self.tree.column(column, width=widths[column])
-        self.tree.pack(side="left", fill="both", expand=True)
-        tree_scrollbar.pack(side="right", fill="y")
-        self.tree.bind("<Double-1>", self.open_person)
-
-    def _search_from_event(self, _event):
-        self.search_people()
-
-    def _clear_results(self):
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-
-    def search_people(self):
-        query = self.search_entry.get().strip()
-        self._clear_results()
-        self.status_label.config(text="Поиск..." if query else "Загрузка...")
-        self.root.update_idletasks()
-        people = self.repository.find_people(query)
-        for person_id, last_name, first_name, birth_date, death_date in people:
-            full_name = f"{last_name or ''} {first_name or ''}".strip()
-            self.tree.insert("", "end", values=(person_id, full_name, birth_date or "", death_date or ""))
-        self.status_label.config(text=f"Показано: {len(people)}" if people else "Ничего не найдено")
-
-    def open_person(self, _event):
-        selected = self.tree.selection()
-        if selected:
-            self.show_person(self.tree.item(selected[0])["values"][0])
-
-    def _create_person_window(self):
-        self.card_window = tk.Toplevel(self.root)
-        self.card_window.geometry("700x600")
-        self.card_window.protocol("WM_DELETE_WINDOW", self._close_person_window)
-        navigation = tk.Frame(self.card_window)
-        navigation.pack(fill="x", padx=8, pady=8)
-        self.back_button = tk.Button(navigation, text="← Назад", command=lambda: self._move_in_history(-1))
-        self.back_button.pack(side="left")
-        self.forward_button = tk.Button(navigation, text="Вперёд →", command=lambda: self._move_in_history(1))
-        self.forward_button.pack(side="left", padx=(8, 0))
-        self.edit_button = tk.Button(navigation, text="Изменить", command=self._open_edit_dialog)
-        self.edit_button.pack(side="right")
-
-        content_frame = tk.Frame(self.card_window)
-        content_frame.pack(fill="both", expand=True)
-        self.card_text = tk.Text(content_frame, wrap="word", cursor="arrow")
-        text_scrollbar = ttk.Scrollbar(content_frame, orient="vertical", command=self.card_text.yview)
-        self.card_text.configure(yscrollcommand=text_scrollbar.set)
-        self.card_text.pack(side="left", fill="both", expand=True)
-        text_scrollbar.pack(side="right", fill="y")
-
-    def _close_person_window(self):
-        if self.card_window is not None:
-            self.card_window.destroy()
-        self.card_window = None
-        self.card_text = None
-        self.back_button = None
-        self.forward_button = None
-        self.edit_button = None
-        self.current_person_id = None
-        self.card_history = []
-        self.card_history_index = -1
-
-    def _move_in_history(self, offset):
-        target_index = self.card_history_index + offset
-        if 0 <= target_index < len(self.card_history):
-            self.card_history_index = target_index
-            self.show_person(self.card_history[target_index], add_to_history=False)
-
-    def _update_navigation_buttons(self):
-        if self.back_button is None or self.forward_button is None:
-            return
-        self.back_button.config(state="normal" if self.card_history_index > 0 else "disabled")
-        self.forward_button.config(
-            state="normal" if self.card_history_index < len(self.card_history) - 1 else "disabled"
-        )
-
-    def show_person(self, person_id, add_to_history=True):
-        person = self.repository.get_person(person_id)
-        if not person:
-            messagebox.showerror("Ошибка", "Человек не найден.")
-            return
-        if self.card_window is None or not self.card_window.winfo_exists():
-            self._create_person_window()
-        if add_to_history:
-            if self.card_history_index < len(self.card_history) - 1:
-                self.card_history = self.card_history[:self.card_history_index + 1]
-            if not self.card_history or self.card_history[-1] != person_id:
-                self.card_history.append(person_id)
-            self.card_history_index = len(self.card_history) - 1
-
-        self.current_person_id = person_id
-        gedcom_id, last_name, first_name, sex, birth_date, death_date, note = person
-        parents = self.repository.get_parents(gedcom_id)
-        spouses = self.repository.get_spouses(gedcom_id)
-        children = self.repository.get_children(gedcom_id)
-        parents, spouses, children = self._remove_conflicting_relations(parents, spouses, children)
-        title = f"{last_name or ''} {first_name or ''}".strip() or "Карточка человека"
-        self.card_window.title(title)
-        self.card_window.deiconify()
-        self.card_window.lift()
-        self.card_text.config(state="normal")
-        self.card_text.delete("1.0", "end")
-        self._insert_person_details(self.card_text, last_name, first_name, sex, birth_date, death_date, note)
-        self._insert_relatives(self.card_text, "Родители:", parents, "неизвестны")
-        self._insert_relatives(self.card_text, "\nСупруги:", spouses, "нет")
-        self._insert_relatives(self.card_text, "\nДети:", children, "нет")
-        self.card_text.config(state="disabled")
-        self.card_text.yview_moveto(0)
-        self._update_navigation_buttons()
-
-    def _open_edit_dialog(self):
+    def open_relationship_editor(self):
         if self.current_person_id is None:
+            messagebox.showwarning("Связи", "Сначала выберите человека из списка.")
             return
-        person = self.repository.get_person(self.current_person_id)
-        if not person:
-            messagebox.showerror("Ошибка", "Человек не найден.")
-            return
-        _gedcom_id, last_name, first_name, sex, birth_date, death_date, note = person
-        dialog = tk.Toplevel(self.card_window)
-        dialog.title("Изменение данных")
-        dialog.geometry("520x470")
-        dialog.transient(self.card_window)
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Редактор отношений")
+        dialog.geometry("700x500")
+        dialog.transient(self.root)
         dialog.grab_set()
 
-        form = tk.Frame(dialog)
-        form.pack(fill="both", expand=True, padx=12, pady=12)
-        fields = [
-            ("Фамилия", last_name or ""),
-            ("Имя", first_name or ""),
-            ("Пол", sex or ""),
-            ("Рождение", birth_date or ""),
-            ("Смерть", death_date or ""),
-        ]
+        person = self.repository.get_person(self.current_person_id)
+        if not person:
+            dialog.destroy()
+            return
+        current_gedcom_id = person[0]
+
+        families = []
+        for family_id in self.repository.cur.execute("SELECT id FROM families ORDER BY id").fetchall():
+            family = self.repository.get_family(family_id[0])
+            if family and (family.get("husband") == current_gedcom_id or family.get("wife") == current_gedcom_id or current_gedcom_id in family.get("children", [])):
+                families.append(family)
+
+        tk.Label(dialog, text=f"Отношения для {self.format_name(person[1], person[2])}").pack(anchor="w", padx=12, pady=12)
+
+        body = tk.Frame(dialog)
+        body.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        listbox = tk.Listbox(body, height=8)
+        listbox.pack(fill="x")
+        for family in families:
+            listbox.insert("end", f"{family['gedcom_id']} | husband={family['husband']} wife={family['wife']} children={family['children']}")
+
+        controls = tk.Frame(body)
+        controls.pack(fill="x", pady=(8, 0))
+        tk.Button(controls, text="Создать", command=lambda: self._create_relationship(dialog, current_gedcom_id)).pack(side="left")
+        tk.Button(controls, text="Изменить", command=lambda: self._edit_relationship(dialog, current_gedcom_id, listbox)).pack(side="left", padx=(8, 0))
+        tk.Button(controls, text="Удалить", command=lambda: self._delete_relationship(dialog, current_gedcom_id, listbox)).pack(side="left", padx=(8, 0))
+
+    def _create_relationship(self, dialog, current_gedcom_id):
+        relationship_window = tk.Toplevel(dialog)
+        relationship_window.title("Создать семью")
+        relationship_window.geometry("520x360")
+        relationship_window.transient(dialog)
+        relationship_window.grab_set()
+
         entries = {}
-        for row, (label, value) in enumerate(fields):
-            tk.Label(form, text=label + ":", anchor="w").grid(row=row, column=0, sticky="w", pady=4)
+        form = tk.Frame(relationship_window)
+        form.pack(fill="both", expand=True, padx=12, pady=12)
+
+        for label, key in [("Отец", "husband"), ("Мать", "wife"), ("Ребёнок", "child")]:
+            tk.Label(form, text=label).grid(row=len(entries), column=0, sticky="w", pady=4)
             entry = tk.Entry(form)
-            entry.insert(0, value)
-            entry.grid(row=row, column=1, sticky="ew", padx=(10, 0), pady=4)
-            entries[label] = entry
+            entry.grid(row=len(entries), column=1, sticky="ew", padx=(8, 0), pady=4)
+            entries[key] = entry
 
-        tk.Label(form, text="Примечания:", anchor="nw").grid(row=5, column=0, sticky="nw", pady=4)
-        note_text = tk.Text(form, height=10, wrap="word")
-        note_text.insert("1.0", note or "")
-        note_text.grid(row=5, column=1, sticky="nsew", padx=(10, 0), pady=4)
-        form.columnconfigure(1, weight=1)
-        form.rowconfigure(5, weight=1)
+        def save():
+            try:
+                self.relationship_service.create_family(
+                    husband_gedcom_id=entries["husband"].get().strip(),
+                    wife_gedcom_id=entries["wife"].get().strip(),
+                    child_gedcom_ids=[value for value in [entries["child"].get().strip()] if value],
+                )
+                relationship_window.destroy()
+                dialog.destroy()
+                self.refresh_views()
+                messagebox.showinfo("Сохранено", "Семейная связь создана.")
+            except ValueError as error:
+                messagebox.showerror("Ошибка", str(error), parent=relationship_window)
 
-        buttons = tk.Frame(dialog)
-        buttons.pack(fill="x", padx=12, pady=(0, 12))
-        tk.Button(buttons, text="Отмена", command=dialog.destroy).pack(side="right")
-        tk.Button(
-            buttons,
-            text="Сохранить",
-            command=lambda: self._save_person_changes(dialog, entries, note_text),
-        ).pack(side="right", padx=(0, 8))
-        entries["Фамилия"].focus_set()
+        tk.Button(form, text="Сохранить", command=save).grid(row=3, column=1, sticky="e", pady=(12, 0))
 
-    def _save_person_changes(self, dialog, entries, note_text):
-        last_name = entries["Фамилия"].get().strip()
-        first_name = entries["Имя"].get().strip()
-        if not last_name and not first_name:
-            messagebox.showwarning("Проверка данных", "Укажите имя или фамилию.", parent=dialog)
+    def _edit_relationship(self, dialog, current_gedcom_id, listbox):
+        selection = listbox.curselection()
+        if not selection:
+            messagebox.showwarning("Выбор", "Сначала выберите семейную связь.")
             return
-        updated = self.repository.update_person(
-            self.current_person_id,
-            last_name,
-            first_name,
-entries["Пол"].get().strip(),
-            entries["Рождение"].get().strip(),
-            entries["Смерть"].get().strip(),
-            note_text.get("1.0", "end-1c").strip(),
-        )
-        if not updated:
-            messagebox.showerror("Ошибка", "Не удалось сохранить изменения.", parent=dialog)
+        family_id = self.repository.cur.execute("SELECT id FROM families ORDER BY id").fetchall()[selection[0]][0]
+        family = self.repository.get_family(family_id)
+        if not family:
             return
-        dialog.destroy()
-        self.search_people()
-        self.show_person(self.current_person_id, add_to_history=False)
-        messagebox.showinfo("Сохранено", "Данные человека обновлены.", parent=self.card_window)
+        relationship_window = tk.Toplevel(dialog)
+        relationship_window.title("Изменить семью")
+        relationship_window.geometry("520x360")
+        relationship_window.transient(dialog)
+        relationship_window.grab_set()
 
-    @staticmethod
-    def _normalize_name(value):
-        value = unicodedata.normalize("NFKC", value or "").casefold().replace("ё", "е")
-        return " ".join(re.findall(r"[a-zа-я0-9]+", value))
+        entries = {}
+        form = tk.Frame(relationship_window)
+        form.pack(fill="both", expand=True, padx=12, pady=12)
 
-    @classmethod
-    def _relative_key(cls, relative):
-        _person_id, last_name, first_name = relative
-        return cls._normalize_name(f"{last_name or ''} {first_name or ''}")
+        for label, key, default in [("Отец", "husband", family.get("husband", "")), ("Мать", "wife", family.get("wife", "")), ("Ребёнок", "child", ",".join(family.get("children", [])))]:
+            tk.Label(form, text=label).grid(row=len(entries), column=0, sticky="w", pady=4)
+            entry = tk.Entry(form)
+            entry.insert(0, default)
+            entry.grid(row=len(entries), column=1, sticky="ew", padx=(8, 0), pady=4)
+            entries[key] = entry
 
-    @classmethod
-    def _deduplicate_relatives(cls, relatives):
-        unique = []
-        seen = set()
-        for relative in relatives:
-            key = cls._relative_key(relative)
-            if key and key not in seen:
-                seen.add(key)
-                unique.append(relative)
-        return unique
+        def save():
+            try:
+                self.relationship_service.update_family(
+                    family_id,
+                    husband_gedcom_id=entries["husband"].get().strip(),
+                    wife_gedcom_id=entries["wife"].get().strip(),
+                    child_gedcom_ids=[value for value in entries["child"].get().split(",") if value.strip()],
+                )
+                relationship_window.destroy()
+                dialog.destroy()
+                self.refresh_views()
+                messagebox.showinfo("Сохранено", "Семейная связь обновлена.")
+            except ValueError as error:
+                messagebox.showerror("Ошибка", str(error), parent=relationship_window)
 
-    @classmethod
-    def _remove_conflicting_relations(cls, parents, spouses, children):
-        parents = cls._deduplicate_relatives(parents)
-        spouses = cls._deduplicate_relatives(spouses)
-        children = cls._deduplicate_relatives(children)
-        parent_keys = {cls._relative_key(relative) for relative in parents}
-        child_keys = {cls._relative_key(relative) for relative in children}
-        spouses = [
-            relative for relative in spouses
-            if cls._relative_key(relative) not in parent_keys
-            and cls._relative_key(relative) not in child_keys
-        ]
-        children = [relative for relative in children if cls._relative_key(relative) not in parent_keys]
-        return parents, spouses, children
+        tk.Button(form, text="Сохранить", command=save).grid(row=3, column=1, sticky="e", pady=(12, 0))
 
-    @staticmethod
-    def _insert_person_details(text, last_name, first_name, sex, birth_date, death_date, note):
-        text.insert("end", f"Фамилия: {last_name or ''}\n")
-        text.insert("end", f"Имя: {first_name or ''}\n")
-        text.insert("end", f"Пол: {sex or ''}\n")
-        text.insert("end", f"Рождение: {birth_date or ''}\n")
-        text.insert("end", f"Смерть: {death_date or ''}\n\n")
-        if note:
-            text.insert("end", "Примечания:\n")
-            text.insert("end", note + "\n\n")
-
-    def _insert_relatives(self, text, title, relatives, empty_text):
-        text.insert("end", title + "\n")
-        if not relatives:
-            text.insert("end", f"  {empty_text}\n")
+    def _delete_relationship(self, dialog, current_gedcom_id, listbox):
+        selection = listbox.curselection()
+        if not selection:
+            messagebox.showwarning("Выбор", "Сначала выберите семейную связь.")
             return
-        for person_id, last_name, first_name in relatives:
-            full_name = f"{last_name or ''} {first_name or ''}".strip() or "Без имени"
-            tag_name = f"person_{person_id}_{text.index('end-1c').replace('.', '_')}"
-            text.insert("end", f"  {full_name}\n", tag_name)
-            text.tag_config(tag_name, foreground="blue", underline=True)
-            text.tag_bind(tag_name, "<Enter>", lambda _event, widget=text: widget.config(cursor="hand2"))
-            text.tag_bind(tag_name, "<Leave>", lambda _event, widget=text: widget.config(cursor="arrow"))
-            text.tag_bind(
-                tag_name,
-                "<Double-Button-1>",
-                lambda _event, target_id=person_id: self.show_person(target_id),
+        family_id = self.repository.cur.execute("SELECT id FROM families ORDER BY id").fetchall()[selection[0]][0]
+        if messagebox.askyesno("Удаление", "Удалить выбранную семейную связь?"):
+            self.relationship_service.delete_family(family_id)
+            dialog.destroy()
+            self.refresh_views()
+            messagebox.showinfo("Удалено", "Семейная связь удалена.")
+
+    def backup_database(self):
+        try:
+            backup_path = filedialog.asksaveasfilename(
+                title="Выберите файл резервной копии",
+                defaultextension=".db",
+                initialfile=Path(DB_NAME).stem + "-backup.db",
+                filetypes=[("SQLite databases", "*.db *.sqlite *.sqlite3"), ("All files", "*.*")],
             )
-        children = self.repository.get_children(gedcom_id)
-        for index, (last_name, first_name, child_gedcom_id) in enumerate(children):
-            nodes.append({
-                "id": child_gedcom_id,
-                "name": self.format_name(last_name, first_name) or child_gedcom_id,
-                "role": "child",
-                "x": -120 + index * 120,
-                "y": 140,
-            })
+            if not backup_path:
+                return
+            destination = backup_database(DB_NAME, backup_path)
+            messagebox.showinfo("Резервная копия", f"База сохранена в:\n{destination}")
+        except (FileNotFoundError, ValueError, OSError) as error:
+            messagebox.showerror("Ошибка резервного копирования", str(error))
 
-        siblings = self.repository.get_siblings(gedcom_id)
-        for index, (last_name, first_name, sibling_gedcom_id) in enumerate(siblings):
-            nodes.append({
-                "id": sibling_gedcom_id,
-                "name": self.format_name(last_name, first_name) or sibling_gedcom_id,
-                "role": "sibling",
-                "x": 120 + index * 120,
-                "y": 140,
-            })
+    def restore_database(self):
+        try:
+            restore_path = filedialog.askopenfilename(
+                title="Выберите файл для восстановления",
+                filetypes=[("SQLite databases", "*.db *.sqlite *.sqlite3"), ("All files", "*.*")],
+            )
+            if not restore_path:
+                return
+            if not messagebox.askyesno(
+                "Подтверждение восстановления",
+                "Восстановить базу из выбранного файла? Это заменит текущую базу и создаст резервную копию текущего состояния.",
+            ):
+                return
+            restore_database(restore_path, DB_NAME)
+            self.refresh_views()
+            messagebox.showinfo("Восстановлено", "База данных восстановлена и список обновлён.")
+        except (FileNotFoundError, ValueError, OSError) as error:
+            messagebox.showerror("Ошибка восстановления", str(error))
 
-        return nodes
+    def refresh_views(self):
+        self.search_people()
+        self._refresh_family_tree()
 
     def _refresh_family_tree(self):
-        if not self.current_person_gedcom_id:
-            self.family_canvas.render_tree([])
+        if not hasattr(self, "family_tree_text"):
             return
-        self.family_canvas.render_tree(
-            self.build_family_tree_nodes(self.current_person_gedcom_id),
-            self._handle_tree_node_click,
-        )
-
-    def _handle_tree_node_click(self, gedcom_id):
-        person = self.repository.get_person_by_gedcom_id(gedcom_id)
-        if person:
-            self.show_person(person[0])
+        self.family_tree_text.config(state="normal")
+        self.family_tree_text.delete("1.0", "end")
+        if not self.current_person_gedcom_id:
+            self.family_tree_text.insert("end", "Выберите человека, чтобы увидеть семейное дерево.\n")
+        else:
+            nodes = self.build_family_tree_nodes(self.current_person_gedcom_id)
+            if not nodes:
+                self.family_tree_text.insert("end", "Данные о семейном дереве отсутствуют.\n")
+            else:
+                for node in nodes:
+                    self.family_tree_text.insert(
+                        "end",
+                        f"{node['role']}: {node['name']}\n",
+                    )
+        self.family_tree_text.config(state="disabled")
 
     @staticmethod
     def format_name(last_name, first_name):
         return f"{last_name or ''} {first_name or ''}".strip()
 
-    def insert_people(self, text, rows, empty_text):
-        if not rows:
-            text.insert("end", f"  {empty_text}\n")
-            return
-
-        for last_name, first_name, gedcom_id in rows:
-            name = self.format_name(last_name, first_name)
-            display_text = f"  {name or '(без имени)'} [{gedcom_id}]"
-            tag_name = f"person:{gedcom_id}"
-            text.insert("end", display_text + "\n")
-            text.tag_add(tag_name, "end-1c", "end")
-            text.tag_configure(tag_name, foreground="blue", underline=True)
-            text.tag_bind(tag_name, "<Button-1>", lambda _event, target_id=gedcom_id: self.open_related_person(target_id))
-
-    def open_related_person(self, gedcom_id):
-        person = self.repository.get_person_by_gedcom_id(gedcom_id)
-        if not person:
-            messagebox.showerror("Ошибка", "Человек не найден.")
-            return
-
-        self.show_person(person[0])
+    @staticmethod
+    def _normalize_name(value):
+        value = unicodedata.normalize("NFKC", value or "").casefold().replace("ё", "е")
+        return " ".join(re.findall(r"[a-zа-я0-9]+", value))
 
     def close(self):
         self.repository.close()
