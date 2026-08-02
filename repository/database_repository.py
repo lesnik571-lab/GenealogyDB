@@ -4,6 +4,7 @@ from config import DB_NAME
 
 
 class DatabaseRepository:
+    """Manage the SQLite connection and low-level database operations."""
     def __init__(self, db_name=DB_NAME):
         self.db_name = db_name
 

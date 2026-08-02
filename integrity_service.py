@@ -69,6 +69,7 @@ TRANSLIT = {
 
 @dataclass
 class ParsedDate:
+    """A normalized date and its parsing precision."""
     raw: str
     year: int | None
     month: int | None
@@ -87,10 +88,12 @@ class ParsedDate:
 
 
 class ScanCancelled(Exception):
+    """Signal that an integrity scan was cancelled by the caller."""
     pass
 
 
 class IntegrityCheckService:
+    """Scan genealogy records for structural and semantic problems."""
     def __init__(self, repository: PersonRepository, data_dir: Path | None = None):
         self.repository = repository
         self.data_dir = Path(data_dir) if data_dir else DATA_DIR
@@ -355,8 +358,6 @@ class IntegrityCheckService:
             processed_steps += 1
             if progress_callback and (processed_steps % 500 == 0 or processed_steps == total_steps):
                 progress_callback(processed_steps, total_steps)
-
-        people_id_by_gedcom = {person.get("gedcom_id"): person_id for person_id, person in people_by_id.items() if person.get("gedcom_id")}
 
         for family in families:
             self._raise_if_cancelled(cancel_event)

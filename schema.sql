@@ -1,3 +1,5 @@
+DROP TABLE IF EXISTS citations;
+DROP TABLE IF EXISTS sources;
 DROP TABLE IF EXISTS person_sources;
 DROP TABLE IF EXISTS person_media;
 DROP TABLE IF EXISTS person_events;
@@ -65,6 +67,32 @@ CREATE TABLE person_sources (
     FOREIGN KEY(person_id) REFERENCES people(id) ON DELETE CASCADE
 );
 
+CREATE TABLE sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    author TEXT,
+    publication TEXT,
+    repository_name TEXT,
+    call_number TEXT,
+    source_url TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE citations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id INTEGER NOT NULL,
+    target_type TEXT NOT NULL CHECK(target_type IN ('person', 'family', 'event', 'relationship')),
+    target_id TEXT NOT NULL,
+    page TEXT,
+    quality TEXT,
+    transcription TEXT,
+    comment TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(source_id) REFERENCES sources(id) ON DELETE CASCADE
+);
+
 CREATE TABLE geocoding_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     normalized_place TEXT NOT NULL UNIQUE,
@@ -106,6 +134,15 @@ CREATE INDEX idx_person_media_person_id
 
 CREATE INDEX idx_person_sources_person_id
     ON person_sources(person_id);
+
+CREATE INDEX idx_citations_source_id
+    ON citations(source_id);
+
+CREATE INDEX idx_citations_target
+    ON citations(target_type, target_id);
+
+CREATE INDEX idx_sources_repository
+    ON sources(repository_name);
 
 CREATE INDEX idx_geocoding_cache_normalized_place
     ON geocoding_cache(normalized_place);

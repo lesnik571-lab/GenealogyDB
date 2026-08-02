@@ -1,4 +1,3 @@
-import sqlite3
 from config import DB_NAME
 from repository.person_repository import PersonRepository
 

@@ -4,6 +4,7 @@ import unicodedata
 from contextlib import contextmanager
 
 from config import DB_NAME
+from logging_service import get_logger
 
 
 def _normalize_text(value):
@@ -37,9 +38,23 @@ def _normalize_date(value):
 
 
 class PersonRepository:
+    """Provide persistence operations for people and related records."""
+    COMMAND_TABLES = {
+        "people": (
+            "id", "gedcom_id", "first_name", "last_name", "sex", "birth_date",
+            "birth_place", "death_date", "death_place", "occupation", "note",
+        ),
+        "families": ("id", "gedcom_id", "husband_id", "wife_id", "relationship_type"),
+        "family_children": ("family_id", "child_id"),
+        "person_events": ("id", "person_id", "event_type", "event_date", "event_place", "description"),
+        "person_media": ("id", "person_id", "media_type", "title", "file_path", "description", "created_at"),
+        "person_sources": ("id", "person_id", "title", "source_url", "archive_reference", "note", "created_at"),
+    }
+
     def __init__(self, db_name=DB_NAME):
         self.db_name = db_name
         self.conn = sqlite3.connect(db_name)
+        get_logger("database").info("Database opened: %s", db_name)
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.cur = self.conn.cursor()
         self._transaction_depth = 0
@@ -67,6 +82,79 @@ class PersonRepository:
         if self._transaction_depth == 0:
             self.conn.commit()
 
+    def capture_command_state(self):
+        existing_tables = {
+            row[0] for row in self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        state = {}
+        for table, columns in self.COMMAND_TABLES.items():
+            if table not in existing_tables:
+                continue
+            column_sql = ", ".join(columns)
+            order_sql = "rowid" if table == "family_children" else columns[0]
+            rows = self.conn.execute(
+                f"SELECT {column_sql} FROM {table} ORDER BY {order_sql}"
+            ).fetchall()
+            state[table] = tuple(tuple(row) for row in rows)
+        return state
+
+    def apply_command_delta(self, delta, use_before):
+        if not delta:
+            return
+        delete_order = (
+            "person_events", "person_media", "person_sources", "family_children",
+            "families", "people",
+        )
+        insert_order = (
+            "people", "families", "family_children", "person_events",
+            "person_media", "person_sources",
+        )
+        with self.transaction():
+            for table in delete_order:
+                change = delta.get(table)
+                if change is None:
+                    continue
+                if table == "family_children":
+                    for row in (*change.before_rows, *change.after_rows):
+                        self.conn.execute(
+                            "DELETE FROM family_children WHERE rowid IN "
+                            "(SELECT rowid FROM family_children WHERE family_id = ? AND child_id = ? LIMIT 1)",
+                            row,
+                        )
+                else:
+                    target_rows = change.before_rows if use_before else change.after_rows
+                    target_keys = {row[0] for row in target_rows}
+                    changed_keys = {row[0] for row in (*change.before_rows, *change.after_rows)}
+                    for key in changed_keys - target_keys:
+                        self.conn.execute(f"DELETE FROM {table} WHERE id = ?", (key,))
+            for table in insert_order:
+                change = delta.get(table)
+                if change is None:
+                    continue
+                rows = change.before_rows if use_before else change.after_rows
+                columns = self.COMMAND_TABLES[table]
+                if table == "family_children":
+                    placeholders = ", ".join("?" for _column in columns)
+                    self.conn.executemany(
+                        f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})",
+                        rows,
+                    )
+                    continue
+                assignments = ", ".join(f"{column} = ?" for column in columns[1:])
+                placeholders = ", ".join("?" for _column in columns)
+                for row in rows:
+                    updated = self.conn.execute(
+                        f"UPDATE {table} SET {assignments} WHERE id = ?",
+                        (*row[1:], row[0]),
+                    ).rowcount
+                    if not updated:
+                        self.conn.execute(
+                            f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})",
+                            row,
+                        )
+
     def _ensure_family_relationship_schema(self):
         columns = {row[1] for row in self.conn.execute('PRAGMA table_info("families")').fetchall()}
         if "relationship_type" not in columns:
@@ -75,6 +163,7 @@ class PersonRepository:
 
     def close(self):
         self.conn.close()
+        get_logger("database").info("Database closed: %s", self.db_name)
 
     def list_people(self, surname=None, first_name=None, last_name=None, birth_year=None, death_year=None, sex=None, limit=500):
         self.cur.execute(
@@ -464,9 +553,62 @@ class PersonRepository:
         person_gedcom_id = person[0] if person else None
         if person_gedcom_id:
             self.cur.execute("DELETE FROM family_children WHERE child_id = ?", (person_gedcom_id,))
+        self.cur.execute(
+            "DELETE FROM citations WHERE target_type = 'person' AND target_id = ?",
+            (str(person_id),),
+        )
         self.cur.execute("DELETE FROM people WHERE id = ?", (person_id,))
         self._commit_if_needed()
         return self.cur.rowcount > 0
+
+    def merge_people(self, target_person_id, source_person_id):
+        if target_person_id == source_person_id:
+            raise ValueError("Cannot merge a person with themselves")
+        target = self.get_person_record(target_person_id)
+        source = self.get_person_record(source_person_id)
+        if not target or not source:
+            raise ValueError("Person not found")
+        target_reference = target.get("gedcom_id") or str(target_person_id)
+        source_references = {str(source_person_id)}
+        if source.get("gedcom_id"):
+            source_references.add(source["gedcom_id"])
+        editable_fields = (
+            "first_name", "last_name", "sex", "birth_date", "birth_place",
+            "death_date", "death_place", "occupation", "note",
+        )
+        changes = {
+            field: source.get(field) or ""
+            for field in editable_fields
+            if not target.get(field) and source.get(field)
+        }
+        with self.transaction():
+            if changes:
+                self.update_person_fields(target_person_id, changes)
+            for reference in source_references:
+                self.conn.execute(
+                    "UPDATE families SET husband_id = ? WHERE husband_id = ?",
+                    (target_reference, reference),
+                )
+                self.conn.execute(
+                    "UPDATE families SET wife_id = ? WHERE wife_id = ?",
+                    (target_reference, reference),
+                )
+                self.conn.execute(
+                    "UPDATE family_children SET child_id = ? WHERE child_id = ?",
+                    (target_reference, reference),
+                )
+            for table in ("person_events", "person_media", "person_sources"):
+                if table in self.capture_command_state():
+                    self.conn.execute(
+                        f"UPDATE {table} SET person_id = ? WHERE person_id = ?",
+                        (target_person_id, source_person_id),
+                    )
+            self.conn.execute(
+                "UPDATE citations SET target_id = ? WHERE target_type = 'person' AND target_id = ?",
+                (str(target_person_id), str(source_person_id)),
+            )
+            self.conn.execute("DELETE FROM people WHERE id = ?", (source_person_id,))
+        return target_person_id
 
     def create_family(self, data):
         self._validate_family_data(data)
@@ -771,6 +913,144 @@ class PersonRepository:
         self.conn.commit()
         return self.cur.rowcount > 0
 
+    def create_source_record(self, data):
+        self.cur.execute(
+            """
+            INSERT INTO sources (title, author, publication, repository_name, call_number, source_url, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                data.get("title") or "", data.get("author") or "",
+                data.get("publication") or "", data.get("repository") or "",
+                data.get("call_number") or "", data.get("url") or "",
+                data.get("notes") or "",
+            ),
+        )
+        self._commit_if_needed()
+        return self.cur.lastrowid
+
+    def update_source_record(self, source_id, data):
+        self.cur.execute(
+            """
+            UPDATE sources
+            SET title = ?, author = ?, publication = ?, repository_name = ?,
+                call_number = ?, source_url = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                data.get("title") or "", data.get("author") or "",
+                data.get("publication") or "", data.get("repository") or "",
+                data.get("call_number") or "", data.get("url") or "",
+                data.get("notes") or "", source_id,
+            ),
+        )
+        self._commit_if_needed()
+        return self.cur.rowcount > 0
+
+    def delete_source_record(self, source_id):
+        self.cur.execute("DELETE FROM sources WHERE id = ?", (source_id,))
+        self._commit_if_needed()
+        return self.cur.rowcount > 0
+
+    def get_source_record(self, source_id):
+        self.cur.execute(
+            """
+            SELECT id, title, author, publication, repository_name, call_number,
+                   source_url, notes, created_at, updated_at
+            FROM sources WHERE id = ?
+            """,
+            (source_id,),
+        )
+        row = self.cur.fetchone()
+        return self._source_record(row) if row else None
+
+    def list_source_records(self):
+        self.cur.execute(
+            """
+            SELECT s.id, s.title, s.author, s.publication, s.repository_name,
+                   s.call_number, s.source_url, s.notes, s.created_at, s.updated_at,
+                   COUNT(c.id)
+            FROM sources s
+            LEFT JOIN citations c ON c.source_id = s.id
+            GROUP BY s.id
+            ORDER BY s.title COLLATE NOCASE, s.id
+            """
+        )
+        return [
+            {**self._source_record(row[:10]), "citation_count": row[10]}
+            for row in self.cur.fetchall()
+        ]
+
+    @staticmethod
+    def _source_record(row):
+        return {
+            "id": row[0], "title": row[1] or "", "author": row[2] or "",
+            "publication": row[3] or "", "repository": row[4] or "",
+            "call_number": row[5] or "", "url": row[6] or "",
+            "notes": row[7] or "", "created_at": row[8] or "",
+            "updated_at": row[9] or "",
+        }
+
+    def create_citation_record(self, data):
+        self.cur.execute(
+            """
+            INSERT INTO citations
+                (source_id, target_type, target_id, page, quality, transcription, comment)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                data.get("source_id"), data.get("target_type"), str(data.get("target_id") or ""),
+                data.get("page") or "", data.get("quality") or "",
+                data.get("transcription") or "", data.get("comment") or "",
+            ),
+        )
+        self._commit_if_needed()
+        return self.cur.lastrowid
+
+    def update_citation_record(self, citation_id, data):
+        self.cur.execute(
+            """
+            UPDATE citations
+            SET source_id = ?, target_type = ?, target_id = ?, page = ?, quality = ?,
+                transcription = ?, comment = ?
+            WHERE id = ?
+            """,
+            (
+                data.get("source_id"), data.get("target_type"), str(data.get("target_id") or ""),
+                data.get("page") or "", data.get("quality") or "",
+                data.get("transcription") or "", data.get("comment") or "", citation_id,
+            ),
+        )
+        self._commit_if_needed()
+        return self.cur.rowcount > 0
+
+    def delete_citation_record(self, citation_id):
+        self.cur.execute("DELETE FROM citations WHERE id = ?", (citation_id,))
+        self._commit_if_needed()
+        return self.cur.rowcount > 0
+
+    def list_citation_records(self, source_id=None):
+        sql = """
+            SELECT c.id, c.source_id, c.target_type, c.target_id, c.page, c.quality,
+                   c.transcription, c.comment, c.created_at, s.title
+            FROM citations c JOIN sources s ON s.id = c.source_id
+        """
+        params = ()
+        if source_id is not None:
+            sql += " WHERE c.source_id = ?"
+            params = (source_id,)
+        sql += " ORDER BY s.title COLLATE NOCASE, c.id"
+        self.cur.execute(sql, params)
+        return [
+            {
+                "id": row[0], "source_id": row[1], "target_type": row[2],
+                "target_id": row[3], "page": row[4] or "", "quality": row[5] or "",
+                "transcription": row[6] or "", "comment": row[7] or "",
+                "created_at": row[8] or "", "source_title": row[9] or "",
+            }
+            for row in self.cur.fetchall()
+        ]
+
     def update_person_event(self, event_id, data):
         if not event_id:
             return False
@@ -794,6 +1074,7 @@ class PersonRepository:
     def delete_person_event(self, event_id):
         if not event_id:
             return False
+        self.cur.execute("DELETE FROM citations WHERE target_type = 'event' AND target_id = ?", (str(event_id),))
         self.cur.execute("DELETE FROM person_events WHERE id = ?", (event_id,))
         self.conn.commit()
         return self.cur.rowcount > 0
@@ -882,6 +1163,10 @@ class PersonRepository:
         if family_refs:
             placeholders = ",".join("?" for _ in family_refs)
             self.cur.execute(f"DELETE FROM family_children WHERE family_id IN ({placeholders})", tuple(family_refs))
+        self.cur.execute(
+            "DELETE FROM citations WHERE target_type IN ('family', 'relationship') AND target_id = ?",
+            (str(family_id),),
+        )
         self.cur.execute("DELETE FROM families WHERE id = ?", (family_id,))
         self._commit_if_needed()
         return self.cur.rowcount > 0

@@ -32,10 +32,12 @@ EVENT_LABELS = {
 
 
 class GeocodingConfigurationError(Exception):
+    """Report missing or invalid geocoding configuration."""
     pass
 
 
 class OpenCageGeocoder:
+    """Resolve place names through the OpenCage geocoding API."""
     def __init__(self, api_key):
         self.api_key = (api_key or "").strip()
 
@@ -71,6 +73,7 @@ class OpenCageGeocoder:
 
 
 class PersonLifeMapService:
+    """Build and enrich map locations from a person's life events."""
     def __init__(self, repository: PersonRepository, timeline_service: PersonTimelineService | None = None, geocoder=None):
         self.repository = repository
         self.timeline_service = timeline_service or PersonTimelineService(repository)

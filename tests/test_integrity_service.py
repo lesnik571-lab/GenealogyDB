@@ -30,7 +30,7 @@ def test_integrity_duplicate_detection(tmp_path):
 def test_integrity_contradictory_dates(tmp_path):
     repo = _build_repo(tmp_path, "dates.db")
 
-    parent_id = repo.create_person({"gedcom_id": "I1", "first_name": "Parent", "last_name": "A", "sex": "M", "birth_date": "1 JAN 2000", "birth_place": "", "death_date": "", "death_place": "", "occupation": "", "note": ""})
+    repo.create_person({"gedcom_id": "I1", "first_name": "Parent", "last_name": "A", "sex": "M", "birth_date": "1 JAN 2000", "birth_place": "", "death_date": "", "death_place": "", "occupation": "", "note": ""})
     child_id = repo.create_person({"gedcom_id": "I2", "first_name": "Child", "last_name": "A", "sex": "F", "birth_date": "1 JAN 1990", "birth_place": "", "death_date": "1 JAN 1989", "death_place": "", "occupation": "", "note": ""})
     spouse_id = repo.create_person({"gedcom_id": "I3", "first_name": "Spouse", "last_name": "A", "sex": "F", "birth_date": "1 JAN 2001", "birth_place": "", "death_date": "1 JAN 2010", "death_place": "", "occupation": "", "note": ""})
 

@@ -8,6 +8,7 @@ from repository.person_repository import PersonRepository
 
 @dataclass
 class CandidateScore:
+    """A ranked replacement candidate for a placeholder reference."""
     person_id: int
     person_reference: str
     score: int

@@ -46,6 +46,7 @@ EVENT_LABELS = {
 
 @dataclass
 class TimelineDate:
+    """A sortable parsed date used by timeline entries."""
     raw: str
     known: bool
     earliest: date | None
@@ -53,6 +54,7 @@ class TimelineDate:
 
 
 class PersonTimelineService:
+    """Build a chronological timeline for a person."""
     def __init__(self, repository: PersonRepository):
         self.repository = repository
 

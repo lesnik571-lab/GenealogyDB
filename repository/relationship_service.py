@@ -3,15 +3,18 @@ from __future__ import annotations
 from typing import Iterable
 
 from repository.person_repository import PersonRepository
+from logging_service import log_operation
 
 
 class RelationshipService:
+    """Validate and mutate family relationships."""
     RELATIONSHIP_TYPES = ("marriage", "former_spouse", "civil_partner", "unknown")
     PARENT_ROLE_TO_FIELD = {"father": "husband", "mother": "wife"}
 
     def __init__(self, repository: PersonRepository):
         self.repository = repository
 
+    @log_operation("Relationship create family")
     def create_family(self, husband_gedcom_id="", wife_gedcom_id="", child_gedcom_ids=None, relationship_type="unknown"):
         child_gedcom_ids = child_gedcom_ids or []
         husband_ref = self._normalize_person_reference(husband_gedcom_id)
@@ -43,6 +46,7 @@ class RelationshipService:
         })
         return family_id
 
+    @log_operation("Relationship update family")
     def update_family(self, family_id, husband_gedcom_id="", wife_gedcom_id="", child_gedcom_ids=None, relationship_type="unknown"):
         child_gedcom_ids = child_gedcom_ids or []
         husband_ref = self._normalize_person_reference(husband_gedcom_id)
@@ -58,6 +62,7 @@ class RelationshipService:
             "relationship_type": relationship_type,
         })
 
+    @log_operation("Relationship delete family")
     def delete_family(self, family_id):
         with self.repository.transaction():
             return self.repository.delete_family(family_id)
@@ -118,6 +123,7 @@ class RelationshipService:
             "relationship_types": list(self.RELATIONSHIP_TYPES),
         }
 
+    @log_operation("Relationship link parent")
     def link_parent(self, child_reference, parent_reference, parent_role):
         if parent_role not in self.PARENT_ROLE_TO_FIELD:
             raise ValueError("Unsupported parent role")
@@ -158,11 +164,13 @@ class RelationshipService:
             self.repository.update_family(target_family["id"], payload)
             return self.repository.get_family(target_family["id"])
 
+    @log_operation("Relationship create and link parent")
     def create_parent_and_link(self, child_reference, parent_role, person_data):
         with self.repository.transaction():
             parent_id = self.repository.create_person(self._person_payload(person_data))
             return self.link_parent(child_reference, str(parent_id), parent_role)
 
+    @log_operation("Relationship remove parent")
     def remove_parent_link(self, child_reference, family_id, parent_role):
         if parent_role not in self.PARENT_ROLE_TO_FIELD:
             raise ValueError("Unsupported parent role")
@@ -182,6 +190,7 @@ class RelationshipService:
             self.repository.update_family(family_id, payload)
             return self.repository.get_family(family_id)
 
+    @log_operation("Relationship link partner")
     def link_partner(self, person_reference, partner_reference, relationship_type="unknown"):
         person = self._require_person_record(person_reference)
         partner = self._require_person_record(partner_reference)
@@ -212,11 +221,13 @@ class RelationshipService:
             })
             return self.repository.get_family(family_id)
 
+    @log_operation("Relationship create and link partner")
     def create_partner_and_link(self, person_reference, person_data, relationship_type="unknown"):
         with self.repository.transaction():
             partner_id = self.repository.create_person(self._person_payload(person_data))
             return self.link_partner(person_reference, str(partner_id), relationship_type=relationship_type)
 
+    @log_operation("Relationship remove partner")
     def remove_partner_link(self, person_reference, family_id):
         person = self._require_person_record(person_reference)
         family = self.repository.get_family(family_id)
@@ -232,13 +243,6 @@ class RelationshipService:
                 return None
 
         with self.repository.transaction():
-            self.repository.update_family(family_id, {
-                "husband": family.get("husband", "") if current_is_wife else person["reference"],
-                "wife": family.get("wife", "") if current_is_husband else person["reference"],
-                "children": family.get("children", []),
-                "relationship_type": "unknown",
-            })
-            updated = self.repository.get_family(family_id)
             if current_is_husband:
                 self.repository.update_family(family_id, {
                     "husband": person["reference"],
@@ -255,6 +259,7 @@ class RelationshipService:
                 })
             return self.repository.get_family(family_id)
 
+    @log_operation("Relationship link child")
     def link_child(self, parent_reference, child_reference, other_parent_reference="", relationship_type="unknown"):
         parent = self._require_person_record(parent_reference)
         child = self._require_person_record(child_reference)
@@ -317,11 +322,13 @@ class RelationshipService:
             })
             return self.repository.get_family(family_id)
 
+    @log_operation("Relationship create and link child")
     def create_child_and_link(self, parent_reference, person_data, other_parent_reference="", relationship_type="unknown"):
         with self.repository.transaction():
             child_id = self.repository.create_person(self._person_payload(person_data))
             return self.link_child(parent_reference, str(child_id), other_parent_reference, relationship_type=relationship_type)
 
+    @log_operation("Relationship remove child")
     def remove_child_link(self, family_id, child_reference):
         child = self._require_person_record(child_reference)
         family = self._require_child_family_member(family_id, child["reference"])

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, TypeAlias
 
 from repository.person_repository import PersonRepository
+from text_utils import normalize_search_text
+from logging_service import log_operation
 
 
 PersonData: TypeAlias = dict[str, Any]
@@ -48,6 +49,7 @@ MAX_CONFIDENCE = 100
 
 @dataclass(frozen=True)
 class RecoveryRecord:
+    """A person record eligible for guided recovery."""
     person_id: int
     gedcom_id: str
     first_name: str
@@ -71,6 +73,7 @@ class RecoveryRecord:
 
 @dataclass(frozen=True)
 class RecoveryMatchCandidate:
+    """A possible existing-person match with confidence details."""
     person_id: int
     gedcom_id: str
     full_name: str
@@ -106,10 +109,7 @@ class RecoveryWizardService:
 
     @staticmethod
     def _normalize(value: object) -> str:
-        text = unicodedata.normalize("NFKD", str(value or "").strip().casefold()).replace("ё", "е")
-        return " ".join(
-            "".join(character for character in text if not unicodedata.combining(character)).split()
-        )
+        return normalize_search_text(value)
 
     @classmethod
     def _text_similarity(cls, left: object, right: object) -> float:
@@ -227,6 +227,7 @@ class RecoveryWizardService:
                 links.append(link)
         return tuple(links)
 
+    @log_operation("Recovery Wizard list incomplete people")
     def list_incomplete_people(self) -> list[RecoveryRecord]:
         """Return every person whose first and last names are both empty."""
         people, people_by_ref, families, children_by_family, events_by_person = self._build_indexes()
@@ -318,6 +319,7 @@ class RecoveryWizardService:
         ))
         return min(MAX_CONFIDENCE, round(score))
 
+    @log_operation("Recovery Wizard find matches")
     def find_matches(self, person_id: int, criteria: Mapping[str, Any]) -> list[RecoveryMatchCandidate]:
         """Return read-only match candidates ordered by confidence descending."""
         source = self.repository.get_person_record(person_id)
@@ -353,6 +355,7 @@ class RecoveryWizardService:
         matches.sort(key=lambda candidate: (-candidate.confidence, candidate.full_name, candidate.person_id))
         return matches
 
+    @log_operation("Recovery Wizard update person")
     def update_existing_person(self, person_id: int, data: Mapping[str, Any]) -> bool:
         """Update editable fields on one existing person in a transaction."""
         person = self.repository.get_person_record(person_id)
@@ -379,6 +382,7 @@ class RecoveryWizardService:
         with self.repository.transaction():
             return self.repository.update_person_fields(person_id, changes)
 
+    @log_operation("Recovery Wizard restore person")
     def restore_existing_person(self, person_id: int, snapshot: Mapping[str, Any]) -> bool:
         """Restore editable fields for the most recently saved person."""
         if not self.repository.get_person_record(person_id):

@@ -14,6 +14,7 @@ DOCUMENT_EXTENSIONS = {".pdf", ".doc", ".docx", ".txt", ".jpg", ".jpeg", ".png"}
 
 
 class PersonAttachmentService:
+    """Manage documents, media, and sources attached to people."""
     def __init__(self, repository: PersonRepository, media_root: Path | None = None):
         self.repository = repository
         self.media_root = Path(media_root) if media_root else (DATA_DIR / "media")

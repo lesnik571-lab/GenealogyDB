@@ -1,6 +1,8 @@
 import json
 import re
 import queue
+import sqlite3
+import sys
 import threading
 import time
 import tkinter as tk
@@ -11,23 +13,52 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Mapping
 
-try:
-    from PIL import Image, ImageTk
-except Exception:  # pragma: no cover - optional dependency
-    Image = None
-    ImageTk = None
+Image = None
+ImageTk = None
 
-from config import DATA_DIR
-from config import DB_NAME
-from database import backup_database, restore_database
+from config import (
+    APP_VERSION,
+    BUILD_DATE,
+    DATA_DIR,
+    DB_NAME,
+    LOG_DIR,
+    EXPORT_DIR,
+    PLUGIN_DIR,
+    USER_MANUAL_PATH,
+    prepare_user_environment,
+)
+from advanced_search_service import AdvancedSearchFilters, AdvancedSearchService
+from data_quality_service import CATEGORY_DEFINITIONS, DataQualityService
+from database import backup_database, initialize_database, restore_database
+from family_tree_view_service import FamilyTreeModel, FamilyTreePerson, FamilyTreeViewService
 from integrity_service import IntegrityCheckService
+from kinship_service import KinshipAnalysis, KinshipService
+from logging_service import (
+    configure_logging,
+    diagnostics_snapshot,
+    export_diagnostics,
+    get_logger,
+    install_exception_logging,
+)
+from plugin_manager import PluginApp, PluginManager, ReadOnlyPluginData
 from recovery_wizard_service import RecoveryRecord, RecoveryWizardService
+from relationship_path_service import RelationshipPath, RelationshipPathService
+from source_service import CITATION_FIELDS, SOURCE_FIELDS, TARGET_TYPES, SourceService
+from timeline_service import FamilyTimelineService, SUPPORTED_EVENT_TYPES, TimelineFilters
 from repository import PersonRepository
 from repository.person_attachment_service import PersonAttachmentService
 from repository.person_event_service import PersonEventService
 from repository.person_life_map_service import PersonLifeMapService
 from repository.person_timeline_service import PersonTimelineService
 from repository.relationship_service import RelationshipService
+from undo_manager import (
+    AddPersonCommand,
+    DeletePersonCommand,
+    EditPersonCommand,
+    RecoveryUpdateCommand,
+    RelationshipEditCommand,
+    UndoManager,
+)
 
 
 RECOVERY_FIELD_SPECS = (
@@ -50,6 +81,23 @@ RECOVERY_MAX_SHORTCUT_CANDIDATES = 9
 PERCENT_SCALE = 100
 SECONDS_PER_MINUTE = 60
 SECONDS_PER_HOUR = 3600
+FAMILY_TREE_MIN_ZOOM = 0.7
+FAMILY_TREE_MAX_ZOOM = 2.0
+FAMILY_TREE_ZOOM_STEP = 0.1
+FAMILY_TREE_CARD_WIDTH = 190
+FAMILY_TREE_CARD_HEIGHT = 150
+FAMILY_TREE_BACKGROUND = "#f4f6f8"
+FAMILY_TREE_MALE_BORDER = "#79b9e7"
+FAMILY_TREE_FEMALE_BORDER = "#e8a1b7"
+FAMILY_TREE_UNNAMED_BACKGROUND = "#fff3bf"
+FAMILY_TREE_UNNAMED_BORDER = "#c63c3c"
+FAMILY_TREE_CURRENT_BACKGROUND = "#dceeff"
+UI_FONT = "TkDefaultFont"
+UI_BUTTON_PAD_X = 10
+UI_BUTTON_PAD_Y = 4
+UI_OUTER_PADDING = 12
+UI_CONTROL_GAP = 8
+UI_ROW_GAP = 4
 
 
 def _install_tk_fallback():
@@ -147,6 +195,19 @@ def _install_tk_fallback():
         class _FallbackButton(_FallbackWidget):
             pass
 
+        class _FallbackCheckbutton(_FallbackWidget):
+            pass
+
+        class _FallbackMenu(_FallbackWidget):
+            def add_command(self, *args, **kwargs):
+                return None
+
+            def add_cascade(self, *args, **kwargs):
+                return None
+
+            def entryconfig(self, *args, **kwargs):
+                return None
+
         class _FallbackFrame(_FallbackWidget):
             pass
 
@@ -226,6 +287,10 @@ def _install_tk_fallback():
 
             def set(self, value):
                 self._value = value
+
+        class _FallbackBooleanVar(_FallbackStringVar):
+            def get(self):
+                return bool(self._value)
 
         class _FallbackToplevel(_FallbackWidget):
             pass
@@ -326,7 +391,10 @@ def _install_tk_fallback():
         tk.Text = _FallbackText
         tk.Canvas = _FallbackCanvas
         tk.Button = _FallbackButton
+        tk.Checkbutton = _FallbackCheckbutton
+        tk.Menu = _FallbackMenu
         tk.StringVar = _FallbackStringVar
+        tk.BooleanVar = _FallbackBooleanVar
         tk.Toplevel = _FallbackToplevel
         tk.Listbox = _FallbackListbox
         ttk.Treeview = _FallbackTreeview
@@ -340,12 +408,20 @@ _install_tk_fallback()
 
 
 class GenealogyViewer:
+    """Coordinate GenealogyDB services and the Tkinter user interface."""
+
     def __init__(self, root):
         self.root = root
+        self._configure_ui_defaults()
         self.repository = PersonRepository(DB_NAME)
         self.relationship_service = RelationshipService(self.repository)
+        self.family_tree_view_service = FamilyTreeViewService(self.relationship_service)
+        self.relationship_path_service = RelationshipPathService(self.repository)
+        self.kinship_service = KinshipService(self.repository)
         self.event_service = PersonEventService(self.repository)
         self.timeline_service = PersonTimelineService(self.repository)
+        self.family_timeline_service = FamilyTimelineService(self.repository)
+        self.source_service = SourceService(self.repository)
         self.life_map_service = PersonLifeMapService(self.repository, timeline_service=self.timeline_service)
         self.current_person_id = None
         self.current_person_gedcom_id = None
@@ -374,6 +450,24 @@ class GenealogyViewer:
         self._life_map_marker_lookup = {}
         self._card_photo_image = None
         self.integrity_service = IntegrityCheckService(self.repository, data_dir=DATA_DIR)
+        self.data_quality_service = DataQualityService(self.repository)
+        self.advanced_search_service = AdvancedSearchService(
+            self.repository, DATA_DIR / "advanced_search_last.json"
+        )
+        self._advanced_search_vars = {}
+        self._advanced_search_results = ()
+        self._advanced_search_after_id = None
+        self._edit_menu = None
+        self.undo_manager = UndoManager(self._update_undo_menu)
+        self.plugin_manager = PluginManager(
+            PLUGIN_DIR, LOG_DIR / "plugins.log"
+        )
+        self._plugin_button_frame = None
+        self._plugin_menu_bar = None
+        self._plugin_menus = {}
+        self._plugin_reports = {}
+        self._plugin_exports = {}
+        self.loaded_plugins = ()
         self.recovery_wizard_service = RecoveryWizardService(self.repository)
         self._recovery_window = None
         self._recovery_records = []
@@ -388,6 +482,36 @@ class GenealogyViewer:
         self._batch_started_at = None
         self._batch_last_save = None
         self._batch_candidates = []
+        self._family_tree_window = None
+        self._family_tree_original_person_id = None
+        self._family_tree_history = []
+        self._family_tree_history_index = -1
+        self._family_timeline_window = None
+        self._family_timeline_tree = None
+        self._family_timeline_entries = ()
+        self._family_timeline_visible_entries = ()
+        self._family_timeline_vars = {}
+        self._family_timeline_person_ids = {}
+        self._family_timeline_status = None
+        self._family_timeline_event_control = None
+        self._source_window = None
+        self._source_tree = None
+        self._source_citation_tree = None
+        self._source_browser_tree = None
+        self._source_usage_map = {}
+        self._source_statistics_text = None
+        self._relationship_inspector_window = None
+        self._relationship_inspector_path = None
+        self._kinship_window = None
+        self._kinship_analysis = None
+        self._kinship_path_tree = None
+        self._kinship_canvas = None
+        self._data_quality_window = None
+        self._data_quality_report = None
+        self._data_quality_category_tree = None
+        self._data_quality_issue_tree = None
+        self._data_quality_severity_var = None
+        self._data_quality_issue_map = {}
         self._integrity_report_window = None
         self._integrity_report_body = None
         self._integrity_last_report = None
@@ -401,10 +525,34 @@ class GenealogyViewer:
         self._integrity_progress_count_label = None
         self._integrity_progress_bar = None
         self._integrity_progress_cancel_button = None
-        self.root.title("Genealogy Viewer")
+        self.root.title(f"GenealogyDB {APP_VERSION}")
         self.root.geometry("1000x700")
         self._create_widgets()
+        plugin_app = PluginApp(
+            ReadOnlyPluginData(self.repository),
+            self._register_plugin_button,
+            self._register_plugin_menu_item,
+            self._register_plugin_report,
+            self._register_plugin_export,
+        )
+        self.loaded_plugins = self.plugin_manager.load_plugins(plugin_app)
         self.search_people()
+
+    def _configure_ui_defaults(self):
+        """Apply shared typography and control sizing through Tk's option database."""
+        option_add = getattr(self.root, "option_add", None)
+        if not callable(option_add):
+            return
+        option_add("*Font", UI_FONT)
+        option_add("*Button.padX", UI_BUTTON_PAD_X)
+        option_add("*Button.padY", UI_BUTTON_PAD_Y)
+
+    def _create_dialog(self, parent=None):
+        """Create a consistently parented transient application dialog."""
+        owner = parent or self.root
+        dialog = tk.Toplevel(owner)
+        dialog.transient(owner)
+        return dialog
 
     def _close_person_card(self):
         if self._person_card_body is not None:
@@ -551,10 +699,9 @@ class GenealogyViewer:
         return records[index]
 
     def _choose_person(self, title, exclude_reference=None):
-        dialog = tk.Toplevel(self._person_dialog or self.root)
+        dialog = self._create_dialog(self._person_dialog or self.root)
         dialog.title(title)
         dialog.geometry("720x420")
-        dialog.transient(self._person_dialog or self.root)
         dialog.grab_set()
 
         result = {"reference": None}
@@ -595,10 +742,9 @@ class GenealogyViewer:
         return result["reference"]
 
     def _prompt_relationship_type(self, title, default_value="unknown"):
-        dialog = tk.Toplevel(self._person_dialog or self.root)
+        dialog = self._create_dialog(self._person_dialog or self.root)
         dialog.title(title)
         dialog.geometry("360x140")
-        dialog.transient(self._person_dialog or self.root)
         dialog.grab_set()
 
         labels = self._relationship_type_labels()
@@ -631,10 +777,9 @@ class GenealogyViewer:
         return result["value"]
 
     def _collect_person_form_data(self, title):
-        dialog = tk.Toplevel(self._person_dialog or self.root)
+        dialog = self._create_dialog(self._person_dialog or self.root)
         dialog.title(title)
         dialog.geometry("520x360")
-        dialog.transient(self._person_dialog or self.root)
         dialog.grab_set()
 
         result = {"person": None}
@@ -692,10 +837,9 @@ class GenealogyViewer:
         if not partners:
             return ""
 
-        dialog = tk.Toplevel(self._person_dialog or self.root)
+        dialog = self._create_dialog(self._person_dialog or self.root)
         dialog.title("Выберите второго родителя")
         dialog.geometry("620x320")
-        dialog.transient(self._person_dialog or self.root)
         dialog.grab_set()
 
         result = {"reference": ""}
@@ -743,7 +887,7 @@ class GenealogyViewer:
 
     def _apply_relationship_change(self, callback):
         try:
-            callback()
+            self._get_undo_manager().execute(RelationshipEditCommand(self.repository, callback))
         except ValueError as error:
             messagebox.showerror("Ошибка", str(error), parent=self._person_dialog or self.root)
             return False
@@ -757,6 +901,205 @@ class GenealogyViewer:
         for child in self._integrity_report_body.winfo_children():
             child.destroy()
 
+    @staticmethod
+    def _filter_data_quality_issues(report, category="all", severity="All"):
+        if report is None:
+            return ()
+        return tuple(
+            issue for issue in report.issues
+            if (category == "all" or issue.category == category)
+            and (severity == "All" or issue.severity == severity)
+        )
+
+    def open_data_quality_center(self):
+        if self._data_quality_window is not None:
+            for method_name in ("deiconify", "lift", "focus_set"):
+                method = getattr(self._data_quality_window, method_name, None)
+                if callable(method):
+                    method()
+            self._refresh_data_quality_report()
+            return
+
+        dialog = self._create_dialog()
+        dialog.title("Качество данных")
+        dialog.geometry("1240x720")
+        self._data_quality_window = dialog
+
+        def close_window():
+            self._data_quality_window = None
+            self._data_quality_category_tree = None
+            self._data_quality_issue_tree = None
+            self._data_quality_issue_map = {}
+            dialog.destroy()
+
+        dialog.protocol("WM_DELETE_WINDOW", close_window)
+        toolbar = tk.Frame(dialog)
+        toolbar.pack(fill="x", padx=12, pady=12)
+        tk.Button(toolbar, text="Обновить", command=self._refresh_data_quality_report).pack(side="left")
+        tk.Button(toolbar, text="Экспорт CSV", command=self._export_data_quality_csv).pack(side="left", padx=(8, 0))
+        tk.Button(toolbar, text="Открыть выбранное", command=self._open_selected_data_quality_issue).pack(side="left", padx=(8, 0))
+        tk.Label(toolbar, text="Важность:").pack(side="left", padx=(24, 6))
+        self._data_quality_severity_var = tk.StringVar(value="All")
+        severity_box = ttk.Combobox(
+            toolbar,
+            textvariable=self._data_quality_severity_var,
+            values=("All", "Critical", "Warning", "Information"),
+            state="readonly",
+            width=14,
+        )
+        severity_box.pack(side="left")
+        severity_box.bind("<<ComboboxSelected>>", lambda _event: self._render_data_quality_issues())
+        tk.Button(toolbar, text="Закрыть", command=close_window).pack(side="right")
+
+        body = ttk.Panedwindow(dialog, orient="horizontal")
+        body.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        category_frame = tk.Frame(body)
+        issue_frame = tk.Frame(body)
+        body.add(category_frame, weight=1)
+        body.add(issue_frame, weight=4)
+
+        category_tree = ttk.Treeview(category_frame, columns=("category", "count"), show="headings", selectmode="browse")
+        category_tree.heading("category", text="Категория")
+        category_tree.heading("count", text="Количество")
+        category_tree.column("category", width=245, anchor="w")
+        category_tree.column("count", width=80, anchor="e", stretch=False)
+        category_scroll = ttk.Scrollbar(category_frame, orient="vertical", command=category_tree.yview)
+        category_tree.configure(yscrollcommand=category_scroll.set)
+        category_tree.pack(side="left", fill="both", expand=True)
+        category_scroll.pack(side="right", fill="y")
+        category_tree.bind("<<TreeviewSelect>>", lambda _event: self._render_data_quality_issues())
+        self._data_quality_category_tree = category_tree
+
+        columns = ("issue_type", "severity", "database_id", "gedcom_id", "display_name", "explanation")
+        issue_tree = ttk.Treeview(issue_frame, columns=columns, show="headings", selectmode="browse")
+        headings = {
+            "issue_type": "Тип проблемы", "severity": "Важность", "database_id": "ID базы",
+            "gedcom_id": "GEDCOM ID", "display_name": "Имя", "explanation": "Описание",
+        }
+        widths = {"issue_type": 190, "severity": 90, "database_id": 85, "gedcom_id": 100, "display_name": 170, "explanation": 390}
+        for column in columns:
+            issue_tree.heading(column, text=headings[column], command=lambda name=column: self._sort_data_quality_table(name))
+            issue_tree.column(column, width=widths[column], anchor="w")
+        issue_scroll = ttk.Scrollbar(issue_frame, orient="vertical", command=issue_tree.yview)
+        issue_tree.configure(yscrollcommand=issue_scroll.set)
+        issue_tree.pack(side="left", fill="both", expand=True)
+        issue_scroll.pack(side="right", fill="y")
+        issue_tree.bind("<Double-1>", lambda _event: self._open_selected_data_quality_issue())
+        self._data_quality_issue_tree = issue_tree
+        self._refresh_data_quality_report()
+
+    def _selected_data_quality_category(self):
+        tree = self._data_quality_category_tree
+        if tree is None or not tree.selection():
+            return "all"
+        return tree.selection()[0]
+
+    def _refresh_data_quality_report(self):
+        self._data_quality_report = self.data_quality_service.analyze()
+        tree = self._data_quality_category_tree
+        if tree is None:
+            return
+        selected = self._selected_data_quality_category()
+        for item_id in tree.get_children(""):
+            tree.delete(item_id)
+        tree.insert("", "end", iid="all", values=("Все проблемы", len(self._data_quality_report.issues)))
+        for category, label in CATEGORY_DEFINITIONS:
+            tree.insert("", "end", iid=category, values=(label, self._data_quality_report.counters[category]))
+        available = tree.get_children("")
+        tree.selection_set(selected if selected in available else "all")
+        self._render_data_quality_issues()
+
+    def _render_data_quality_issues(self):
+        tree = self._data_quality_issue_tree
+        if tree is None:
+            return
+        severity = self._data_quality_severity_var.get() if self._data_quality_severity_var is not None else "All"
+        issues = self._filter_data_quality_issues(
+            self._data_quality_report, self._selected_data_quality_category(), severity
+        )
+        for item_id in tree.get_children(""):
+            tree.delete(item_id)
+        self._data_quality_issue_map = {}
+        for index, issue in enumerate(issues):
+            item_id = f"issue-{index}"
+            tree.insert("", "end", iid=item_id, values=(
+                issue.issue_type, issue.severity,
+                issue.database_id if issue.database_id is not None else "",
+                issue.gedcom_id, issue.display_name, issue.explanation,
+            ))
+            self._data_quality_issue_map[item_id] = issue
+
+    def _sort_data_quality_table(self, column, descending=False):
+        tree = self._data_quality_issue_tree
+        if tree is None:
+            return
+
+        def sort_value(item_id):
+            value = tree.set(item_id, column)
+            if column == "database_id":
+                return int(value) if str(value).isdigit() else -1
+            return str(value).casefold()
+
+        items = sorted(tree.get_children(""), key=sort_value, reverse=descending)
+        for position, item_id in enumerate(items):
+            tree.move(item_id, "", position)
+        tree.heading(column, command=lambda: self._sort_data_quality_table(column, not descending))
+
+    def _open_selected_data_quality_issue(self):
+        tree = self._data_quality_issue_tree
+        if tree is None or not tree.selection():
+            messagebox.showinfo("Качество данных", "Выберите проблему в таблице.")
+            return
+        issue = self._data_quality_issue_map.get(tree.selection()[0])
+        if issue is None:
+            return
+        if issue.entity_type == "person" and issue.database_id is not None:
+            self.show_person(issue.database_id)
+        elif issue.context_person_id is not None:
+            self.show_person(issue.context_person_id)
+        else:
+            self._show_data_quality_family_context(issue)
+
+    def _show_data_quality_family_context(self, issue):
+        family = next(
+            (item for item in self.repository.list_families_raw() if item["id"] == issue.database_id),
+            None,
+        )
+        dialog = self._create_dialog(self._data_quality_window or self.root)
+        dialog.title("Сведения о семье")
+        dialog.geometry("620x340")
+        rows = [
+            ("Проблема", issue.issue_type), ("Важность", issue.severity),
+            ("ID базы", issue.database_id if issue.database_id is not None else "-"),
+            ("GEDCOM ID", issue.gedcom_id or "-"), ("Описание", issue.explanation),
+        ]
+        if family:
+            rows.extend([
+                ("Супруг / партнер 1", family.get("husband_id") or "-"),
+                ("Супруг / партнер 2", family.get("wife_id") or "-"),
+                ("Тип отношений", family.get("relationship_type") or "unknown"),
+            ])
+        for row, (label, value) in enumerate(rows):
+            tk.Label(dialog, text=f"{label}:", font=("TkDefaultFont", 9, "bold")).grid(row=row, column=0, sticky="nw", padx=12, pady=6)
+            tk.Label(dialog, text=str(value), justify="left", wraplength=430).grid(row=row, column=1, sticky="nw", padx=(0, 12), pady=6)
+        tk.Button(dialog, text="Закрыть", command=dialog.destroy).grid(row=len(rows), column=1, sticky="e", padx=12, pady=12)
+
+    def _export_data_quality_csv(self):
+        if self._data_quality_report is None:
+            self._refresh_data_quality_report()
+        destination = filedialog.asksaveasfilename(
+            title="Сохранить отчет о качестве данных",
+            defaultextension=".csv",
+            filetypes=[("CSV", "*.csv"), ("Все файлы", "*.*")],
+        )
+        if not destination:
+            return
+        try:
+            saved_path = self.data_quality_service.export_csv(self._data_quality_report, destination)
+            messagebox.showinfo("Экспорт", f"Отчет сохранен: {saved_path}")
+        except OSError as error:
+            messagebox.showerror("Ошибка", str(error))
+
     def open_integrity_report(self):
         if self._integrity_report_window is not None:
             for method_name in ("deiconify", "lift", "focus_set"):
@@ -769,10 +1112,9 @@ class GenealogyViewer:
             self._refresh_integrity_report()
             return
 
-        dialog = tk.Toplevel(self.root)
+        dialog = self._create_dialog()
         dialog.title("Отчет проверки базы")
         dialog.geometry("980x700")
-        dialog.transient(self.root)
         self._integrity_report_window = dialog
 
         def close_window():
@@ -854,10 +1196,9 @@ class GenealogyViewer:
             except Exception:
                 pass
 
-        dialog = tk.Toplevel(self.root)
+        dialog = self._create_dialog()
         dialog.title("Проверка базы")
         dialog.geometry("460x180")
-        dialog.transient(self.root)
 
         container = tk.Frame(dialog)
         container.pack(fill="both", expand=True, padx=12, pady=12)
@@ -1052,6 +1393,8 @@ class GenealogyViewer:
         return "Фотография отсутствует"
 
     def _load_photo_preview_image(self, file_path, max_width=320, max_height=220):
+        global Image, ImageTk
+
         path = Path(file_path).expanduser()
         if not path.exists() or not path.is_file():
             raise FileNotFoundError("Файл изображения не найден")
@@ -1059,6 +1402,16 @@ class GenealogyViewer:
         suffix = path.suffix.lower()
         if suffix not in {".jpg", ".jpeg", ".png", ".bmp", ".gif"}:
             raise ValueError("Неподдерживаемый формат изображения")
+
+        if Image is None or ImageTk is None:
+            try:
+                from PIL import Image as pillow_image
+                from PIL import ImageTk as pillow_image_tk
+            except Exception:  # pragma: no cover - optional dependency
+                pass
+            else:
+                Image = pillow_image
+                ImageTk = pillow_image_tk
 
         if Image is not None and ImageTk is not None:
             image = Image.open(path)
@@ -1171,10 +1524,9 @@ class GenealogyViewer:
             messagebox.showwarning("Выбор", "Сначала выберите документ.")
             return
 
-        dialog = tk.Toplevel(self._person_dialog or self.root)
+        dialog = self._create_dialog(self._person_dialog or self.root)
         dialog.title("Переименовать документ")
         dialog.geometry("420x140")
-        dialog.transient(self._person_dialog or self.root)
         dialog.grab_set()
 
         form = tk.Frame(dialog)
@@ -1201,10 +1553,9 @@ class GenealogyViewer:
             messagebox.showwarning("Выбор", "Сначала выберите документ.")
             return
 
-        dialog = tk.Toplevel(self._person_dialog or self.root)
+        dialog = self._create_dialog(self._person_dialog or self.root)
         dialog.title("Изменить описание")
         dialog.geometry("520x220")
-        dialog.transient(self._person_dialog or self.root)
         dialog.grab_set()
 
         form = tk.Frame(dialog)
@@ -1257,10 +1608,9 @@ class GenealogyViewer:
         self._refresh_person_card()
 
     def _edit_source_dialog(self, person_id, source=None):
-        dialog = tk.Toplevel(self._person_dialog or self.root)
+        dialog = self._create_dialog(self._person_dialog or self.root)
         dialog.title("Источник")
         dialog.geometry("520x300")
-        dialog.transient(self._person_dialog or self.root)
         dialog.grab_set()
 
         form = tk.Frame(dialog)
@@ -1703,10 +2053,9 @@ class GenealogyViewer:
             messagebox.showwarning("Карта жизни", "Для выбранного события не указано место.")
             return
 
-        dialog = tk.Toplevel(self._person_dialog or self.root)
+        dialog = self._create_dialog(self._person_dialog or self.root)
         dialog.title("Ручная коррекция координат")
         dialog.geometry("420x220")
-        dialog.transient(self._person_dialog or self.root)
         dialog.grab_set()
 
         form = tk.Frame(dialog)
@@ -2132,15 +2481,18 @@ class GenealogyViewer:
         if self._batch_index < 0 or self._batch_index >= len(self._batch_records):
             return "break"
         record = self._batch_records[self._batch_index]
-        snapshot = self.repository.get_person_record(record.person_id)
         try:
-            self.recovery_wizard_service.update_existing_person(record.person_id, self._batch_form_data())
+            form_data = self._batch_form_data()
+            self._get_undo_manager().execute(RecoveryUpdateCommand(
+                self.repository,
+                lambda: self.recovery_wizard_service.update_existing_person(record.person_id, form_data),
+            ))
         except Exception as exc:
             messagebox.showerror("Пакетный режим", str(exc), parent=self._batch_window)
             return "break"
 
         saved_index = self._batch_index
-        self._batch_last_save = {"person_id": record.person_id, "snapshot": snapshot, "index": saved_index}
+        self._batch_last_save = {"person_id": record.person_id, "index": saved_index}
         self._batch_undo_button.configure(state="normal")
         del self._batch_records[saved_index]
         self._batch_list.delete(saved_index)
@@ -2165,10 +2517,11 @@ class GenealogyViewer:
         if not self._batch_last_save:
             return
         undo = self._batch_last_save
-        try:
-            self.recovery_wizard_service.restore_existing_person(undo["person_id"], undo["snapshot"])
-        except Exception as exc:
-            messagebox.showerror("Пакетный режим", str(exc), parent=self._batch_window)
+        undo_manager = self._get_undo_manager()
+        if undo_manager.undo_name != "Recovery Wizard change":
+            messagebox.showinfo("Пакетный режим", "Последнее изменение не относится к Мастеру восстановления.")
+            return
+        if not undo_manager.undo():
             return
         self._batch_records = self.recovery_wizard_service.list_incomplete_people()
         self._batch_last_save = None
@@ -2258,7 +2611,7 @@ class GenealogyViewer:
         self._batch_last_save = None
         self._batch_candidates = []
 
-        win = tk.Toplevel(self.root)
+        win = self._create_dialog()
         self._batch_window = win
         win.title("Пакетный режим восстановления")
         win.geometry(BATCH_RECOVERY_WINDOW_GEOMETRY)
@@ -2367,7 +2720,7 @@ class GenealogyViewer:
             (index for index, record in enumerate(records) if record.person_id == selected_person_id),
             0,
         )
-        win = tk.Toplevel(self.root)
+        win = self._create_dialog()
         self._recovery_window = win
         win.title("Мастер восстановления данных")
         try:
@@ -2504,7 +2857,10 @@ class GenealogyViewer:
         record = self._recovery_records[self._recovery_index]
         data = self._recovery_form_data()
         try:
-            self.recovery_wizard_service.update_existing_person(record.person_id, data)
+            self._get_undo_manager().execute(RecoveryUpdateCommand(
+                self.repository,
+                lambda: self.recovery_wizard_service.update_existing_person(record.person_id, data),
+            ))
         except Exception as exc:
             messagebox.showerror("Мастер восстановления", str(exc))
             return
@@ -2550,10 +2906,9 @@ class GenealogyViewer:
             messagebox.showinfo("Поиск совпадений", "Совпадения не найдены.", parent=self._recovery_window)
             return
 
-        dialog = tk.Toplevel(self._recovery_window)
+        dialog = self._create_dialog(self._recovery_window)
         dialog.title("Найденные совпадения")
         dialog.geometry(RECOVERY_MATCH_WINDOW_GEOMETRY)
-        dialog.transient(self._recovery_window)
 
         tk.Label(dialog, text=f"Кандидаты для ID {record.person_id}, GEDCOM {record.gedcom_id or 'нет'}").pack(
             anchor="w", padx=12, pady=(12, 8)
@@ -2621,17 +2976,78 @@ class GenealogyViewer:
         tk.Button(dialog, text="Закрыть", command=dialog.destroy).pack(anchor="e", padx=12, pady=(0, 12))
 
     def _create_widgets(self):
+        self._plugin_menu_bar = tk.Menu(self.root)
+        self.root.config(menu=self._plugin_menu_bar)
+        self._edit_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
+        self._plugin_menu_bar.add_cascade(label="Edit", menu=self._edit_menu)
+        self._edit_menu.add_command(label="Undo", command=self._undo_command, state="disabled")
+        self._edit_menu.add_command(label="Redo", command=self._redo_command, state="disabled")
+        self.root.bind("<Control-z>", self._undo_command)
+        self.root.bind("<Control-y>", self._redo_command)
+        self._update_undo_menu()
+        help_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
+        self._plugin_menu_bar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="User Manual", command=self._show_user_manual)
+        help_menu.add_command(label="Diagnostics", command=self._show_diagnostics)
+        help_menu.add_command(label="About", command=self._show_about)
+
+        search_frame = tk.LabelFrame(self.root, text="Расширенный поиск")
+        search_frame.pack(fill="x", padx=10, pady=(10, 4))
+        text_fields = (
+            ("first_name", "Имя"), ("last_name", "Фамилия"),
+            ("patronymic", "Отчество"), ("sex", "Пол"),
+            ("birth_year_from", "Год рождения от"), ("birth_year_to", "до"),
+            ("death_year_from", "Год смерти от"), ("death_year_to", "до"),
+            ("birth_place", "Место рождения"), ("death_place", "Место смерти"),
+            ("occupation", "Занятие"), ("note_contains", "Заметка содержит"),
+            ("gedcom_id", "GEDCOM ID"), ("database_id", "ID базы"),
+        )
+        loaded_filters = self.advanced_search_service.load_last_search()
+        for index, (key, label) in enumerate(text_fields):
+            row, column = divmod(index, 4)
+            cell = tk.Frame(search_frame)
+            cell.grid(row=row, column=column, sticky="ew", padx=6, pady=3)
+            tk.Label(cell, text=f"{label}:").pack(side="left")
+            value = getattr(loaded_filters, key)
+            variable = tk.StringVar(value="" if value is None else str(value))
+            self._advanced_search_vars[key] = variable
+            if key == "sex":
+                control = ttk.Combobox(
+                    cell, textvariable=variable, values=("", "M", "F"),
+                    state="readonly", width=8,
+                )
+                control.bind("<<ComboboxSelected>>", self._schedule_advanced_search)
+            else:
+                control = tk.Entry(cell, textvariable=variable, width=18)
+                control.bind("<KeyRelease>", self._schedule_advanced_search)
+                control.bind("<Return>", lambda _event: self.search_people())
+            control.pack(side="right", fill="x", expand=True, padx=(6, 0))
+            search_frame.grid_columnconfigure(column, weight=1)
+
+        flags = tk.Frame(search_frame)
+        flags.grid(row=3, column=2, columnspan=2, sticky="w", padx=6, pady=3)
+        for key, label in (
+            ("has_parents", "Есть родители"), ("has_spouses", "Есть супруги"),
+            ("has_children", "Есть дети"), ("has_events", "Есть события"),
+            ("has_attachments", "Есть вложения"),
+        ):
+            variable = tk.BooleanVar(value=getattr(loaded_filters, key))
+            self._advanced_search_vars[key] = variable
+            tk.Checkbutton(
+                flags, text=label, variable=variable, command=self._schedule_advanced_search
+            ).pack(side="left", padx=(0, 8))
+
+        search_actions = tk.Frame(search_frame)
+        search_actions.grid(row=4, column=0, columnspan=4, sticky="ew", padx=6, pady=(4, 7))
+        tk.Button(search_actions, text="Поиск", command=self.search_people).pack(side="left")
+        tk.Button(search_actions, text="Сбросить", command=self._clear_advanced_search).pack(side="left", padx=(8, 0))
+        tk.Button(search_actions, text="Экспорт CSV", command=self._export_advanced_search_csv).pack(side="left", padx=(8, 0))
+        self.status_label = tk.Label(search_actions, text="Найдено: 0")
+        self.status_label.pack(side="left", padx=16)
+
         top = tk.Frame(self.root)
-        top.pack(fill="x", padx=10, pady=10)
-
-        tk.Label(top, text="Имя или фамилия:").pack(side="left")
-        self.search_entry = tk.Entry(top, width=30)
-        self.search_entry.pack(side="left", padx=5)
-        self.search_entry.bind("<Return>", lambda _event: self.search_people())
-
-        tk.Button(top, text="Поиск", command=self.search_people).pack(side="left", padx=(10, 5))
-        self.status_label = tk.Label(top, text="")
-        self.status_label.pack(side="left", padx=12)
+        top.pack(fill="x", padx=10, pady=(4, 10))
+        self._plugin_button_frame = top
 
         self.backup_button = tk.Button(top, text="Backup database", command=self.backup_database)
         self.backup_button.pack(side="left", padx=(10, 5))
@@ -2639,8 +3055,24 @@ class GenealogyViewer:
         self.restore_button.pack(side="left", padx=(0, 5))
         self.relationship_button = tk.Button(top, text="Edit relationships", command=self.open_relationship_editor)
         self.relationship_button.pack(side="left")
+        self.family_tree_button = tk.Button(top, text="Семейное дерево", command=self.open_family_tree)
+        self.family_tree_button.pack(side="left", padx=(10, 0))
+        self.family_timeline_button = tk.Button(top, text="Хронология", command=self.open_family_timeline)
+        self.family_timeline_button.pack(side="left", padx=(10, 0))
+        self.source_manager_button = tk.Button(top, text="Источники", command=self.open_source_manager)
+        self.source_manager_button.pack(side="left", padx=(10, 0))
+        self.relationship_inspector_button = tk.Button(
+            top,
+            text="Связь между людьми",
+            command=self.open_relationship_inspector,
+        )
+        self.relationship_inspector_button.pack(side="left", padx=(10, 0))
+        self.kinship_button = tk.Button(top, text="Анализ родства", command=self.open_kinship_analyzer)
+        self.kinship_button.pack(side="left", padx=(10, 0))
         self.integrity_button = tk.Button(top, text="Проверка базы", command=self.open_integrity_report)
         self.integrity_button.pack(side="left", padx=(10, 0))
+        self.data_quality_button = tk.Button(top, text="Качество данных", command=self.open_data_quality_center)
+        self.data_quality_button.pack(side="left", padx=(10, 0))
         self.recovery_button = tk.Button(top, text="Мастер восстановления", command=self.open_recovery_wizard)
         self.recovery_button.pack(side="left", padx=(10, 0))
         self.add_person_button = tk.Button(top, text="Add person", command=lambda: self._show_person_editor(None))
@@ -2675,6 +3107,198 @@ class GenealogyViewer:
         self.family_tree_text.insert("end", "Выберите человека, чтобы увидеть семейное дерево.\n")
         self.family_tree_text.config(state="disabled")
 
+    def _update_undo_menu(self):
+        if getattr(self, "_edit_menu", None) is None:
+            return
+        undo_manager = self._get_undo_manager()
+        undo_label = f"Undo {undo_manager.undo_name}" if undo_manager.can_undo else "Undo"
+        redo_label = f"Redo {undo_manager.redo_name}" if undo_manager.can_redo else "Redo"
+        self._edit_menu.entryconfig(0, label=undo_label, state="normal" if undo_manager.can_undo else "disabled")
+        self._edit_menu.entryconfig(1, label=redo_label, state="normal" if undo_manager.can_redo else "disabled")
+
+    def _get_undo_manager(self):
+        manager = getattr(self, "undo_manager", None)
+        if manager is None:
+            manager = UndoManager(self._update_undo_menu)
+            self.undo_manager = manager
+        return manager
+
+    def _undo_command(self, _event=None):
+        if self._get_undo_manager().undo():
+            self.refresh_views()
+            self._refresh_person_card()
+        return "break"
+
+    def _redo_command(self, _event=None):
+        if self._get_undo_manager().redo():
+            self.refresh_views()
+            self._refresh_person_card()
+        return "break"
+
+    def _run_plugin_action(self, context, callback):
+        try:
+            return callback()
+        except Exception as error:
+            self.plugin_manager.log_runtime_error(context, error)
+            messagebox.showerror("Plugin error", f"{context}: {error}")
+            return None
+
+    def _register_plugin_button(self, label, command):
+        wrapped = lambda: self._run_plugin_action(label, command)
+        button = tk.Button(self._plugin_button_frame, text=label, command=wrapped)
+        button.pack(side="left", padx=(10, 0))
+        return button
+
+    def _show_about(self):
+        """Show release and runtime version information."""
+        messagebox.showinfo(
+            "About GenealogyDB",
+            "\n".join((
+                f"GenealogyDB {APP_VERSION}",
+                f"Build date: {BUILD_DATE}",
+                f"Python: {sys.version.split()[0]}",
+                f"SQLite: {sqlite3.sqlite_version}",
+            )),
+            parent=self.root,
+        )
+
+    def _show_user_manual(self):
+        """Open the bundled user manual in a read-only application dialog."""
+        try:
+            manual = USER_MANUAL_PATH.read_text(encoding="utf-8")
+        except OSError as error:
+            messagebox.showerror(
+                "User Manual",
+                f"Unable to open the user manual: {error}",
+                parent=self.root,
+            )
+            return
+
+        dialog = self._create_dialog()
+        dialog.title("GenealogyDB User Manual")
+        dialog.geometry("760x620")
+        body = tk.Text(dialog, wrap="word")
+        body.pack(fill="both", expand=True, padx=12, pady=(12, 8))
+        body.insert("end", manual)
+        body.config(state="disabled")
+        tk.Button(dialog, text="Close", command=dialog.destroy).pack(
+            anchor="e", padx=12, pady=(0, 12)
+        )
+
+    def _diagnostics_snapshot(self):
+        service_names = {
+            type(value).__name__
+            for name, value in vars(self).items()
+            if value is not None and name.endswith(("_service", "_manager"))
+        }
+        service_names.add(type(self.repository).__name__)
+        return diagnostics_snapshot(
+            plugins=getattr(self, "loaded_plugins", ()),
+            services=service_names,
+        )
+
+    def _show_diagnostics(self):
+        """Show runtime diagnostics and offer a privacy-safe ZIP export."""
+        snapshot = self._diagnostics_snapshot()
+        lines = (
+            f"Application version: {snapshot['application_version']}",
+            f"Database path: {snapshot['database_path']}",
+            f"Log folder: {snapshot['log_folder']}",
+            f"Python version: {snapshot['python_version']}",
+            f"SQLite version: {snapshot['sqlite_version']}",
+            "",
+            "Plugins:",
+            *(f"  {name}" for name in snapshot["plugins"]),
+            "",
+            "Loaded services:",
+            *(f"  {name}" for name in snapshot["loaded_services"]),
+        )
+        dialog = self._create_dialog()
+        dialog.title("GenealogyDB Diagnostics")
+        dialog.geometry("760x560")
+        body = tk.Text(dialog, wrap="word")
+        body.pack(fill="both", expand=True, padx=12, pady=(12, 8))
+        body.insert("end", "\n".join(lines))
+        body.config(state="disabled")
+        controls = tk.Frame(dialog)
+        controls.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Button(
+            controls,
+            text="Export diagnostics.zip",
+            command=lambda: self._export_diagnostics(snapshot, dialog),
+        ).pack(side="left")
+        tk.Button(controls, text="Close", command=dialog.destroy).pack(side="right")
+
+    def _export_diagnostics(self, snapshot, parent=None):
+        destination = filedialog.asksaveasfilename(
+            parent=parent or self.root,
+            title="Export diagnostics",
+            initialdir=str(EXPORT_DIR),
+            initialfile="diagnostics.zip",
+            defaultextension=".zip",
+            filetypes=[("ZIP archives", "*.zip")],
+        )
+        if not destination:
+            return
+        try:
+            output = export_diagnostics(destination, snapshot)
+        except Exception:
+            get_logger("diagnostics").exception("Diagnostics export failed")
+            messagebox.showerror("Diagnostics", "Diagnostics export failed.", parent=parent)
+            return
+        messagebox.showinfo("Diagnostics", f"Diagnostics exported to:\n{output}", parent=parent)
+
+    def _register_plugin_menu_item(self, menu_name, label, command):
+        menu = self._plugin_menus.get(menu_name)
+        if menu is None:
+            menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
+            self._plugin_menu_bar.add_cascade(label=menu_name, menu=menu)
+            self._plugin_menus[menu_name] = menu
+        wrapped = lambda: self._run_plugin_action(f"{menu_name} / {label}", command)
+        menu.add_command(label=label, command=wrapped)
+        return wrapped
+
+    def _register_plugin_report(self, name, provider):
+        self._plugin_reports[name] = provider
+        command = lambda: self._open_plugin_report(name)
+        self._register_plugin_menu_item("Reports", name, command)
+        return command
+
+    def _register_plugin_export(self, name, exporter):
+        self._plugin_exports[name] = exporter
+        command = lambda: self._run_plugin_export(name)
+        self._register_plugin_menu_item("Exports", name, command)
+        return command
+
+    def _open_plugin_report(self, name):
+        provider = self._plugin_reports[name]
+        report = provider()
+        dialog = self._create_dialog()
+        dialog.title(name)
+        dialog.geometry("620x460")
+        text = tk.Text(dialog, wrap="word")
+        text.pack(fill="both", expand=True, padx=12, pady=(12, 8))
+        text.insert("end", self._format_plugin_report(report))
+        text.config(state="disabled")
+        tk.Button(dialog, text="Закрыть", command=dialog.destroy).pack(anchor="e", padx=12, pady=(0, 12))
+
+    @staticmethod
+    def _format_plugin_report(report):
+        if isinstance(report, Mapping):
+            return "\n".join(f"{key}: {value}" for key, value in report.items())
+        if isinstance(report, (list, tuple)):
+            return "\n".join(str(item) for item in report)
+        return str(report)
+
+    def _run_plugin_export(self, name):
+        destination = filedialog.asksaveasfilename(
+            title=f"Export {name}",
+            defaultextension=".csv",
+            filetypes=[("CSV", "*.csv"), ("All files", "*.*")],
+        )
+        if destination:
+            self._plugin_exports[name](Path(destination))
+
     def _clear_tree(self):
         for item in self.tree.get_children():
             self.tree.delete(item)
@@ -2691,7 +3315,95 @@ class GenealogyViewer:
 
         return self.repository.list_people(surname=query, first_name=query, last_name=query)
 
+    @staticmethod
+    def _optional_search_integer(value, label):
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            return int(text)
+        except ValueError as error:
+            raise ValueError(f"{label}: введите целое число.") from error
+
+    def _collect_advanced_search_filters(self):
+        values = {key: variable.get() for key, variable in self._advanced_search_vars.items()}
+        return AdvancedSearchFilters(
+            first_name=str(values["first_name"]).strip(),
+            last_name=str(values["last_name"]).strip(),
+            patronymic=str(values["patronymic"]).strip(),
+            sex=str(values["sex"]).strip(),
+            birth_year_from=self._optional_search_integer(values["birth_year_from"], "Год рождения от"),
+            birth_year_to=self._optional_search_integer(values["birth_year_to"], "Год рождения до"),
+            death_year_from=self._optional_search_integer(values["death_year_from"], "Год смерти от"),
+            death_year_to=self._optional_search_integer(values["death_year_to"], "Год смерти до"),
+            birth_place=str(values["birth_place"]).strip(),
+            death_place=str(values["death_place"]).strip(),
+            occupation=str(values["occupation"]).strip(),
+            note_contains=str(values["note_contains"]).strip(),
+            gedcom_id=str(values["gedcom_id"]).strip(),
+            database_id=self._optional_search_integer(values["database_id"], "ID базы"),
+            has_parents=bool(values["has_parents"]),
+            has_spouses=bool(values["has_spouses"]),
+            has_children=bool(values["has_children"]),
+            has_events=bool(values["has_events"]),
+            has_attachments=bool(values["has_attachments"]),
+        )
+
+    def _schedule_advanced_search(self, _event=None):
+        if self._advanced_search_after_id is not None:
+            try:
+                self.root.after_cancel(self._advanced_search_after_id)
+            except (AttributeError, tk.TclError):
+                pass
+        self._advanced_search_after_id = self.root.after(250, self.search_people)
+
+    def _clear_advanced_search(self):
+        for key, variable in self._advanced_search_vars.items():
+            variable.set(False if key.startswith("has_") else "")
+        self.search_people()
+
+    def _export_advanced_search_csv(self):
+        if not self._advanced_search_results:
+            messagebox.showinfo("Расширенный поиск", "Нет результатов для экспорта.")
+            return
+        destination = filedialog.asksaveasfilename(
+            title="Экспорт результатов поиска",
+            defaultextension=".csv",
+            filetypes=[("CSV", "*.csv"), ("Все файлы", "*.*")],
+        )
+        if not destination:
+            return
+        try:
+            saved_path = self.advanced_search_service.export_csv(
+                self._advanced_search_results, destination
+            )
+            messagebox.showinfo("Экспорт", f"Результаты сохранены: {saved_path}")
+        except OSError as error:
+            messagebox.showerror("Ошибка", str(error))
+
     def search_people(self):
+        if hasattr(self, "_advanced_search_vars") and self._advanced_search_vars:
+            self._advanced_search_after_id = None
+            self._clear_tree()
+            self.status_label.config(text="Поиск...")
+            self.root.update_idletasks()
+            try:
+                filters = self._collect_advanced_search_filters()
+                rows = self.advanced_search_service.search(filters)
+                self.advanced_search_service.save_last_search(filters)
+            except ValueError as error:
+                self._advanced_search_results = ()
+                self.status_label.config(text=str(error))
+                return
+            self._advanced_search_results = rows
+            for person in rows:
+                self.tree.insert("", "end", values=(
+                    person.database_id, person.display_name,
+                    person.birth_date, person.death_date,
+                ))
+            self.status_label.config(text=f"Найдено: {len(rows)}")
+            return
+
         query = self.search_entry.get().strip()
         self._clear_tree()
         self.status_label.config(text="Поиск..." if query else "Загрузка...")
@@ -2728,6 +3440,1135 @@ class GenealogyViewer:
         if not selected:
             return None
         return self.tree.item(selected[0])["values"][0]
+
+    def open_relationship_inspector(self) -> None:
+        """Select two people and show their shortest read-only relationship path."""
+        source_reference = self._choose_person("Выберите первого человека")
+        if not source_reference:
+            return
+        target_reference = self._choose_person(
+            "Выберите второго человека",
+            exclude_reference=source_reference,
+        )
+        if not target_reference:
+            return
+        try:
+            path = self.relationship_path_service.find_shortest_path(
+                source_reference,
+                target_reference,
+            )
+        except Exception as exc:
+            messagebox.showerror("Связь между людьми", str(exc))
+            return
+        if path is None:
+            messagebox.showinfo("Связь между людьми", "Связь между выбранными людьми не найдена.")
+            return
+        self._show_relationship_inspector(path)
+
+    def open_kinship_analyzer(self) -> None:
+        """Select two people and open their read-only kinship analysis."""
+        source_reference = self._choose_person("Выберите первого человека")
+        if not source_reference:
+            return
+        target_reference = self._choose_person(
+            "Выберите второго человека",
+            exclude_reference=source_reference,
+        )
+        if not target_reference:
+            return
+        try:
+            analysis = self.kinship_service.analyze(source_reference, target_reference)
+        except ValueError as error:
+            messagebox.showerror("Анализ родства", str(error), parent=self.root)
+            return
+        self._show_kinship_analysis(analysis)
+
+    def _show_kinship_analysis(self, analysis: KinshipAnalysis) -> None:
+        if self._kinship_window is not None:
+            try:
+                self._kinship_window.destroy()
+            except Exception:
+                pass
+        window = self._create_dialog()
+        self._kinship_window = window
+        self._kinship_analysis = analysis
+        window.title("Анализ родства")
+        window.geometry("1180x760")
+        window.minsize(860, 560)
+        window.protocol("WM_DELETE_WINDOW", self._close_kinship_analyzer)
+
+        summary = tk.LabelFrame(window, text="Результат")
+        summary.pack(fill="x", padx=12, pady=(12, 6))
+        nearest = ", ".join(item.person.full_name for item in analysis.nearest_common_ancestors) or "нет"
+        common = ", ".join(item.person.full_name for item in analysis.common_ancestors) or "нет"
+        generation = (
+            f"{analysis.generation_distance[0]} / {analysis.generation_distance[1]}"
+            if analysis.generation_distance else "-"
+        )
+        inbreeding = ", ".join(
+            f"{person.full_name}: {coefficient:.6f}"
+            for person, coefficient in analysis.inbreeding_coefficients
+        ) or "не применимо"
+        lines = (
+            f"Люди: {analysis.source.full_name} / {analysis.target.full_name}",
+            f"Кратчайший путь: {analysis.shortest_path.description if analysis.shortest_path else 'не найден'}",
+            f"Кровное родство: {'да' if analysis.blood_relationship else 'нет'}    Степень: {analysis.relationship_degree if analysis.relationship_degree is not None else '-'}    Поколения: {generation}",
+            f"Общие предки: {common}",
+            f"Ближайшие общие предки: {nearest}",
+            f"Коэффициент родства: {analysis.coefficient_of_relationship:.6f}    Коэффициент инбридинга: {inbreeding}",
+        )
+        tk.Label(summary, text="\n".join(lines), justify="left", anchor="w").pack(
+            fill="x", padx=8, pady=8
+        )
+
+        graph_frame = tk.LabelFrame(window, text="Графическое дерево родства")
+        graph_frame.pack(fill="x", padx=12, pady=6)
+        canvas = tk.Canvas(graph_frame, height=170, background="white")
+        canvas.pack(fill="x", expand=True, padx=8, pady=8)
+        self._kinship_canvas = canvas
+        self._draw_kinship_tree(analysis)
+
+        paths_frame = tk.LabelFrame(window, text="Все альтернативные пути")
+        paths_frame.pack(fill="both", expand=True, padx=12, pady=6)
+        columns = ("number", "distance", "blood", "path")
+        tree = ttk.Treeview(paths_frame, columns=columns, show="headings")
+        for column, title, width in (
+            ("number", "#", 45), ("distance", "Расстояние", 90),
+            ("blood", "Кровный", 80), ("path", "Путь", 820),
+        ):
+            tree.heading(column, text=title)
+            tree.column(column, width=width, anchor="w" if column == "path" else "center")
+        tree.tag_configure("direct_blood", background="#d9f2df")
+        tree.tag_configure("blood", background="#eef7f0")
+        for index, path in enumerate(analysis.paths, start=1):
+            tag = "direct_blood" if path.is_direct_blood else "blood" if path.is_blood else ""
+            tree.insert("", "end", values=(index, path.distance, "да" if path.is_blood else "нет", path.description), tags=(tag,) if tag else ())
+        tree.pack(side="left", fill="both", expand=True)
+        scrollbar = ttk.Scrollbar(paths_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self._kinship_path_tree = tree
+
+        controls = tk.Frame(window)
+        controls.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Button(controls, text="Экспорт PDF", command=self._export_kinship_pdf).pack(side="left")
+        tk.Button(controls, text="Экспорт HTML", command=self._export_kinship_html).pack(side="left", padx=(8, 0))
+        tk.Button(controls, text="Экспорт CSV", command=self._export_kinship_csv).pack(side="left", padx=(8, 0))
+        tk.Button(controls, text="Закрыть", command=self._close_kinship_analyzer).pack(side="right")
+
+    def _draw_kinship_tree(self, analysis: KinshipAnalysis) -> None:
+        canvas = self._kinship_canvas
+        if canvas is None:
+            return
+        canvas.delete("all")
+        path = next((item for item in analysis.paths if item.is_direct_blood), analysis.shortest_path)
+        if path is None:
+            canvas.create_text(20, 80, text="Путь не найден", anchor="w")
+            return
+        node_width = 150
+        gap = 55
+        y = 85
+        for index, person in enumerate(path.people):
+            x = 20 + index * (node_width + gap)
+            if index:
+                edge = path.edges[index - 1]
+                canvas.create_line(x - gap, y, x, y, fill="#2f7d4a", width=3, arrow="last")
+                canvas.create_text(x - gap / 2, y - 16, text=edge)
+            canvas.create_rectangle(x, y - 32, x + node_width, y + 32, fill="#d9f2df", outline="#2f7d4a", width=2)
+            canvas.create_text(x + node_width / 2, y, text=person.full_name, width=node_width - 12)
+        canvas.configure(scrollregion=(0, 0, 40 + len(path.people) * (node_width + gap), 170))
+
+    def _kinship_export_destination(self, extension, file_type):
+        return filedialog.asksaveasfilename(
+            parent=self._kinship_window,
+            title=f"Экспорт анализа родства в {extension.upper()}",
+            initialdir=str(EXPORT_DIR),
+            initialfile=f"kinship_analysis.{extension}",
+            defaultextension=f".{extension}",
+            filetypes=[(file_type, f"*.{extension}")],
+        )
+
+    def _export_kinship_pdf(self) -> None:
+        destination = self._kinship_export_destination("pdf", "PDF files")
+        if destination and self._kinship_analysis:
+            self.kinship_service.export_pdf(self._kinship_analysis, destination)
+
+    def _export_kinship_html(self) -> None:
+        destination = self._kinship_export_destination("html", "HTML files")
+        if destination and self._kinship_analysis:
+            self.kinship_service.export_html(self._kinship_analysis, destination)
+
+    def _export_kinship_csv(self) -> None:
+        destination = self._kinship_export_destination("csv", "CSV files")
+        if destination and self._kinship_analysis:
+            self.kinship_service.export_csv(self._kinship_analysis, destination)
+
+    def _close_kinship_analyzer(self) -> None:
+        if self._kinship_window is not None:
+            try:
+                self._kinship_window.destroy()
+            except Exception:
+                pass
+        self._kinship_window = None
+        self._kinship_analysis = None
+        self._kinship_path_tree = None
+        self._kinship_canvas = None
+
+    def _show_relationship_inspector(self, path: RelationshipPath) -> None:
+        if self._relationship_inspector_window is not None:
+            try:
+                self._relationship_inspector_window.destroy()
+            except Exception:
+                pass
+        window = self._create_dialog()
+        self._relationship_inspector_window = window
+        self._relationship_inspector_path = path
+        window.title("Связь между людьми")
+        window.geometry("920x520")
+        window.protocol("WM_DELETE_WINDOW", self._close_relationship_inspector)
+
+        summary = tk.LabelFrame(window, text="Результат")
+        summary.pack(fill="x", padx=12, pady=(12, 8))
+        tk.Label(summary, text=f"Описание: {path.description}", anchor="w").pack(
+            fill="x", padx=8, pady=(6, 2)
+        )
+        tk.Label(
+            summary,
+            text=f"Distance: {path.distance}    Generations: {path.generations}",
+            anchor="w",
+        ).pack(fill="x", padx=8, pady=(0, 6))
+
+        table_frame = tk.Frame(window)
+        table_frame.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        columns = ("step", "relationship", "name", "database_id", "gedcom_id")
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings")
+        for column, title, width in (
+            ("step", "Step", 55),
+            ("relationship", "Relationship", 110),
+            ("name", "Person", 350),
+            ("database_id", "Database ID", 110),
+            ("gedcom_id", "GEDCOM ID", 110),
+        ):
+            tree.heading(column, text=title)
+            tree.column(column, width=width, anchor="w" if column == "name" else "center")
+        tree.pack(side="left", fill="both", expand=True)
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        for row in self._relationship_path_rows(path):
+            tree.insert("", "end", values=row)
+        tree.bind(
+            "<ButtonRelease-1>",
+            lambda event: self._open_relationship_path_person(tree, event),
+        )
+        self._relationship_inspector_tree = tree
+
+        controls = tk.Frame(window)
+        controls.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Button(controls, text="Экспорт в текст", command=self._export_relationship_path).pack(
+            side="left"
+        )
+        tk.Button(controls, text="Закрыть", command=self._close_relationship_inspector).pack(
+            side="right"
+        )
+
+    @staticmethod
+    def _relationship_path_rows(path: RelationshipPath) -> list[tuple[object, ...]]:
+        rows = [
+            (
+                0,
+                "start",
+                path.people[0].full_name,
+                path.people[0].database_id,
+                path.people[0].gedcom_id or "-",
+            )
+        ]
+        rows.extend(
+            (
+                index,
+                step.relationship_type,
+                step.target.full_name,
+                step.target.database_id,
+                step.target.gedcom_id or "-",
+            )
+            for index, step in enumerate(path.steps, start=1)
+        )
+        return rows
+
+    def _open_relationship_path_person(self, tree: Any, event: Any) -> None:
+        item_id = tree.identify_row(event.y)
+        if not item_id:
+            return
+        person_id = tree.set(item_id, "database_id")
+        if person_id:
+            self.show_person(int(person_id))
+
+    def _export_relationship_path(self) -> None:
+        if self._relationship_inspector_path is None:
+            return
+        destination = filedialog.asksaveasfilename(
+            parent=self._relationship_inspector_window,
+            title="Экспорт связи",
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+        )
+        if not destination:
+            return
+        self.relationship_path_service.export_path_text(
+            self._relationship_inspector_path,
+            destination,
+        )
+        messagebox.showinfo(
+            "Связь между людьми",
+            "Путь экспортирован.",
+            parent=self._relationship_inspector_window,
+        )
+
+    def _close_relationship_inspector(self) -> None:
+        if self._relationship_inspector_window is not None:
+            try:
+                self._relationship_inspector_window.destroy()
+            except Exception:
+                pass
+        self._relationship_inspector_window = None
+        self._relationship_inspector_path = None
+
+    def open_family_tree(self) -> None:
+        """Open the interactive read-only tree for the selected person."""
+        person_id = self._selected_person_id()
+        if person_id is None:
+            messagebox.showwarning("Семейное дерево", "Сначала выберите человека.")
+            return
+
+        if self._family_tree_window is not None:
+            try:
+                self._family_tree_window.lift()
+                self._family_tree_window.focus_force()
+                self._start_family_tree_history(int(person_id))
+                return
+            except Exception:
+                self._family_tree_window = None
+
+        window = self._create_dialog()
+        self._family_tree_window = window
+        window.title("Семейное дерево")
+        window.geometry("1100x720")
+        window.minsize(760, 520)
+        window.protocol("WM_DELETE_WINDOW", self._close_family_tree)
+
+        toolbar = tk.Frame(window)
+        toolbar.pack(fill="x", padx=12, pady=(12, 6))
+        self._family_tree_back_button = tk.Button(toolbar, text="Назад", command=self._family_tree_back)
+        self._family_tree_back_button.pack(side="left")
+        self._family_tree_forward_button = tk.Button(
+            toolbar,
+            text="Вперёд",
+            command=self._family_tree_forward,
+        )
+        self._family_tree_forward_button.pack(side="left", padx=(6, 0))
+        tk.Button(
+            toolbar,
+            text="Вернуться к исходному человеку",
+            command=self._family_tree_return_to_original,
+        ).pack(side="left", padx=(12, 0))
+        self._family_tree_zoom_label = tk.Label(toolbar, text="100%")
+        self._family_tree_zoom_label.pack(side="left", padx=(16, 0))
+        tk.Button(toolbar, text="Закрыть", command=self._close_family_tree).pack(side="right")
+
+        canvas_frame = tk.Frame(window)
+        canvas_frame.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        self._family_tree_canvas = tk.Canvas(
+            canvas_frame,
+            background=FAMILY_TREE_BACKGROUND,
+            highlightthickness=0,
+        )
+        horizontal_scroll = ttk.Scrollbar(
+            canvas_frame,
+            orient="horizontal",
+            command=self._family_tree_canvas.xview,
+        )
+        vertical_scroll = ttk.Scrollbar(
+            canvas_frame,
+            orient="vertical",
+            command=self._family_tree_canvas.yview,
+        )
+        self._family_tree_canvas.configure(
+            xscrollcommand=horizontal_scroll.set,
+            yscrollcommand=vertical_scroll.set,
+        )
+        self._family_tree_canvas.grid(row=0, column=0, sticky="nsew")
+        vertical_scroll.grid(row=0, column=1, sticky="ns")
+        horizontal_scroll.grid(row=1, column=0, sticky="ew")
+        canvas_frame.grid_rowconfigure(0, weight=1)
+        canvas_frame.grid_columnconfigure(0, weight=1)
+        self._family_tree_canvas.bind("<MouseWheel>", self._zoom_family_tree)
+        self._family_tree_canvas.bind("<ButtonPress-1>", self._start_family_tree_drag)
+        self._family_tree_canvas.bind("<B1-Motion>", self._drag_family_tree)
+        self._start_family_tree_history(int(person_id))
+
+    def open_family_timeline(self) -> None:
+        """Open the read-only chronological timeline for all people."""
+        if self._family_timeline_window is not None:
+            try:
+                self._family_timeline_window.lift()
+                self._family_timeline_window.focus_force()
+                self._load_family_timeline()
+                return
+            except Exception:
+                self._family_timeline_window = None
+
+        window = self._create_dialog()
+        self._family_timeline_window = window
+        window.title("Хронология")
+        window.geometry("1180x680")
+        window.minsize(860, 480)
+        window.protocol("WM_DELETE_WINDOW", self._close_family_timeline)
+
+        filters = tk.LabelFrame(window, text="Фильтры")
+        filters.pack(fill="x", padx=12, pady=(12, 8))
+        specs = (
+            ("year_from", "Год от", 10),
+            ("year_to", "Год до", 10),
+            ("surname", "Фамилия", 18),
+            ("place", "Место", 20),
+        )
+        for column, (key, label, width) in enumerate(specs):
+            tk.Label(filters, text=f"{label}:").grid(row=0, column=column * 2, padx=(8, 3), pady=8)
+            variable = tk.StringVar(value="")
+            self._family_timeline_vars[key] = variable
+            entry = tk.Entry(filters, textvariable=variable, width=width)
+            entry.grid(row=0, column=column * 2 + 1, padx=(0, 8), pady=8)
+            entry.bind("<Return>", lambda _event: self._apply_family_timeline_filters())
+
+        tk.Label(filters, text="Событие:").grid(row=0, column=8, padx=(8, 3), pady=8)
+        event_type = tk.StringVar(value="")
+        self._family_timeline_vars["event_type"] = event_type
+        event_control = ttk.Combobox(
+            filters,
+            textvariable=event_type,
+            values=("", *SUPPORTED_EVENT_TYPES),
+            state="readonly",
+            width=18,
+        )
+        event_control.grid(row=0, column=9, padx=(0, 8), pady=8)
+        event_control.bind("<<ComboboxSelected>>", lambda _event: self._apply_family_timeline_filters())
+        self._family_timeline_event_control = event_control
+        tk.Button(filters, text="Применить", command=self._apply_family_timeline_filters).grid(
+            row=0, column=10, padx=8, pady=8
+        )
+
+        table_frame = tk.Frame(window)
+        table_frame.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        columns = ("date", "year", "person", "event_type", "place", "age")
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings")
+        for column, title, width in (
+            ("date", "Дата", 150),
+            ("year", "Год", 70),
+            ("person", "Человек", 240),
+            ("event_type", "Событие", 160),
+            ("place", "Место", 300),
+            ("age", "Возраст", 80),
+        ):
+            tree.heading(column, text=title)
+            tree.column(column, width=width, anchor="w" if column in {"date", "person", "event_type", "place"} else "center")
+        tree.pack(side="left", fill="both", expand=True)
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        tree.bind("<Double-1>", self._open_family_timeline_person)
+        self._family_timeline_tree = tree
+
+        controls = tk.Frame(window)
+        controls.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Button(controls, text="Экспорт CSV", command=self._export_family_timeline_csv).pack(side="left")
+        tk.Button(controls, text="Экспорт HTML", command=self._export_family_timeline_html).pack(side="left", padx=(8, 0))
+        self._family_timeline_status = tk.Label(controls, text="")
+        self._family_timeline_status.pack(side="left", padx=16)
+        tk.Button(controls, text="Закрыть", command=self._close_family_timeline).pack(side="right")
+        self._load_family_timeline()
+
+    def open_source_manager(self) -> None:
+        """Open source management and read-only usage browser tabs."""
+        if self._source_window is not None:
+            try:
+                self._source_window.lift()
+                self._source_window.focus_force()
+                self._refresh_source_manager()
+                return
+            except Exception:
+                self._source_window = None
+
+        window = self._create_dialog()
+        self._source_window = window
+        window.title("Источники и цитаты")
+        window.geometry("1120x700")
+        window.minsize(850, 520)
+        window.protocol("WM_DELETE_WINDOW", self._close_source_manager)
+        notebook = ttk.Notebook(window)
+        notebook.pack(fill="both", expand=True, padx=12, pady=12)
+        manager_tab = tk.Frame(notebook)
+        browser_tab = tk.Frame(notebook)
+        notebook.add(manager_tab, text="Source Manager")
+        notebook.add(browser_tab, text="Source Browser")
+        self._build_source_manager_tab(manager_tab)
+        self._build_source_browser_tab(browser_tab)
+        self._refresh_source_manager()
+
+    def _build_source_manager_tab(self, parent) -> None:
+        source_frame = tk.LabelFrame(parent, text="Источники")
+        source_frame.pack(fill="both", expand=True, padx=8, pady=(8, 4))
+        columns = ("id", "title", "author", "repository", "references")
+        tree = ttk.Treeview(source_frame, columns=columns, show="headings", height=9)
+        for column, title, width in (
+            ("id", "ID", 55), ("title", "Название", 280), ("author", "Автор", 180),
+            ("repository", "Репозиторий", 220), ("references", "Ссылок", 75),
+        ):
+            tree.heading(column, text=title)
+            tree.column(column, width=width, anchor="w" if column not in {"id", "references"} else "center")
+        tree.pack(fill="both", expand=True, padx=8, pady=8)
+        tree.bind("<<TreeviewSelect>>", lambda _event: self._refresh_source_citations())
+        tree.bind("<Double-1>", lambda _event: self._edit_selected_source())
+        self._source_tree = tree
+        source_controls = tk.Frame(source_frame)
+        source_controls.pack(fill="x", padx=8, pady=(0, 8))
+        tk.Button(source_controls, text="Добавить", command=lambda: self._edit_source_record()).pack(side="left")
+        tk.Button(source_controls, text="Изменить", command=self._edit_selected_source).pack(side="left", padx=(8, 0))
+        tk.Button(source_controls, text="Удалить", command=self._delete_selected_source).pack(side="left", padx=(8, 0))
+        tk.Button(source_controls, text="Добавить цитату", command=self._add_source_citation).pack(side="left", padx=(16, 0))
+
+        citation_frame = tk.LabelFrame(parent, text="Цитаты выбранного источника")
+        citation_frame.pack(fill="both", expand=True, padx=8, pady=(4, 8))
+        columns = ("id", "type", "target", "page", "quality")
+        citations = ttk.Treeview(citation_frame, columns=columns, show="headings", height=7)
+        for column, title, width in (
+            ("id", "ID", 55), ("type", "Тип", 110), ("target", "Объект", 390),
+            ("page", "Страница", 120), ("quality", "Качество", 130),
+        ):
+            citations.heading(column, text=title)
+            citations.column(column, width=width, anchor="w" if column not in {"id"} else "center")
+        citations.pack(fill="both", expand=True, padx=8, pady=8)
+        citations.bind("<Double-1>", lambda _event: self._edit_selected_citation())
+        self._source_citation_tree = citations
+        citation_controls = tk.Frame(citation_frame)
+        citation_controls.pack(fill="x", padx=8, pady=(0, 8))
+        tk.Button(citation_controls, text="Изменить цитату", command=self._edit_selected_citation).pack(side="left")
+        tk.Button(citation_controls, text="Удалить цитату", command=self._delete_selected_citation).pack(side="left", padx=(8, 0))
+
+    def _build_source_browser_tab(self, parent) -> None:
+        columns = ("source", "type", "target", "page", "quality")
+        tree = ttk.Treeview(parent, columns=columns, show="headings", height=14)
+        for column, title, width in (
+            ("source", "Источник", 260), ("type", "Тип", 100), ("target", "Используется в", 400),
+            ("page", "Страница", 100), ("quality", "Качество", 120),
+        ):
+            tree.heading(column, text=title)
+            tree.column(column, width=width, anchor="w")
+        tree.pack(fill="both", expand=True, padx=8, pady=8)
+        tree.bind("<Double-1>", self._open_source_usage)
+        self._source_browser_tree = tree
+        controls = tk.Frame(parent)
+        controls.pack(fill="x", padx=8, pady=(0, 8))
+        tk.Button(controls, text="Экспорт CSV", command=self._export_sources_csv).pack(side="left")
+        self._source_statistics_text = tk.Text(parent, height=11, wrap="word")
+        self._source_statistics_text.pack(fill="x", padx=8, pady=(0, 8))
+
+    def _refresh_source_manager(self) -> None:
+        if self._source_tree is not None:
+            for item in self._source_tree.get_children():
+                self._source_tree.delete(item)
+            for source in self.source_service.list_sources():
+                self._source_tree.insert("", "end", values=(
+                    source["id"], source["title"], source["author"],
+                    source["repository"], source.get("citation_count", 0),
+                ))
+        self._refresh_source_citations()
+        self._refresh_source_browser()
+
+    def _selected_source_id(self):
+        if self._source_tree is None or not self._source_tree.selection():
+            return None
+        return int(self._source_tree.item(self._source_tree.selection()[0])["values"][0])
+
+    def _refresh_source_citations(self) -> None:
+        if self._source_citation_tree is None:
+            return
+        for item in self._source_citation_tree.get_children():
+            self._source_citation_tree.delete(item)
+        source_id = self._selected_source_id()
+        if source_id is None:
+            return
+        for citation in self.source_service.list_citations(source_id):
+            try:
+                target = self.source_service.resolve_target(citation["target_type"], citation["target_id"])
+            except ValueError:
+                target = {"target_label": "Недоступный объект"}
+            self._source_citation_tree.insert("", "end", values=(
+                citation["id"], citation["target_type"], target["target_label"],
+                citation["page"], citation["quality"],
+            ))
+
+    def _edit_source_record(self, source_id=None) -> None:
+        source = self.source_service.get_source(source_id) if source_id else {}
+        dialog = self._create_dialog(self._source_window)
+        dialog.title("Источник")
+        fields = {}
+        form = tk.Frame(dialog)
+        form.pack(fill="both", expand=True, padx=12, pady=12)
+        labels = {
+            "title": "Название", "author": "Автор", "publication": "Публикация",
+            "repository": "Репозиторий", "call_number": "Шифр", "url": "URL", "notes": "Примечания",
+        }
+        for row, field in enumerate(SOURCE_FIELDS):
+            tk.Label(form, text=f"{labels[field]}:").grid(row=row, column=0, sticky="nw", pady=4)
+            if field == "notes":
+                control = tk.Text(form, height=5, width=55)
+                control.insert("1.0", source.get(field, ""))
+            else:
+                control = tk.Entry(form, width=58)
+                control.insert(0, source.get(field, ""))
+            control.grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=4)
+            fields[field] = control
+
+        def save():
+            data = {
+                field: control.get("1.0", "end").strip() if field == "notes" else control.get().strip()
+                for field, control in fields.items()
+            }
+            try:
+                if source_id:
+                    self.source_service.update_source(source_id, data)
+                else:
+                    self.source_service.create_source(data)
+            except ValueError as error:
+                messagebox.showerror("Источник", str(error), parent=dialog)
+                return
+            dialog.destroy()
+            self._refresh_source_manager()
+
+        tk.Button(form, text="Сохранить", command=save).grid(row=len(SOURCE_FIELDS), column=1, sticky="e", pady=(10, 0))
+
+    def _edit_selected_source(self) -> None:
+        source_id = self._selected_source_id()
+        if source_id is not None:
+            self._edit_source_record(source_id)
+
+    def _delete_selected_source(self) -> None:
+        source_id = self._selected_source_id()
+        if source_id is not None and messagebox.askyesno("Источник", "Удалить источник и все его цитаты?", parent=self._source_window):
+            self.source_service.delete_source(source_id)
+            self._refresh_source_manager()
+
+    def _add_source_citation(self) -> None:
+        source_id = self._selected_source_id()
+        if source_id is None:
+            messagebox.showwarning("Цитата", "Выберите источник.", parent=self._source_window)
+            return
+        self._edit_citation_record(source_id)
+
+    def _selected_citation_id(self):
+        if self._source_citation_tree is None or not self._source_citation_tree.selection():
+            return None
+        return int(self._source_citation_tree.item(self._source_citation_tree.selection()[0])["values"][0])
+
+    def _edit_citation_record(self, source_id, citation_id=None) -> None:
+        citation = next((item for item in self.source_service.list_citations(source_id) if item["id"] == citation_id), {})
+        dialog = self._create_dialog(self._source_window)
+        dialog.title("Цитата")
+        form = tk.Frame(dialog)
+        form.pack(fill="both", expand=True, padx=12, pady=12)
+        values = {
+            "target_type": tk.StringVar(value=citation.get("target_type", "person")),
+            "target_id": tk.StringVar(value=citation.get("target_id", str(self.current_person_id or ""))),
+            **{field: tk.StringVar(value=citation.get(field, "")) for field in CITATION_FIELDS},
+        }
+        labels = {"target_type": "Тип объекта", "target_id": "ID объекта", "page": "Страница", "quality": "Качество/достоверность", "transcription": "Транскрипция", "comment": "Комментарий"}
+        for row, key in enumerate(("target_type", "target_id", *CITATION_FIELDS)):
+            tk.Label(form, text=f"{labels[key]}:").grid(row=row, column=0, sticky="w", pady=4)
+            if key == "target_type":
+                control = ttk.Combobox(form, textvariable=values[key], values=TARGET_TYPES, state="readonly", width=38)
+            else:
+                control = tk.Entry(form, textvariable=values[key], width=42)
+            control.grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=4)
+
+        def save():
+            details = {field: values[field].get() for field in CITATION_FIELDS}
+            try:
+                if citation_id:
+                    self.source_service.update_citation(citation_id, source_id, values["target_type"].get(), values["target_id"].get(), **details)
+                else:
+                    self.source_service.create_citation(source_id, values["target_type"].get(), values["target_id"].get(), **details)
+            except (ValueError, TypeError) as error:
+                messagebox.showerror("Цитата", str(error), parent=dialog)
+                return
+            dialog.destroy()
+            self._refresh_source_manager()
+
+        tk.Button(form, text="Сохранить", command=save).grid(row=6, column=1, sticky="e", pady=(10, 0))
+
+    def _edit_selected_citation(self) -> None:
+        source_id = self._selected_source_id()
+        citation_id = self._selected_citation_id()
+        if source_id is not None and citation_id is not None:
+            self._edit_citation_record(source_id, citation_id)
+
+    def _delete_selected_citation(self) -> None:
+        citation_id = self._selected_citation_id()
+        if citation_id is not None:
+            self.source_service.delete_citation(citation_id)
+            self._refresh_source_manager()
+
+    def _refresh_source_browser(self) -> None:
+        if self._source_browser_tree is None:
+            return
+        for item in self._source_browser_tree.get_children():
+            self._source_browser_tree.delete(item)
+        self._source_usage_map = {}
+        for usage in self.source_service.browser_rows():
+            item = self._source_browser_tree.insert("", "end", values=(
+                usage["source_title"], usage["target_type"], usage["target_label"],
+                usage["page"], usage["quality"],
+            ))
+            self._source_usage_map[item] = usage
+        statistics = self.source_service.statistics()
+        lines = [
+            f"Источников: {statistics['source_count']}    Цитат: {statistics['citation_count']}",
+            "Сиротские источники: " + (", ".join(item["title"] for item in statistics["orphan_sources"]) or "нет"),
+            "Наиболее используемые: " + (", ".join(f"{title} ({count})" for title, count in statistics["most_referenced"][:10]) or "нет"),
+            "По типу объекта: " + ", ".join(f"{key}: {value}" for key, value in statistics["by_target_type"].items()),
+            "По репозиториям: " + (", ".join(f"{key}: {value}" for key, value in statistics["by_repository"].items()) or "нет"),
+        ]
+        if self._source_statistics_text is not None:
+            self._source_statistics_text.config(state="normal")
+            self._source_statistics_text.delete("1.0", "end")
+            self._source_statistics_text.insert("end", "\n".join(lines))
+            self._source_statistics_text.config(state="disabled")
+
+    def _open_source_usage(self, _event=None) -> None:
+        if self._source_browser_tree is None or not self._source_browser_tree.selection():
+            return
+        usage = self._source_usage_map.get(self._source_browser_tree.selection()[0])
+        if not usage or usage.get("linked_person_id") is None:
+            return
+        person_id = usage["linked_person_id"]
+        if usage["target_type"] == "event":
+            self._manage_person_event(self._source_window, person_id, int(usage["target_id"]), close_parent_on_save=False)
+        elif usage["target_type"] in {"family", "relationship"}:
+            person = self.repository.get_person(person_id)
+            self.current_person_id = person_id
+            self.current_person_gedcom_id = person[0] if person else ""
+            self.open_relationship_editor()
+        else:
+            self.show_person(person_id)
+
+    def _export_sources_csv(self) -> None:
+        destination = filedialog.asksaveasfilename(
+            parent=self._source_window, title="Экспорт источников", initialdir=str(EXPORT_DIR),
+            initialfile="sources.csv", defaultextension=".csv", filetypes=[("CSV files", "*.csv")],
+        )
+        if destination:
+            self.source_service.export_csv(destination)
+
+    def _close_source_manager(self) -> None:
+        if self._source_window is not None:
+            try:
+                self._source_window.destroy()
+            except Exception:
+                pass
+        self._source_window = None
+        self._source_tree = None
+        self._source_citation_tree = None
+        self._source_browser_tree = None
+        self._source_usage_map = {}
+        self._source_statistics_text = None
+
+    def _load_family_timeline(self) -> None:
+        self._family_timeline_entries = self.family_timeline_service.build_timeline()
+        if self._family_timeline_event_control is not None:
+            event_types = sorted({
+                entry.event_type for entry in self._family_timeline_entries
+            }, key=str.casefold)
+            self._family_timeline_event_control.config(values=("", *event_types))
+        self._apply_family_timeline_filters()
+
+    def _apply_family_timeline_filters(self) -> None:
+        try:
+            year_from = self._optional_timeline_year(self._family_timeline_vars["year_from"].get())
+            year_to = self._optional_timeline_year(self._family_timeline_vars["year_to"].get())
+            if year_from is not None and year_to is not None and year_from > year_to:
+                raise ValueError("Начальный год не может быть больше конечного.")
+        except ValueError as error:
+            messagebox.showerror("Хронология", str(error), parent=self._family_timeline_window)
+            return
+        filters = TimelineFilters(
+            year_from=year_from,
+            year_to=year_to,
+            event_type=self._family_timeline_vars["event_type"].get(),
+            surname=self._family_timeline_vars["surname"].get(),
+            place=self._family_timeline_vars["place"].get(),
+        )
+        self._family_timeline_visible_entries = self.family_timeline_service.filter_timeline(
+            self._family_timeline_entries, filters
+        )
+        self._render_family_timeline()
+
+    def _render_family_timeline(self) -> None:
+        tree = self._family_timeline_tree
+        if tree is None:
+            return
+        for item_id in tree.get_children():
+            tree.delete(item_id)
+        self._family_timeline_person_ids = {}
+        for entry in self._family_timeline_visible_entries:
+            item_id = tree.insert("", "end", values=(
+                entry.date,
+                "" if entry.normalized_year is None else entry.normalized_year,
+                entry.person,
+                entry.event_label,
+                entry.place,
+                "" if entry.age is None else entry.age,
+            ))
+            self._family_timeline_person_ids[item_id] = entry.person_id
+        if self._family_timeline_status is not None:
+            self._family_timeline_status.config(
+                text=f"Показано: {len(self._family_timeline_visible_entries)}"
+            )
+
+    @staticmethod
+    def _optional_timeline_year(value) -> int | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        if not text.isdigit() or len(text) > 4:
+            raise ValueError("Год должен быть целым числом от 1 до 9999.")
+        year = int(text)
+        if year < 1 or year > 9999:
+            raise ValueError("Год должен быть целым числом от 1 до 9999.")
+        return year
+
+    def _open_family_timeline_person(self, _event=None) -> None:
+        if self._family_timeline_tree is None:
+            return
+        selection = self._family_timeline_tree.selection()
+        if not selection:
+            return
+        person_id = self._family_timeline_person_ids.get(selection[0])
+        if person_id is not None:
+            self.show_person(person_id)
+
+    def _export_family_timeline_csv(self) -> None:
+        destination = filedialog.asksaveasfilename(
+            parent=self._family_timeline_window,
+            title="Экспорт хронологии в CSV",
+            initialdir=str(EXPORT_DIR),
+            initialfile="family_timeline.csv",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv")],
+        )
+        if destination:
+            self.family_timeline_service.export_csv(self._family_timeline_visible_entries, destination)
+
+    def _export_family_timeline_html(self) -> None:
+        destination = filedialog.asksaveasfilename(
+            parent=self._family_timeline_window,
+            title="Экспорт хронологии в HTML",
+            initialdir=str(EXPORT_DIR),
+            initialfile="family_timeline.html",
+            defaultextension=".html",
+            filetypes=[("HTML files", "*.html")],
+        )
+        if destination:
+            self.family_timeline_service.export_html(self._family_timeline_visible_entries, destination)
+
+    def _close_family_timeline(self) -> None:
+        if self._family_timeline_window is not None:
+            try:
+                self._family_timeline_window.destroy()
+            except Exception:
+                pass
+        self._family_timeline_window = None
+        self._family_timeline_tree = None
+        self._family_timeline_person_ids = {}
+        self._family_timeline_event_control = None
+
+    def _start_family_tree_history(self, person_id: int) -> None:
+        self._family_tree_original_person_id = person_id
+        self._family_tree_history = [person_id]
+        self._family_tree_history_index = 0
+        self._load_family_tree_person(person_id, add_to_history=False)
+
+    def _load_family_tree_person(self, person_id: int, add_to_history: bool = True) -> None:
+        try:
+            model = self.family_tree_view_service.build_tree(person_id)
+        except Exception as exc:
+            messagebox.showerror("Семейное дерево", str(exc), parent=self._family_tree_window)
+            return
+        if add_to_history:
+            if self._family_tree_history_index < len(self._family_tree_history) - 1:
+                self._family_tree_history = self._family_tree_history[: self._family_tree_history_index + 1]
+            if not self._family_tree_history or self._family_tree_history[-1] != person_id:
+                self._family_tree_history.append(person_id)
+            self._family_tree_history_index = len(self._family_tree_history) - 1
+        self._render_family_tree(model)
+        self._update_family_tree_navigation()
+
+    def _render_family_tree(self, model: FamilyTreeModel) -> None:
+        self._family_tree_model = model
+        self._family_tree_presentation = self.family_tree_view_service.build_card_presentation(model)
+        self._family_tree_zoom = 1.0
+        self._family_tree_selected_person_id = model.center.database_id
+        self._draw_family_tree_canvas()
+        self._family_tree_canvas.after_idle(self._center_family_tree_current)
+
+    def _draw_family_tree_canvas(self) -> None:
+        canvas = self._family_tree_canvas
+        canvas.delete("all")
+        scale = self._family_tree_zoom
+        card_width = FAMILY_TREE_CARD_WIDTH * scale
+        card_height = FAMILY_TREE_CARD_HEIGHT * scale
+        gap = 44 * scale
+        model = self._family_tree_model
+        max_count = max(len(model.parents), len(model.children), len(model.partners) + 1, 4)
+        canvas_width = max(1100 * scale, max_count * (card_width + gap) + 240 * scale)
+        canvas_height = 780 * scale
+        center_x = canvas_width / 2
+
+        parent_positions = self._family_tree_row_positions(
+            model.parents, center_x, 70 * scale, card_width, card_height, gap
+        )
+        child_positions = self._family_tree_row_positions(
+            model.children, center_x, 560 * scale, card_width, card_height, gap
+        )
+        center_position = (center_x - card_width / 2, 305 * scale, card_width, card_height)
+        partner_positions = self._family_tree_partner_positions(
+            model.partners, center_position, card_width, card_height, gap
+        )
+        positions = {
+            **parent_positions,
+            model.center.database_id: center_position,
+            **partner_positions,
+            **child_positions,
+        }
+
+        self._draw_family_tree_connectors(
+            model,
+            positions,
+            parent_positions,
+            partner_positions,
+            child_positions,
+        )
+        self._family_tree_card_items = {}
+        for person in (*model.parents, model.center, *model.partners, *model.children):
+            self._draw_family_tree_card(person, positions[person.database_id])
+
+        self._family_tree_current_center = (
+            center_position[0] + card_width / 2,
+            center_position[1] + card_height / 2,
+        )
+        canvas.configure(scrollregion=(0, 0, canvas_width, canvas_height))
+        self._family_tree_zoom_label.configure(text=f"{round(scale * 100)}%")
+
+    @staticmethod
+    def _family_tree_row_positions(
+        people: tuple[FamilyTreePerson, ...],
+        center_x: float,
+        top: float,
+        width: float,
+        height: float,
+        gap: float,
+    ) -> dict[int, tuple[float, float, float, float]]:
+        total_width = len(people) * width + max(0, len(people) - 1) * gap
+        left = center_x - total_width / 2
+        return {
+            person.database_id: (left + index * (width + gap), top, width, height)
+            for index, person in enumerate(people)
+        }
+
+    @staticmethod
+    def _family_tree_partner_positions(
+        people: tuple[FamilyTreePerson, ...],
+        center_position: tuple[float, float, float, float],
+        width: float,
+        height: float,
+        gap: float,
+    ) -> dict[int, tuple[float, float, float, float]]:
+        center_left, top, _, _ = center_position
+        positions = {}
+        for index, person in enumerate(people):
+            distance = (index // 2 + 1) * (width + gap)
+            left = center_left + distance if index % 2 == 0 else center_left - distance
+            positions[person.database_id] = (left, top, width, height)
+        return positions
+
+    def _draw_family_tree_connectors(
+        self,
+        model: FamilyTreeModel,
+        positions: Mapping[int, tuple[float, float, float, float]],
+        parents: Mapping[int, tuple[float, float, float, float]],
+        partners: Mapping[int, tuple[float, float, float, float]],
+        children: Mapping[int, tuple[float, float, float, float]],
+    ) -> None:
+        canvas = self._family_tree_canvas
+        center_left, center_top, center_width, center_height = positions[model.center.database_id]
+        center_x = center_left + center_width / 2
+        for left, top, width, height in parents.values():
+            parent_x = left + width / 2
+            middle_y = (top + height + center_top) / 2
+            canvas.create_line(
+                parent_x, top + height, parent_x, middle_y, center_x, middle_y,
+                center_x, center_top, fill="#75808a", width=2, arrow="last",
+            )
+        for left, top, width, height in partners.values():
+            partner_x = left + (0 if left > center_left else width)
+            current_x = center_left + (center_width if left > center_left else 0)
+            y = top + height / 2
+            canvas.create_line(current_x, y, partner_x, y, fill="#75808a", width=2, arrow="both")
+        for left, top, width, _height in children.values():
+            child_x = left + width / 2
+            middle_y = (center_top + center_height + top) / 2
+            canvas.create_line(
+                center_x, center_top + center_height, center_x, middle_y, child_x,
+                middle_y, child_x, top, fill="#75808a", width=2, arrow="last",
+            )
+
+    def _draw_family_tree_card(
+        self,
+        person: FamilyTreePerson,
+        position: tuple[float, float, float, float],
+    ) -> None:
+        canvas = self._family_tree_canvas
+        left, top, width, height = position
+        metadata = self._family_tree_presentation[person.database_id]
+        border = self._family_tree_card_border(person, metadata["sex"])
+        background = self._family_tree_card_background(person)
+        tag = f"family-tree-person-{person.database_id}"
+        rectangle = canvas.create_rectangle(
+            left, top, left + width, top + height, fill=background, outline=border,
+            width=4 if person.database_id == self._family_tree_selected_person_id else 2,
+            tags=(tag, "family-tree-card"),
+        )
+        scale = self._family_tree_zoom
+        text_left = left + 10 * scale
+        lines = (
+            (metadata["relationship"], 9, "bold"),
+            (person.full_name, 11, "bold"),
+            (f"Рождение: {person.birth_date or '-'}", 9, "normal"),
+            (f"Смерть: {person.death_date or '-'}", 9, "normal"),
+            (f"Database ID: {person.database_id}", 9, "normal"),
+            (f"GEDCOM ID: {person.gedcom_id or '-'}", 9, "normal"),
+        )
+        line_y = top + 12 * scale
+        for text, size, weight in lines:
+            canvas.create_text(
+                text_left, line_y, text=text, anchor="nw", fill="#20252a",
+                font=("Segoe UI", max(7, round(size * scale)), weight), tags=(tag,),
+            )
+            line_y += (23 if size == 11 else 20) * scale
+        self._family_tree_card_items[person.database_id] = (rectangle, border)
+        canvas.tag_bind(tag, "<Button-1>", lambda _event, value=person.database_id: self._select_family_tree_card(value))
+        canvas.tag_bind(tag, "<Double-1>", lambda _event, value=person.database_id: self._load_family_tree_person(value))
+
+    @staticmethod
+    def _family_tree_card_border(person: FamilyTreePerson, sex: str) -> str:
+        if person.is_unnamed:
+            return FAMILY_TREE_UNNAMED_BORDER
+        if sex == "M":
+            return FAMILY_TREE_MALE_BORDER
+        if sex == "F":
+            return FAMILY_TREE_FEMALE_BORDER
+        return "#7a8793"
+
+    def _family_tree_card_background(self, person: FamilyTreePerson) -> str:
+        if person.is_unnamed:
+            return FAMILY_TREE_UNNAMED_BACKGROUND
+        if person.database_id == self._family_tree_model.center.database_id:
+            return FAMILY_TREE_CURRENT_BACKGROUND
+        return "white"
+
+    def _select_family_tree_card(self, person_id: int) -> None:
+        self._family_tree_selected_person_id = person_id
+        for card_id, (item_id, border) in self._family_tree_card_items.items():
+            self._family_tree_canvas.itemconfigure(
+                item_id,
+                outline=border,
+                width=4 if card_id == person_id else 2,
+            )
+
+    def _zoom_family_tree(self, event: Any) -> str:
+        direction = 1 if getattr(event, "delta", 0) > 0 else -1
+        self._family_tree_zoom = self._clamp_family_tree_zoom(
+            self._family_tree_zoom + direction * FAMILY_TREE_ZOOM_STEP
+        )
+        self._draw_family_tree_canvas()
+        self._family_tree_canvas.after_idle(self._center_family_tree_current)
+        return "break"
+
+    @staticmethod
+    def _clamp_family_tree_zoom(value: float) -> float:
+        return max(FAMILY_TREE_MIN_ZOOM, min(FAMILY_TREE_MAX_ZOOM, round(value, 2)))
+
+    def _start_family_tree_drag(self, event: Any) -> None:
+        self._family_tree_canvas.scan_mark(event.x, event.y)
+
+    def _drag_family_tree(self, event: Any) -> None:
+        self._family_tree_canvas.scan_dragto(event.x, event.y, gain=1)
+
+    def _center_family_tree_current(self) -> None:
+        canvas = self._family_tree_canvas
+        canvas.update_idletasks()
+        scroll_region = canvas.cget("scrollregion").split()
+        if len(scroll_region) != 4:
+            return
+        _, _, region_width, region_height = (float(value) for value in scroll_region)
+        center_x, center_y = self._family_tree_current_center
+        viewport_width = max(1, canvas.winfo_width())
+        viewport_height = max(1, canvas.winfo_height())
+        canvas.xview_moveto(max(0.0, min(1.0, (center_x - viewport_width / 2) / region_width)))
+        canvas.yview_moveto(max(0.0, min(1.0, (center_y - viewport_height / 2) / region_height)))
+
+    def _family_tree_back(self) -> None:
+        if self._family_tree_history_index <= 0:
+            return
+        self._family_tree_history_index -= 1
+        self._load_family_tree_person(
+            self._family_tree_history[self._family_tree_history_index],
+            add_to_history=False,
+        )
+
+    def _family_tree_forward(self) -> None:
+        if self._family_tree_history_index >= len(self._family_tree_history) - 1:
+            return
+        self._family_tree_history_index += 1
+        self._load_family_tree_person(
+            self._family_tree_history[self._family_tree_history_index],
+            add_to_history=False,
+        )
+
+    def _family_tree_return_to_original(self) -> None:
+        if self._family_tree_original_person_id is not None:
+            self._load_family_tree_person(self._family_tree_original_person_id)
+
+    def _update_family_tree_navigation(self) -> None:
+        self._family_tree_back_button.configure(
+            state="normal" if self._family_tree_history_index > 0 else "disabled"
+        )
+        self._family_tree_forward_button.configure(
+            state=(
+                "normal"
+                if self._family_tree_history_index < len(self._family_tree_history) - 1
+                else "disabled"
+            )
+        )
+
+    def _close_family_tree(self) -> None:
+        if self._family_tree_window is not None:
+            try:
+                self._family_tree_window.destroy()
+            except Exception:
+                pass
+        self._family_tree_window = None
+        self._family_tree_original_person_id = None
+        self._family_tree_history = []
+        self._family_tree_history_index = -1
 
     def _edit_selected_person(self):
         person_id = self._selected_person_id()
@@ -2772,9 +4613,8 @@ class GenealogyViewer:
 
         dialog = self._person_dialog
         if dialog is None:
-            dialog = tk.Toplevel(self.root)
+            dialog = self._create_dialog()
             dialog.geometry("860x620")
-            dialog.transient(self.root)
             self._person_dialog = dialog
             dialog.protocol("WM_DELETE_WINDOW", self._close_person_card)
         else:
@@ -3008,10 +4848,9 @@ class GenealogyViewer:
             self._build_life_map_tab(life_map_tab, person_id)
 
     def _show_person_events(self, person_id):
-        dialog = tk.Toplevel(self.root)
+        dialog = self._create_dialog()
         dialog.title("События")
         dialog.geometry("640x420")
-        dialog.transient(self.root)
         dialog.grab_set()
 
         tk.Label(dialog, text="События человека").pack(anchor="w", padx=12, pady=(12, 6))
@@ -3032,10 +4871,9 @@ class GenealogyViewer:
         tk.Button(controls, text="Удалить", command=lambda: self._delete_person_event(dialog, person_id, listbox)).pack(side="left", padx=(8, 0))
 
     def _manage_person_event(self, dialog, person_id, event_id, close_parent_on_save=True):
-        event_window = tk.Toplevel(dialog)
+        event_window = self._create_dialog(dialog)
         event_window.title("Событие")
         event_window.geometry("480x320")
-        event_window.transient(dialog)
         event_window.grab_set()
 
         fields = {}
@@ -3210,10 +5048,9 @@ class GenealogyViewer:
         self.show_person(person_id)
 
     def _show_person_editor(self, person_id=None):
-        dialog = tk.Toplevel(self.root)
+        dialog = self._create_dialog()
         dialog.title("Редактор человека")
         dialog.geometry("640x520")
-        dialog.transient(self.root)
         dialog.grab_set()
 
         person = None
@@ -3318,9 +5155,9 @@ class GenealogyViewer:
             "note": (data or {}).get("note", "") or "",
         }
         if person_id is None:
-            person_id = self.repository.create_person(payload)
+            person_id = self._get_undo_manager().execute(AddPersonCommand(self.repository, payload))
         else:
-            self.repository.update_person(person_id, payload)
+            self._get_undo_manager().execute(EditPersonCommand(self.repository, person_id, payload))
         self.current_person_id = person_id
         return person_id
 
@@ -3328,7 +5165,7 @@ class GenealogyViewer:
         if person_id is None:
             return False
         if messagebox.askyesno("Удаление", "Удалить выбранного человека?"):
-            deleted = self.repository.delete_person(person_id)
+            deleted = self._get_undo_manager().execute(DeletePersonCommand(self.repository, person_id))
             self.current_person_id = None
             self.search_people()
             return deleted
@@ -3345,10 +5182,9 @@ class GenealogyViewer:
         person_reference = self._current_person_reference()
         state = self.relationship_service.get_relationship_editor_state(person_reference)
 
-        dialog = tk.Toplevel(self.root)
+        dialog = self._create_dialog()
         dialog.title("Редактор отношений")
         dialog.geometry("880x620")
-        dialog.transient(self.root)
         dialog.grab_set()
 
         title_name = self.format_name(state["person"].get("last_name"), state["person"].get("first_name")) or "Без имени"
@@ -3550,11 +5386,20 @@ class GenealogyViewer:
 
 
 def main():
+    """Launch the genealogy viewer application."""
+    prepare_user_environment()
+    configure_logging()
+    get_logger("startup").info("Application startup version=%s", APP_VERSION)
+    initialize_database()
+    if "--smoke-test" in sys.argv:
+        return
     root = tk.Tk()
+    install_exception_logging(root)
     app = GenealogyViewer(root)
 
     def close_application():
         app.close()
+        get_logger("startup").info("Application closed")
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", close_application)

@@ -4,6 +4,7 @@ from repository.person_repository import PersonRepository
 
 
 class PersonEventService:
+    """Manage dated events associated with people."""
     def __init__(self, repository: PersonRepository):
         self.repository = repository
 

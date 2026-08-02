@@ -25,9 +25,9 @@ def relationship_repo(tmp_path):
 def test_relationship_service_creates_and_validates_family(relationship_repo):
     service = RelationshipService(relationship_repo)
 
-    person_a = relationship_repo.create_person({"gedcom_id": "I1", "first_name": "Anna", "last_name": "Smith"})
-    person_b = relationship_repo.create_person({"gedcom_id": "I2", "first_name": "Bob", "last_name": "Smith"})
-    person_c = relationship_repo.create_person({"gedcom_id": "I3", "first_name": "Clara", "last_name": "Smith"})
+    relationship_repo.create_person({"gedcom_id": "I1", "first_name": "Anna", "last_name": "Smith"})
+    relationship_repo.create_person({"gedcom_id": "I2", "first_name": "Bob", "last_name": "Smith"})
+    relationship_repo.create_person({"gedcom_id": "I3", "first_name": "Clara", "last_name": "Smith"})
 
     family_id = service.create_family(husband_gedcom_id="I1", wife_gedcom_id="I2", child_gedcom_ids=["I3"])
 
@@ -46,10 +46,10 @@ def test_relationship_service_creates_and_validates_family(relationship_repo):
 def test_relationship_service_updates_and_deletes_family(relationship_repo):
     service = RelationshipService(relationship_repo)
 
-    person_a = relationship_repo.create_person({"gedcom_id": "I1", "first_name": "Anna", "last_name": "Smith"})
-    person_b = relationship_repo.create_person({"gedcom_id": "I2", "first_name": "Bob", "last_name": "Smith"})
-    person_c = relationship_repo.create_person({"gedcom_id": "I3", "first_name": "Clara", "last_name": "Smith"})
-    person_d = relationship_repo.create_person({"gedcom_id": "I4", "first_name": "Drew", "last_name": "Smith"})
+    relationship_repo.create_person({"gedcom_id": "I1", "first_name": "Anna", "last_name": "Smith"})
+    relationship_repo.create_person({"gedcom_id": "I2", "first_name": "Bob", "last_name": "Smith"})
+    relationship_repo.create_person({"gedcom_id": "I3", "first_name": "Clara", "last_name": "Smith"})
+    relationship_repo.create_person({"gedcom_id": "I4", "first_name": "Drew", "last_name": "Smith"})
 
     family_id = service.create_family(husband_gedcom_id="I1", wife_gedcom_id="I2", child_gedcom_ids=["I3"])
 
@@ -101,7 +101,7 @@ def test_relationship_service_accepts_numeric_references_for_manual_people(relat
 def test_relationship_service_links_existing_father(relationship_repo):
     service = RelationshipService(relationship_repo)
 
-    father_id = relationship_repo.create_person({"gedcom_id": "I1", "first_name": "Ivan", "last_name": "Father"})
+    relationship_repo.create_person({"gedcom_id": "I1", "first_name": "Ivan", "last_name": "Father"})
     child_id = relationship_repo.create_person({"gedcom_id": "I2", "first_name": "Petr", "last_name": "Child"})
 
     service.link_parent(str(child_id), "I1", "father")
@@ -112,7 +112,7 @@ def test_relationship_service_links_existing_father(relationship_repo):
 def test_relationship_service_links_existing_mother(relationship_repo):
     service = RelationshipService(relationship_repo)
 
-    mother_id = relationship_repo.create_person({"gedcom_id": "I1", "first_name": "Maria", "last_name": "Mother"})
+    relationship_repo.create_person({"gedcom_id": "I1", "first_name": "Maria", "last_name": "Mother"})
     child_id = relationship_repo.create_person({"gedcom_id": "I2", "first_name": "Petr", "last_name": "Child"})
 
     service.link_parent(str(child_id), "I1", "mother")
@@ -123,8 +123,8 @@ def test_relationship_service_links_existing_mother(relationship_repo):
 def test_relationship_service_links_existing_child_to_one_parent(relationship_repo):
     service = RelationshipService(relationship_repo)
 
-    parent_id = relationship_repo.create_person({"gedcom_id": "I1", "first_name": "Olga", "last_name": "Parent"})
-    child_id = relationship_repo.create_person({"gedcom_id": "I2", "first_name": "Nina", "last_name": "Child"})
+    relationship_repo.create_person({"gedcom_id": "I1", "first_name": "Olga", "last_name": "Parent"})
+    relationship_repo.create_person({"gedcom_id": "I2", "first_name": "Nina", "last_name": "Child"})
 
     family = service.link_child("I1", "I2")
 
@@ -193,11 +193,11 @@ def test_relationship_service_reuses_compatible_family_when_linking_child(relati
 def test_relationship_service_repairs_legacy_numeric_child_links_without_duplicates(relationship_repo):
     service = RelationshipService(relationship_repo)
 
-    yakov_id = relationship_repo.create_person({"gedcom_id": "I1", "first_name": "Яков", "last_name": "Лесник"})
-    mikhail_id = relationship_repo.create_person({"gedcom_id": "I2", "first_name": "Михаил", "last_name": "Лесник"})
-    margarita_id = relationship_repo.create_person({"gedcom_id": "I3", "first_name": "Маргарита", "last_name": "Трахтенберг"})
-    anton_id = relationship_repo.create_person({"gedcom_id": "I4", "first_name": "Антон", "last_name": "Ермаков"})
-    nikita_id = relationship_repo.create_person({"gedcom_id": "I5", "first_name": "Никита", "last_name": "Ермаков"})
+    relationship_repo.create_person({"gedcom_id": "I1", "first_name": "Яков", "last_name": "Лесник"})
+    relationship_repo.create_person({"gedcom_id": "I2", "first_name": "Михаил", "last_name": "Лесник"})
+    relationship_repo.create_person({"gedcom_id": "I3", "first_name": "Маргарита", "last_name": "Трахтенберг"})
+    relationship_repo.create_person({"gedcom_id": "I4", "first_name": "Антон", "last_name": "Ермаков"})
+    relationship_repo.create_person({"gedcom_id": "I5", "first_name": "Никита", "last_name": "Ермаков"})
 
     relationship_repo.create_family({"gedcom_id": "F1", "husband": "I1", "wife": "", "children": [], "relationship_type": "unknown"})
     family_row_id = relationship_repo.conn.execute("SELECT id FROM families WHERE gedcom_id = ?", ("F1",)).fetchone()[0]

@@ -3,7 +3,6 @@ from pathlib import Path
 
 import pytest
 
-from config import DB_NAME
 from repository import DatabaseRepository, PersonRepository
 
 
@@ -344,7 +343,7 @@ def test_relationship_queries_support_mixed_manual_and_gedcom_references(temp_db
         "INSERT INTO people (gedcom_id, first_name, last_name) VALUES (?, ?, ?)",
         ("", "Manual", "Father"),
     ).lastrowid
-    mother_id = conn.execute(
+    conn.execute(
         "INSERT INTO people (gedcom_id, first_name, last_name) VALUES (?, ?, ?)",
         ("I200", "Gedcom", "Mother"),
     ).lastrowid

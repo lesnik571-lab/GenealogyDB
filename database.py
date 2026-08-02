@@ -3,10 +3,10 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from config import DB_NAME
-from repository import DatabaseRepository
+from config import DB_NAME, RESOURCE_DIR
+from logging_service import log_operation
 
-SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+SCHEMA_PATH = RESOURCE_DIR / "schema.sql"
 REQUIRED_COLUMNS = {
     "people": {
         "id",
@@ -38,6 +38,7 @@ CORE_REQUIRED_COLUMNS = {
 
 
 def load_schema(schema_path=SCHEMA_PATH):
+    """Load SQL schema text from disk."""
     path = Path(schema_path)
     try:
         schema = path.read_text(encoding="utf-8")
@@ -56,6 +57,7 @@ def _table_columns(connection, table_name):
 
 
 def database_is_initialized(connection):
+    """Return whether a connection contains the required application tables."""
     cursor = connection.execute(
         """
         SELECT name
@@ -94,6 +96,7 @@ def _core_database_is_initialized(connection):
 
 
 def initialize_database(database_name=DB_NAME, schema_path=SCHEMA_PATH):
+    """Create or upgrade an application database and return its path."""
     database_path = Path(database_name)
     database_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -103,6 +106,7 @@ def initialize_database(database_name=DB_NAME, schema_path=SCHEMA_PATH):
             _ensure_family_relationship_type_column(connection)
             _ensure_person_events_table(connection)
             _ensure_person_media_and_sources_tables(connection)
+            _ensure_source_management_tables(connection)
             _ensure_geocoding_cache_table(connection)
             return False
 
@@ -110,6 +114,7 @@ def initialize_database(database_name=DB_NAME, schema_path=SCHEMA_PATH):
         _ensure_family_relationship_type_column(connection)
         _ensure_person_events_table(connection)
         _ensure_person_media_and_sources_tables(connection)
+        _ensure_source_management_tables(connection)
         _ensure_geocoding_cache_table(connection)
         return True
 
@@ -204,6 +209,46 @@ def _ensure_person_media_and_sources_tables(connection):
     connection.commit()
 
 
+def _ensure_source_management_tables(connection):
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            author TEXT,
+            publication TEXT,
+            repository_name TEXT,
+            call_number TEXT,
+            source_url TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS citations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_id INTEGER NOT NULL,
+            target_type TEXT NOT NULL CHECK(target_type IN ('person', 'family', 'event', 'relationship')),
+            target_id TEXT NOT NULL,
+            page TEXT,
+            quality TEXT,
+            transcription TEXT,
+            comment TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(source_id) REFERENCES sources(id) ON DELETE CASCADE
+        )
+        """
+    )
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_citations_source_id ON citations(source_id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_citations_target ON citations(target_type, target_id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_sources_repository ON sources(repository_name)")
+    connection.commit()
+
+
 def _ensure_geocoding_cache_table(connection):
     connection.execute(
         """
@@ -227,6 +272,7 @@ def _ensure_geocoding_cache_table(connection):
 
 
 def validate_database_file(database_path):
+    """Validate that a file is a readable initialized application database."""
     path = Path(database_path).expanduser()
     if not path.exists():
         raise ValueError(f"Файл базы не найден: {path}")
@@ -276,7 +322,9 @@ def _build_backup_path(source_path, destination_path=None):
     return destination / f"{source.stem}-{timestamp}{source.suffix}"
 
 
+@log_operation("Database backup")
 def backup_database(source_path, destination_path=None):
+    """Create a consistent SQLite backup and return its destination path."""
     source = Path(source_path).expanduser()
     if not source.exists():
         raise FileNotFoundError(f"Файл базы не найден: {source}")
@@ -289,7 +337,9 @@ def backup_database(source_path, destination_path=None):
     return destination
 
 
+@log_operation("Database restore")
 def restore_database(source_path, target_path, create_safety_backup=True):
+    """Restore a validated database, optionally preserving the current target."""
     source = Path(source_path).expanduser()
     target = Path(target_path).expanduser()
 

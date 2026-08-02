@@ -1,5 +1,3 @@
-import os
-import sqlite3
 from repository.person_repository import PersonRepository
 from config import DB_NAME
 

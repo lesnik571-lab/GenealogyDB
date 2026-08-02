@@ -1,7 +1,5 @@
 from pathlib import Path
 import sqlite3
-import tkinter as tk
-from tkinter import ttk
 
 from viewer import GenealogyViewer
 
@@ -15,7 +13,6 @@ def test_insert_people_creates_clickable_relationship_tags(tmp_path):
     conn.commit()
     conn.close()
 
-    root = object()
     viewer = GenealogyViewer.__new__(GenealogyViewer)
     viewer.repository = type("Repo", (), {"get_person_by_gedcom_id": lambda self, gedcom_id: (1,)})()
     viewer.show_person = lambda person_id: person_id

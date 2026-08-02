@@ -1,5 +1,6 @@
 from config import DB_NAME
 from gedcom.parser import parse_gedcom
+from logging_service import log_operation
 from repository import DatabaseRepository
 
 
@@ -8,6 +9,7 @@ class GedcomImporter:
         self.db_name = db_name
         self.repository = DatabaseRepository(db_name)
 
+    @log_operation("GEDCOM import")
     def import_gedcom(self, filename):
         data = self._load_data(filename)
         conn = self.repository.connect()
