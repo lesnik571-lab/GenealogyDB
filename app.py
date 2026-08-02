@@ -4,6 +4,12 @@ from pathlib import Path
 from config import APP_VERSION, DB_NAME, prepare_user_environment
 from database import initialize_database
 from logging_service import configure_logging, get_logger, install_exception_logging
+from task_manager import TaskManager
+
+
+class _HeadlessTaskRoot:
+    def after(self, _delay, _callback):
+        return None
 
 
 class GenealogyApplication:
@@ -62,8 +68,16 @@ class GenealogyApplication:
             print(f"Выбран не GEDCOM-файл: {filename}")
             return
 
+        task_manager = TaskManager(_HeadlessTaskRoot(), dialog_factory=None)
+        task = task_manager.submit(
+            "Импорт GEDCOM",
+            lambda context: (
+                context.report("Импорт GEDCOM", 0, None),
+                importer.import_gedcom(str(filename)),
+            )[1],
+        )
         try:
-            result = importer.import_gedcom(str(filename))
+            result = task_manager.wait(task)
         except (OSError, ValueError) as error:
             print(f"Ошибка импорта: {error}")
         except Exception as error:
@@ -77,6 +91,8 @@ class GenealogyApplication:
                     f"семей — {result['families']}, "
                     f"связей — {result['family_children']}."
                 )
+        finally:
+            task_manager.shutdown()
 
     def open_viewer(self):
         """Load and run the graphical viewer on demand."""

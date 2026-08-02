@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import html
 import re
+import struct
 import unicodedata
 import urllib.parse
 import urllib.request
+import zlib
 from pathlib import Path
 
 from config import GEOCODING_API_KEY, GEOCODING_PROVIDER
@@ -81,6 +84,11 @@ class PersonLifeMapService:
 
     def collect_place_events(self, person_id):
         timeline = self.timeline_service.build_timeline(person_id)
+        person = self.repository.get_person(person_id)
+        person_name = " ".join(
+            value for value in ((person[2] if person else ""), (person[1] if person else ""))
+            if value
+        ) or "Без имени"
         markers = []
         for entry in timeline:
             place = (entry.get("place") or "").strip()
@@ -92,6 +100,8 @@ class PersonLifeMapService:
 
             marker = {
                 "event_id": entry.get("event_id"),
+                "person_id": person_id,
+                "person_name": person_name,
                 "event_type": entry.get("event_type", "custom"),
                 "event_label": EVENT_LABELS.get(entry.get("event_type", "custom"), entry.get("event_type", "custom")),
                 "date_text": entry.get("date_text", ""),
@@ -278,6 +288,112 @@ class PersonLifeMapService:
 
         lines.extend(["  </Document>", "</kml>"])
         destination.write_text("\n".join(lines), encoding="utf-8")
+        return destination
+
+    def export_html(self, map_data, destination_path):
+        destination = Path(destination_path).expanduser()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        markers = [
+            marker for marker in map_data.get("markers", [])
+            if marker.get("latitude") is not None and marker.get("longitude") is not None
+        ]
+        route = [
+            [marker["latitude"], marker["longitude"]]
+            for marker in map_data.get("route", [])
+            if marker.get("latitude") is not None and marker.get("longitude") is not None
+        ]
+        marker_data = [
+            {
+                "latitude": marker["latitude"],
+                "longitude": marker["longitude"],
+                "event": marker.get("event_label", ""),
+                "date": marker.get("date_text", ""),
+                "person": marker.get("person_name", ""),
+                "notes": marker.get("description", ""),
+                "place": marker.get("place", ""),
+            }
+            for marker in markers
+        ]
+        title = marker_data[0]["person"] if marker_data else "Карта жизни"
+        document = f"""<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{html.escape(title)} - Карта жизни</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>html,body,#map{{height:100%;margin:0}}.popup{{line-height:1.45}}.popup strong{{display:inline-block;min-width:72px}}</style></head>
+<body><div id="map"></div><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
+const markers={json.dumps(marker_data, ensure_ascii=False).replace('</', '<\\/')};
+const route={json.dumps(route)};
+const map=L.map('map').setView([20,0],2);
+L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',{{maxZoom:19,attribution:'&copy; OpenStreetMap'}}).addTo(map);
+const bounds=[];
+markers.forEach(item=>{{
+  const popup=`<div class="popup"><strong>Событие:</strong> ${{escapeHtml(item.event)}}<br><strong>Дата:</strong> ${{escapeHtml(item.date)}}<br><strong>Человек:</strong> ${{escapeHtml(item.person)}}<br><strong>Место:</strong> ${{escapeHtml(item.place)}}<br><strong>Заметки:</strong> ${{escapeHtml(item.notes)}}</div>`;
+  L.marker([item.latitude,item.longitude]).addTo(map).bindPopup(popup); bounds.push([item.latitude,item.longitude]);
+}});
+if(route.length>1)L.polyline(route,{{color:'#2878b5',weight:3}}).addTo(map);
+if(bounds.length)map.fitBounds(bounds,{{padding:[30,30],maxZoom:12}});
+function escapeHtml(value){{const node=document.createElement('div');node.textContent=value||'';return node.innerHTML;}}
+</script></body></html>"""
+        destination.write_text(document, encoding="utf-8")
+        return destination
+
+    def export_png(self, map_data, destination_path, width=1200, height=600):
+        destination = Path(destination_path).expanduser()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        width = max(320, int(width))
+        height = max(180, int(height))
+        pixels = bytearray([248, 250, 252] * width * height)
+
+        def point(marker):
+            x = round(((float(marker["longitude"]) + 180.0) / 360.0) * (width - 1))
+            y = round(((90.0 - float(marker["latitude"])) / 180.0) * (height - 1))
+            return x, y
+
+        def set_pixel(x, y, color):
+            if 0 <= x < width and 0 <= y < height:
+                offset = (y * width + x) * 3
+                pixels[offset:offset + 3] = bytes(color)
+
+        def line(start, end, color):
+            x1, y1 = start
+            x2, y2 = end
+            steps = max(abs(x2 - x1), abs(y2 - y1), 1)
+            for step in range(steps + 1):
+                x = round(x1 + (x2 - x1) * step / steps)
+                y = round(y1 + (y2 - y1) * step / steps)
+                for offset in (-1, 0, 1):
+                    set_pixel(x, y + offset, color)
+
+        for longitude in range(-180, 181, 30):
+            x = round(((longitude + 180) / 360) * (width - 1))
+            line((x, 0), (x, height - 1), (222, 229, 235))
+        for latitude in range(-60, 61, 30):
+            y = round(((90 - latitude) / 180) * (height - 1))
+            line((0, y), (width - 1, y), (222, 229, 235))
+
+        route_points = [
+            point(marker) for marker in map_data.get("route", [])
+            if marker.get("latitude") is not None and marker.get("longitude") is not None
+        ]
+        for start, end in zip(route_points, route_points[1:]):
+            line(start, end, (40, 120, 181))
+        for marker in map_data.get("markers", []):
+            if marker.get("latitude") is None or marker.get("longitude") is None:
+                continue
+            center_x, center_y = point(marker)
+            for y_offset in range(-6, 7):
+                for x_offset in range(-6, 7):
+                    if x_offset * x_offset + y_offset * y_offset <= 36:
+                        set_pixel(center_x + x_offset, center_y + y_offset, (36, 132, 78))
+
+        raw = b"".join(b"\x00" + bytes(pixels[row * width * 3:(row + 1) * width * 3]) for row in range(height))
+        def chunk(kind, data):
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+        png = b"\x89PNG\r\n\x1a\n"
+        png += chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        png += chunk(b"IDAT", zlib.compress(raw, 9))
+        png += chunk(b"IEND", b"")
+        destination.write_bytes(png)
         return destination
 
     @staticmethod

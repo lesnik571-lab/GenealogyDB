@@ -1,9 +1,10 @@
 import sqlite3
+import inspect
 import time
 from pathlib import Path
 
 from repository import PersonRepository
-from repository.person_life_map_service import PersonLifeMapService
+from life_map_service import LifeMapService, PersonLifeMapService
 from viewer import GenealogyViewer
 
 
@@ -49,6 +50,42 @@ def test_life_map_place_collection(tmp_path):
     assert "Moscow" in places
     assert "Paris" in places
     assert "Berlin" in places
+    repo.close()
+
+
+def test_life_map_collects_every_required_event_type(tmp_path):
+    repo = _build_repo(tmp_path, "event_types.db")
+    person_id = repo.create_person(
+        {
+            "gedcom_id": "I1",
+            "first_name": "Event",
+            "last_name": "Collector",
+            "birth_date": "1900",
+            "birth_place": "Birth Place",
+            "death_date": "1980",
+            "death_place": "Death Place",
+        }
+    )
+    required_types = (
+        "baptism", "residence", "marriage", "occupation", "immigration",
+        "emigration", "burial", "custom",
+    )
+    for index, event_type in enumerate(required_types, start=1):
+        repo.create_person_event(
+            {
+                "person_id": person_id,
+                "event_type": event_type,
+                "date": str(1900 + index),
+                "place": f"{event_type} place",
+                "description": f"{event_type} notes",
+            }
+        )
+
+    markers = PersonLifeMapService(repo).collect_place_events(person_id)
+    collected_types = {marker["event_type"] for marker in markers}
+
+    assert {"birth", "death", *required_types} <= collected_types
+    assert all(marker["person_name"] == "Event Collector" for marker in markers)
     repo.close()
 
 
@@ -144,6 +181,99 @@ def test_life_map_kml_export(tmp_path):
     assert "Маршрут жизни" in content
     assert "<coordinates>20.0,10.0,0" in content
     repo.close()
+
+
+def test_life_map_html_and_png_exports_include_marker_details(tmp_path):
+    repo = _build_repo(tmp_path, "exports.db")
+    person_id = repo.create_person({"gedcom_id": "I1", "first_name": "Map", "last_name": "User", "birth_date": "1900", "birth_place": "A"})
+    repo.create_person_event({"person_id": person_id, "event_type": "immigration", "date": "1920", "place": "B", "description": "Arrived"})
+    geocoder = _StubGeocoder({
+        "A": {"status": "ok", "error": "", "latitude": 10.0, "longitude": 20.0},
+        "B": {"status": "ok", "error": "", "latitude": 30.0, "longitude": 40.0},
+    })
+    service = LifeMapService(repo, geocoder=geocoder)
+    service.update_missing_coordinates(person_id)
+    map_data = service.build_map_data(person_id)
+
+    html_path = service.export_html(map_data, tmp_path / "life_map.html")
+    png_path = service.export_png(map_data, tmp_path / "life_map.png", width=400, height=200)
+
+    html_text = html_path.read_text(encoding="utf-8")
+    assert "Map User" in html_text
+    assert "Arrived" in html_text
+    assert "L.polyline" in html_text
+    assert png_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert len(png_path.read_bytes()) > 100
+    repo.close()
+
+
+def test_life_map_viewer_toolbar_and_read_only_controls_are_wired():
+    widget_source = inspect.getsource(GenealogyViewer._create_widgets)
+    tab_source = inspect.getsource(GenealogyViewer._build_life_map_tab)
+
+    assert 'text="Карта жизни"' in widget_source
+    assert "command=self.open_life_map" in widget_source
+    assert 'text="Экспорт HTML"' in tab_source
+    assert 'text="Экспорт PNG"' in tab_source
+    assert "Исправить координаты" not in tab_source
+    assert "_select_life_map_tree_marker" in tab_source
+    assert "_open_selected_life_map_person" in tab_source
+
+
+def test_life_map_marker_selection_shows_details_and_double_click_opens_person():
+    class Label:
+        text = ""
+
+        def config(self, **values):
+            self.text = values.get("text", self.text)
+
+    viewer = GenealogyViewer.__new__(GenealogyViewer)
+    viewer._life_map_detail_label = Label()
+    viewer._life_map_current_person_id = 42
+    opened = []
+    viewer.show_person = opened.append
+    marker = {
+        "event_label": "Иммиграция",
+        "date_text": "1920",
+        "person_name": "Map User",
+        "description": "Arrived",
+        "person_id": 42,
+    }
+
+    viewer._select_life_map_marker(marker)
+    viewer._open_life_map_event_details(marker)
+
+    assert "Иммиграция" in viewer._life_map_detail_label.text
+    assert "1920" in viewer._life_map_detail_label.text
+    assert "Map User" in viewer._life_map_detail_label.text
+    assert "Arrived" in viewer._life_map_detail_label.text
+    assert opened == [42]
+
+
+def test_main_life_map_action_resolves_selected_person_and_builds_window():
+    class Repository:
+        def resolve_person_reference(self, reference):
+            assert reference == "I42"
+            return 42
+
+    class Window:
+        def title(self, _value): pass
+        def geometry(self, _value): pass
+        def minsize(self, _width, _height): pass
+        def protocol(self, _name, _callback): pass
+
+    viewer = GenealogyViewer.__new__(GenealogyViewer)
+    viewer.root = object()
+    viewer.repository = Repository()
+    viewer._life_map_window = None
+    viewer._choose_person = lambda _title: "I42"
+    viewer._create_dialog = lambda _parent: Window()
+    built = []
+    viewer._build_life_map_tab = lambda window, person_id: built.append((window, person_id))
+
+    viewer.open_life_map()
+
+    assert built == [(viewer._life_map_window, 42)]
 
 
 def test_life_map_background_worker_behavior(tmp_path):

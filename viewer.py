@@ -44,11 +44,12 @@ from plugin_manager import PluginApp, PluginManager, ReadOnlyPluginData
 from recovery_wizard_service import RecoveryRecord, RecoveryWizardService
 from relationship_path_service import RelationshipPath, RelationshipPathService
 from source_service import CITATION_FIELDS, SOURCE_FIELDS, TARGET_TYPES, SourceService
+from task_manager import TaskManager
 from timeline_service import FamilyTimelineService, SUPPORTED_EVENT_TYPES, TimelineFilters
 from repository import PersonRepository
 from repository.person_attachment_service import PersonAttachmentService
 from repository.person_event_service import PersonEventService
-from repository.person_life_map_service import PersonLifeMapService
+from life_map_service import PersonLifeMapService
 from repository.person_timeline_service import PersonTimelineService
 from repository.relationship_service import RelationshipService
 from undo_manager import (
@@ -414,6 +415,7 @@ class GenealogyViewer:
         self.root = root
         self._configure_ui_defaults()
         self.repository = PersonRepository(DB_NAME)
+        self.task_manager = TaskManager(root)
         self.relationship_service = RelationshipService(self.repository)
         self.family_tree_view_service = FamilyTreeViewService(self.relationship_service)
         self.relationship_path_service = RelationshipPathService(self.repository)
@@ -448,6 +450,9 @@ class GenealogyViewer:
         self._life_map_geocode_cancel_event = None
         self._life_map_geocode_thread = None
         self._life_map_marker_lookup = {}
+        self._life_map_tree_markers = {}
+        self._life_map_detail_label = None
+        self._life_map_window = None
         self._card_photo_image = None
         self.integrity_service = IntegrityCheckService(self.repository, data_dir=DATA_DIR)
         self.data_quality_service = DataQualityService(self.repository)
@@ -545,6 +550,40 @@ class GenealogyViewer:
             return
         option_add("*Font", UI_FONT)
         option_add("*Button.padX", UI_BUTTON_PAD_X)
+
+    def _submit_repository_task(
+        self,
+        name,
+        operation,
+        on_success,
+        *,
+        on_error=None,
+        cancellable=False,
+    ):
+        manager = getattr(self, "task_manager", None)
+        if manager is None:
+            try:
+                return on_success(operation(self.repository, None))
+            except Exception as error:
+                if on_error:
+                    return on_error(error)
+                raise
+        db_path = getattr(self.repository, "db_name", DB_NAME)
+
+        def worker(context):
+            worker_repository = PersonRepository(db_path)
+            try:
+                return operation(worker_repository, context)
+            finally:
+                worker_repository.close()
+
+        return manager.submit(
+            name,
+            worker,
+            on_success=on_success,
+            on_error=on_error or (lambda error: messagebox.showerror(name, str(error))),
+            cancellable=cancellable,
+        )
         option_add("*Button.padY", UI_BUTTON_PAD_Y)
 
     def _create_dialog(self, parent=None):
@@ -995,7 +1034,21 @@ class GenealogyViewer:
         return tree.selection()[0]
 
     def _refresh_data_quality_report(self):
-        self._data_quality_report = self.data_quality_service.analyze()
+        if not hasattr(self, "task_manager"):
+            self._data_quality_report = self.data_quality_service.analyze()
+            return self._render_data_quality_report()
+
+        def apply_report(report):
+            self._data_quality_report = report
+            self._render_data_quality_report()
+
+        return self._submit_repository_task(
+            "Центр качества данных",
+            lambda repository, _context: DataQualityService(repository).analyze(),
+            apply_report,
+        )
+
+    def _render_data_quality_report(self):
         tree = self._data_quality_category_tree
         if tree is None:
             return
@@ -1688,13 +1741,31 @@ class GenealogyViewer:
             pass
 
     def _refresh_timeline(self, person_id, tree):
-        self._timeline_entries = self.timeline_service.build_timeline(person_id)
-        self._timeline_source_map = {
-            source.get("id"): source
-            for source in self.attachment_service.list_sources(person_id)
-            if source.get("id") is not None
-        }
-        self._populate_timeline_tree(tree)
+        if not hasattr(self, "task_manager"):
+            self._timeline_entries = self.timeline_service.build_timeline(person_id)
+            self._timeline_source_map = {
+                source.get("id"): source
+                for source in self.attachment_service.list_sources(person_id)
+                if source.get("id") is not None
+            }
+            return self._populate_timeline_tree(tree)
+
+        def load(repository, _context):
+            entries = PersonTimelineService(repository).build_timeline(person_id)
+            sources = repository.list_person_sources(person_id)
+            return entries, sources
+
+        def apply_timeline(result):
+            entries, sources = result
+            self._timeline_entries = entries
+            self._timeline_source_map = {
+                source.get("id"): source
+                for source in sources
+                if source.get("id") is not None
+            }
+            self._populate_timeline_tree(tree)
+
+        return self._submit_repository_task("Хронология", load, apply_timeline)
 
     def _export_timeline_csv(self):
         if not self._timeline_entries:
@@ -1882,14 +1953,20 @@ class GenealogyViewer:
     def _open_life_map_event_details(self, marker):
         if not marker or self._life_map_current_person_id is None:
             return
+        person_id = marker.get("person_id") or self._life_map_current_person_id
+        self.show_person(int(person_id))
 
-        event_id = marker.get("event_id")
-        if event_id:
-            self._manage_person_event(self._person_dialog or self.root, self._life_map_current_person_id, event_id, close_parent_on_save=False)
+    def _select_life_map_marker(self, marker):
+        if not marker or self._life_map_detail_label is None:
             return
-
-        if marker.get("event_type") in {"birth", "death", "occupation"}:
-            self._show_person_editor(self._life_map_current_person_id)
+        self._life_map_detail_label.config(
+            text=(
+                f"Событие: {marker.get('event_label', '')}\n"
+                f"Дата: {marker.get('date_text', '')}\n"
+                f"Человек: {marker.get('person_name', '')}\n"
+                f"Заметки: {marker.get('description', '')}"
+            )
+        )
 
     def _life_map_canvas_point(self, latitude, longitude, width=820, height=360):
         x = ((float(longitude) + 180.0) / 360.0) * width
@@ -1958,7 +2035,8 @@ class GenealogyViewer:
             item_id = canvas.create_oval(x - 5, y - 5, x + 5, y + 5, fill=fill, outline="white")
             canvas.create_text(x + 8, y - 8, anchor="nw", text=marker.get("event_label", ""), fill="#1f2933")
             self._life_map_marker_lookup[item_id] = marker
-            canvas.tag_bind(item_id, "<Button-1>", lambda _event, mark=marker: self._open_life_map_event_details(mark))
+            canvas.tag_bind(item_id, "<Button-1>", lambda _event, mark=marker: self._select_life_map_marker(mark))
+            canvas.tag_bind(item_id, "<Double-1>", lambda _event, mark=marker: self._open_life_map_event_details(mark))
 
     def _render_life_map_tree(self):
         if self._life_map_tree is None:
@@ -1967,8 +2045,9 @@ class GenealogyViewer:
         tree = self._life_map_tree
         for item in tree.get_children():
             tree.delete(item)
+        self._life_map_tree_markers = {}
 
-        for marker in self._life_map_data.get("markers", []):
+        for index, marker in enumerate(self._life_map_data.get("markers", [])):
             status = marker.get("geocode_status", "missing")
             date_text = marker.get("date_text", "")
             status_text = {
@@ -1978,9 +2057,10 @@ class GenealogyViewer:
                 "needs_key": "нет ключа",
                 "missing": "нет координат",
             }.get(status, status)
-            tree.insert(
+            item_id = tree.insert(
                 "",
                 "end",
+                iid=f"life-map-{index}",
                 values=(
                     date_text,
                     marker.get("place", ""),
@@ -1992,6 +2072,21 @@ class GenealogyViewer:
                     marker.get("normalized_place") or "",
                 ),
             )
+            self._life_map_tree_markers[item_id] = marker
+
+    def _select_life_map_tree_marker(self, _event=None):
+        if self._life_map_tree is None:
+            return
+        selection = self._life_map_tree.selection()
+        if selection:
+            self._select_life_map_marker(self._life_map_tree_markers.get(selection[0]))
+
+    def _open_selected_life_map_person(self, _event=None):
+        if self._life_map_tree is None:
+            return
+        selection = self._life_map_tree.selection()
+        if selection:
+            self._open_life_map_event_details(self._life_map_tree_markers.get(selection[0]))
 
     def _refresh_life_map_data(self, person_id):
         self._life_map_current_person_id = person_id
@@ -2039,6 +2134,30 @@ class GenealogyViewer:
         try:
             saved = self.life_map_service.export_kml(self._life_map_data, destination)
             messagebox.showinfo("Экспорт", f"KML сохранен: {saved}")
+        except OSError as error:
+            messagebox.showerror("Ошибка", str(error))
+
+    def _export_life_map_html(self):
+        self._export_life_map("html", "HTML", self.life_map_service.export_html)
+
+    def _export_life_map_png(self):
+        self._export_life_map("png", "PNG", self.life_map_service.export_png)
+
+    def _export_life_map(self, extension, label, exporter):
+        if not self._life_map_data.get("markers"):
+            messagebox.showinfo("Карта жизни", "Нет данных для экспорта.")
+            return
+        destination = filedialog.asksaveasfilename(
+            parent=self._life_map_window or self._person_dialog or self.root,
+            title=f"Экспорт карты жизни в {label}",
+            defaultextension=f".{extension}",
+            filetypes=[(label, f"*.{extension}"), ("Все файлы", "*.*")],
+        )
+        if not destination:
+            return
+        try:
+            saved = exporter(self._life_map_data, destination)
+            messagebox.showinfo("Экспорт", f"{label} сохранен: {saved}")
         except OSError as error:
             messagebox.showerror("Ошибка", str(error))
 
@@ -2100,6 +2219,39 @@ class GenealogyViewer:
     def _start_life_map_geocoding(self):
         if self._life_map_geocode_running or self._life_map_current_person_id is None:
             return
+
+        if hasattr(self, "task_manager"):
+            person_id = self._life_map_current_person_id
+
+            def geocode(repository, context):
+                service = PersonLifeMapService(
+                    repository,
+                    timeline_service=PersonTimelineService(repository),
+                )
+                return service.update_missing_coordinates(
+                    person_id,
+                    progress_callback=lambda stage, processed, total, _percent: context.report(
+                        stage, processed, total
+                    ),
+                    cancel_event=context.cancel_event,
+                )
+
+            def complete(summary):
+                if self._life_map_progress_label is not None:
+                    if summary.get("needs_key"):
+                        self._life_map_progress_label.config(text="Геокодирование недоступно: не настроен ключ.")
+                    else:
+                        self._life_map_progress_label.config(
+                            text=f"Обновление завершено: успешно {summary.get('updated', 0)}, ошибок {summary.get('failed', 0)}"
+                        )
+                self._refresh_life_map_data(person_id)
+
+            return self._submit_repository_task(
+                "Геокодирование карты жизни",
+                geocode,
+                complete,
+                cancellable=True,
+            )
 
         self._life_map_geocode_running = True
         self._life_map_geocode_queue = queue.Queue()
@@ -2180,8 +2332,9 @@ class GenealogyViewer:
         controls.pack(fill="x", padx=8, pady=(8, 6))
         tk.Button(controls, text="Обновить координаты", command=self._start_life_map_geocoding).pack(side="left")
         tk.Button(controls, text="Открыть во внешней карте", command=self._open_life_map_external).pack(side="left", padx=(8, 0))
+        tk.Button(controls, text="Экспорт HTML", command=self._export_life_map_html).pack(side="left", padx=(8, 0))
+        tk.Button(controls, text="Экспорт PNG", command=self._export_life_map_png).pack(side="left", padx=(8, 0))
         tk.Button(controls, text="Экспорт KML", command=self._export_life_map_kml).pack(side="left", padx=(8, 0))
-        tk.Button(controls, text="Исправить координаты", command=self._edit_life_map_coordinates).pack(side="left", padx=(8, 0))
 
         self._life_map_progress_label = tk.Label(parent, text="")
         self._life_map_progress_label.pack(anchor="w", padx=8, pady=(0, 4))
@@ -2193,6 +2346,16 @@ class GenealogyViewer:
         canvas_frame.pack(fill="x", padx=8, pady=(0, 8))
         self._life_map_canvas = tk.Canvas(canvas_frame, height=360, highlightthickness=1, highlightbackground="#d1d9e0")
         self._life_map_canvas.pack(fill="x", expand=False)
+
+        details_frame = tk.LabelFrame(parent, text="Выбранное событие")
+        details_frame.pack(fill="x", padx=8, pady=(0, 8))
+        self._life_map_detail_label = tk.Label(
+            details_frame,
+            text="Выберите маркер, чтобы увидеть событие, дату, человека и заметки.",
+            justify="left",
+            anchor="w",
+        )
+        self._life_map_detail_label.pack(fill="x", padx=8, pady=6)
 
         table_frame = tk.Frame(parent)
         table_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
@@ -2218,10 +2381,40 @@ class GenealogyViewer:
         tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
 
-        tree.bind("<Double-1>", lambda _event: self._open_life_map_event_details(self._selected_life_map_marker()))
+        tree.bind("<<TreeviewSelect>>", self._select_life_map_tree_marker)
+        tree.bind("<Double-1>", self._open_selected_life_map_person)
         self._life_map_tree = tree
 
         self._refresh_life_map_data(person_id)
+
+    def open_life_map(self):
+        person_reference = self._choose_person("Выберите человека для карты жизни")
+        if not person_reference:
+            return
+        person_id = self.repository.resolve_person_reference(person_reference)
+        if person_id is None:
+            messagebox.showerror("Карта жизни", "Человек не найден.")
+            return
+        if self._life_map_window is not None:
+            try:
+                self._life_map_window.destroy()
+            except Exception:
+                pass
+        window = self._create_dialog(self.root)
+        self._life_map_window = window
+        window.title("Карта жизни")
+        window.geometry("1040x780")
+        window.minsize(780, 560)
+        window.protocol("WM_DELETE_WINDOW", self._close_life_map_window)
+        self._build_life_map_tab(window, int(person_id))
+
+    def _close_life_map_window(self):
+        if self._life_map_window is not None:
+            try:
+                self._life_map_window.destroy()
+            except Exception:
+                pass
+        self._life_map_window = None
 
     def _recovery_ui_state_path(self) -> Path:
         return Path(getattr(self, "_recovery_ui_path", DATA_DIR / "recovery_wizard_ui.json"))
@@ -2702,11 +2895,24 @@ class GenealogyViewer:
             except Exception:
                 self._recovery_window = None
 
+        if hasattr(self, "task_manager"):
+            return self._submit_repository_task(
+                "Мастер восстановления",
+                lambda repository, _context: RecoveryWizardService(repository).list_incomplete_people(),
+                self._show_recovery_wizard,
+                on_error=lambda error: messagebox.showerror(
+                    "Мастер восстановления",
+                    f"Не удалось получить список карточек:\n{error}",
+                ),
+            )
         try:
             records = self.recovery_wizard_service.list_incomplete_people()
         except Exception as exc:
             messagebox.showerror("Мастер восстановления", f"Не удалось получить список карточек:\n{exc}")
             return
+        return self._show_recovery_wizard(records)
+
+    def _show_recovery_wizard(self, records) -> None:
 
         if not records:
             messagebox.showinfo("Мастер восстановления", "Пустых карточек не найдено.")
@@ -2897,11 +3103,25 @@ class GenealogyViewer:
             return
         record = self._recovery_records[self._recovery_index]
         criteria = self._recovery_form_data()
+        if hasattr(self, "task_manager"):
+            return self._submit_repository_task(
+                "Поиск совпадений",
+                lambda repository, _context: RecoveryWizardService(repository).find_matches(
+                    record.person_id, criteria
+                ),
+                lambda candidates: self._show_recovery_matches(record, candidates),
+                on_error=lambda error: messagebox.showerror(
+                    "Поиск совпадений", str(error), parent=self._recovery_window
+                ),
+            )
         try:
             candidates = self.recovery_wizard_service.find_matches(record.person_id, criteria)
         except Exception as exc:
             messagebox.showerror("Поиск совпадений", str(exc), parent=self._recovery_window)
             return
+        return self._show_recovery_matches(record, candidates)
+
+    def _show_recovery_matches(self, record, candidates) -> None:
         if not candidates:
             messagebox.showinfo("Поиск совпадений", "Совпадения не найдены.", parent=self._recovery_window)
             return
@@ -3069,6 +3289,8 @@ class GenealogyViewer:
         self.relationship_inspector_button.pack(side="left", padx=(10, 0))
         self.kinship_button = tk.Button(top, text="Анализ родства", command=self.open_kinship_analyzer)
         self.kinship_button.pack(side="left", padx=(10, 0))
+        self.life_map_button = tk.Button(top, text="Карта жизни", command=self.open_life_map)
+        self.life_map_button.pack(side="left", padx=(10, 0))
         self.integrity_button = tk.Button(top, text="Проверка базы", command=self.open_integrity_report)
         self.integrity_button.pack(side="left", padx=(10, 0))
         self.data_quality_button = tk.Button(top, text="Качество данных", command=self.open_data_quality_center)
@@ -3389,20 +3611,49 @@ class GenealogyViewer:
             self.root.update_idletasks()
             try:
                 filters = self._collect_advanced_search_filters()
-                rows = self.advanced_search_service.search(filters)
-                self.advanced_search_service.save_last_search(filters)
             except ValueError as error:
                 self._advanced_search_results = ()
                 self.status_label.config(text=str(error))
                 return
-            self._advanced_search_results = rows
-            for person in rows:
-                self.tree.insert("", "end", values=(
-                    person.database_id, person.display_name,
-                    person.birth_date, person.death_date,
-                ))
-            self.status_label.config(text=f"Найдено: {len(rows)}")
-            return
+            if not hasattr(self, "task_manager"):
+                try:
+                    rows = self.advanced_search_service.search(filters)
+                    self.advanced_search_service.save_last_search(filters)
+                except ValueError as error:
+                    self._advanced_search_results = ()
+                    self.status_label.config(text=str(error))
+                    return
+                self._advanced_search_results = rows
+                for person in rows:
+                    self.tree.insert("", "end", values=(
+                        person.database_id, person.display_name,
+                        person.birth_date, person.death_date,
+                    ))
+                self.status_label.config(text=f"Найдено: {len(rows)}")
+                return
+
+            def search(repository, _context):
+                service = AdvancedSearchService(repository, DATA_DIR / "advanced_search_last.json")
+                rows = service.search(filters)
+                service.save_last_search(filters)
+                return rows
+
+            def apply_rows(rows):
+                self._advanced_search_results = rows
+                for person in rows:
+                    self.tree.insert("", "end", values=(
+                        person.database_id, person.display_name,
+                        person.birth_date, person.death_date,
+                    ))
+                self.status_label.config(text=f"Найдено: {len(rows)}")
+
+            def search_error(error):
+                self._advanced_search_results = ()
+                self.status_label.config(text=str(error))
+
+            return self._submit_repository_task(
+                "Расширенный поиск", search, apply_rows, on_error=search_error
+            )
 
         query = self.search_entry.get().strip()
         self._clear_tree()
@@ -3476,12 +3727,23 @@ class GenealogyViewer:
         )
         if not target_reference:
             return
-        try:
-            analysis = self.kinship_service.analyze(source_reference, target_reference)
-        except ValueError as error:
-            messagebox.showerror("Анализ родства", str(error), parent=self.root)
-            return
-        self._show_kinship_analysis(analysis)
+        if not hasattr(self, "task_manager"):
+            try:
+                analysis = self.kinship_service.analyze(source_reference, target_reference)
+            except ValueError as error:
+                messagebox.showerror("Анализ родства", str(error), parent=self.root)
+                return
+            return self._show_kinship_analysis(analysis)
+        return self._submit_repository_task(
+            "Анализ родства",
+            lambda repository, _context: KinshipService(repository).analyze(
+                source_reference, target_reference
+            ),
+            self._show_kinship_analysis,
+            on_error=lambda error: messagebox.showerror(
+                "Анализ родства", str(error), parent=self.root
+            ),
+        )
 
     def _show_kinship_analysis(self, analysis: KinshipAnalysis) -> None:
         if self._kinship_window is not None:
@@ -4182,7 +4444,18 @@ class GenealogyViewer:
         self._source_statistics_text = None
 
     def _load_family_timeline(self) -> None:
-        self._family_timeline_entries = self.family_timeline_service.build_timeline()
+        if hasattr(self, "task_manager"):
+            return self._submit_repository_task(
+                "Хронология",
+                lambda repository, _context: FamilyTimelineService(repository).build_timeline(),
+                self._apply_family_timeline_entries,
+            )
+        return self._apply_family_timeline_entries(
+            self.family_timeline_service.build_timeline()
+        )
+
+    def _apply_family_timeline_entries(self, entries) -> None:
+        self._family_timeline_entries = entries
         if self._family_timeline_event_control is not None:
             event_types = sorted({
                 entry.event_type for entry in self._family_timeline_entries
@@ -5382,6 +5655,8 @@ class GenealogyViewer:
         return " ".join(re.findall(r"[a-zа-я0-9]+", value))
 
     def close(self):
+        if hasattr(self, "task_manager"):
+            self.task_manager.shutdown()
         self.repository.close()
 
 
