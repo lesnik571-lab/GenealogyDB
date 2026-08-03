@@ -62,6 +62,7 @@ from logging_service import (
 from merge_service import MergeService
 from plugin_manager import PluginApp, PluginManager, ReadOnlyPluginData
 from recovery_wizard_service import RecoveryRecord, RecoveryWizardService
+from research_workspace_service import HYPOTHESIS_STATES, TASK_PRIORITIES, TASK_STATUSES, ResearchWorkspaceService
 from relationship_path_service import RelationshipPath, RelationshipPathService
 from source_service import CITATION_FIELDS, SOURCE_FIELDS, TARGET_TYPES, SourceService
 from split_service import SPLIT_FIELDS, SplitService
@@ -461,6 +462,7 @@ class GenealogyViewer:
         self.family_timeline_service = FamilyTimelineService(self.repository)
         self.timeline_studio_service = TimelineStudioService(self.repository)
         self.geo_map_studio_service = GeoMapStudioService(self.repository)
+        self.research_workspace_service = ResearchWorkspaceService(self.repository)
         self.source_service = SourceService(self.repository)
         self.life_map_service = PersonLifeMapService(self.repository, timeline_service=self.timeline_service)
         self.current_person_id = None
@@ -558,6 +560,13 @@ class GenealogyViewer:
         self._geo_map_vars = {}
         self._geo_map_status = None
         self._geo_map_playing = False
+        self._research_window = None
+        self._research_workspace = None
+        self._research_project_id = None
+        self._research_project_tree = None
+        self._research_hypothesis_tree = None
+        self._research_task_tree = None
+        self._research_details = None
         self._source_window = None
         self._source_tree = None
         self._source_citation_tree = None
@@ -3734,6 +3743,107 @@ class GenealogyViewer:
         window.protocol("WM_DELETE_WINDOW", self._close_life_map_window)
         self._build_life_map_tab(window, int(person_id))
 
+    def open_research_workspace(self):
+        if self._research_window is not None:
+            try: self._research_window.lift(); self._research_window.focus_force(); self._load_research_projects(); return
+            except Exception: self._research_window = None
+        window = self._create_dialog(self.root); self._research_window = window; window.title("Исследование"); window.geometry("1320x760"); window.minsize(920, 560); window.protocol("WM_DELETE_WINDOW", self._close_research_workspace)
+        toolbar = tk.Frame(window); toolbar.pack(fill="x", padx=12, pady=(12, 6))
+        for label, command in (("Новый проект", self._create_research_project), ("Удалить проект", self._delete_research_project), ("Гипотеза", self._create_research_hypothesis), ("Задача", self._create_research_task), ("Вопрос", self._create_research_question), ("Вывод", self._create_research_conclusion), ("Kanban", lambda: self._render_research_workspace("kanban")), ("Список", lambda: self._render_research_workspace("list")), ("Календарь", lambda: self._render_research_workspace("calendar")), ("Хронология", self._open_research_timeline), ("Карта", self._open_research_map), ("Дерево", self._highlight_research_tree), ("Экспорт", self._export_research_workspace)):
+            tk.Button(toolbar, text=label, command=command).pack(side="left", padx=(0, 4))
+        panes = ttk.Panedwindow(window, orient="horizontal"); panes.pack(fill="both", expand=True, padx=12, pady=6)
+        projects, work, details = tk.Frame(panes), tk.Frame(panes), tk.Frame(panes); panes.add(projects, weight=1); panes.add(work, weight=3); panes.add(details, weight=2)
+        project_tree = ttk.Treeview(projects, columns=("updated",), show="tree headings", selectmode="browse"); project_tree.heading("#0", text="Проекты"); project_tree.heading("updated", text="Обновлён"); project_tree.pack(fill="both", expand=True); project_tree.bind("<<TreeviewSelect>>", self._select_research_project); self._research_project_tree = project_tree
+        notebook = ttk.Notebook(work); notebook.pack(fill="both", expand=True)
+        hypothesis_tab, task_tab = tk.Frame(notebook), tk.Frame(notebook); notebook.add(hypothesis_tab, text="Гипотезы"); notebook.add(task_tab, text="Задачи")
+        hypothesis_tree = ttk.Treeview(hypothesis_tab, columns=("state", "statement", "links"), show="headings", selectmode="browse")
+        for key, title, width in (("state", "Состояние", 120), ("statement", "Формулировка", 350), ("links", "Связи", 90)): hypothesis_tree.heading(key, text=title); hypothesis_tree.column(key, width=width, anchor="w")
+        hypothesis_tree.pack(fill="both", expand=True); hypothesis_tree.bind("<<TreeviewSelect>>", self._select_research_hypothesis); self._research_hypothesis_tree = hypothesis_tree
+        task_tree = ttk.Treeview(task_tab, columns=("status", "priority", "due", "hypothesis"), show="headings")
+        for key, title, width in (("status", "Статус", 120), ("priority", "Приоритет", 100), ("due", "Срок", 100), ("hypothesis", "Гипотеза", 180)): task_tree.heading(key, text=title); task_tree.column(key, width=width, anchor="w")
+        task_tree.pack(fill="both", expand=True); self._research_task_tree = task_tree
+        details_text = tk.Text(details, wrap="word", state="disabled"); details_text.pack(fill="both", expand=True); self._research_details = details_text
+        self._load_research_projects()
+
+    def _load_research_projects(self):
+        return self._submit_repository_task("Исследование", lambda repository, _context: ResearchWorkspaceService(repository).list_projects(), self._render_research_projects, on_error=lambda error: messagebox.showerror("Исследование", str(error), parent=self._research_window), cancellable=True)
+    def _render_research_projects(self, projects):
+        tree = self._research_project_tree
+        if tree is None: return
+        for item in tree.get_children(): tree.delete(item)
+        for project in projects: tree.insert("", "end", iid=project.project_id, text=project.title, values=(project.updated_at,))
+    def _select_research_project(self, _event=None):
+        tree = self._research_project_tree
+        if not tree or not tree.selection(): return
+        self._research_project_id = tree.selection()[0]
+        return self._submit_repository_task("Загрузка исследования", lambda repository, context: ResearchWorkspaceService(repository).load(self._research_project_id, progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None, cancel_callback=context.raise_if_cancelled if context else None), lambda workspace: self._set_research_workspace(workspace), on_error=lambda error: messagebox.showerror("Исследование", str(error), parent=self._research_window), cancellable=True)
+    def _set_research_workspace(self, workspace): self._research_workspace = workspace; self._render_research_workspace("list")
+    def _render_research_workspace(self, mode):
+        workspace = self._research_workspace
+        if workspace is None: return
+        for tree in (self._research_hypothesis_tree, self._research_task_tree):
+            if tree:
+                for item in tree.get_children(): tree.delete(item)
+        if self._research_hypothesis_tree:
+            for item in workspace.hypotheses: self._research_hypothesis_tree.insert("", "end", iid=item.hypothesis_id, text=item.title, values=(item.state, item.statement, len(item.people) + len(item.evidence)))
+        tasks = workspace.tasks if mode == "list" else (task for status in TASK_STATUSES for task in workspace.tasks if task.status == status) if mode == "kanban" else self.research_workspace_service.calendar(workspace)
+        if self._research_task_tree:
+            for item in tasks: self._research_task_tree.insert("", "end", iid=item.task_id, text=item.title, values=(item.status, item.priority, item.due_date, item.hypothesis_id))
+        self._set_research_details(f"{workspace.project.title}\n\nРежим: {mode}\nГипотез: {len(workspace.hypotheses)}\nЗадач: {len(workspace.tasks)}\n\nОткрытые вопросы:\n" + "\n".join(f"- {item['text']}" for item in workspace.questions) + "\n\nВыводы:\n" + "\n".join(f"- {item['text']}" for item in workspace.conclusions))
+    def _selected_research_hypothesis(self):
+        tree = self._research_hypothesis_tree
+        if not tree or not tree.selection() or not self._research_workspace: return None
+        return next((item for item in self._research_workspace.hypotheses if item.hypothesis_id == tree.selection()[0]), None)
+    def _select_research_hypothesis(self, _event=None):
+        hypothesis = self._selected_research_hypothesis()
+        if not hypothesis: return
+        evidence = self.research_workspace_service.evidence_summary(hypothesis); issues = self.research_workspace_service.validation_issues(hypothesis)
+        self._set_research_details(f"{hypothesis.title}\n\n{hypothesis.statement}\n\nСостояние: {hypothesis.state}\nДостоверность: {evidence['confidence']}\nПоддерживает: {len(evidence['supporting'])}\nПротиворечит: {len(evidence['contradicting'])}\nПроблемы валидации: {len(issues)}\n\nЗаметки:\n{hypothesis.notes}")
+    def _set_research_details(self, text):
+        if self._research_details: self._research_details.config(state="normal"); self._research_details.delete("1.0", "end"); self._research_details.insert("end", text); self._research_details.config(state="disabled")
+    def _create_research_project(self):
+        title = simpledialog.askstring("Проект", "Название:", parent=self._research_window)
+        if title: self.research_workspace_service.create_project(title); self._load_research_projects()
+    def _delete_research_project(self):
+        if self._research_project_id and messagebox.askyesno("Проект", "Удалить рабочее пространство?", parent=self._research_window): self.research_workspace_service.delete_project(self._research_project_id); self._research_workspace = None; self._research_project_id = None; self._load_research_projects()
+    def _create_research_hypothesis(self):
+        if not self._research_project_id: return
+        title = simpledialog.askstring("Гипотеза", "Название:", parent=self._research_window); statement = simpledialog.askstring("Гипотеза", "Формулировка:", parent=self._research_window)
+        if title and statement: self.research_workspace_service.create_hypothesis(self._research_project_id, title, statement, state="Draft", people=(self.current_person_id,) if self.current_person_id else ()); self._select_research_project()
+    def _create_research_task(self):
+        if not self._research_project_id: return
+        title = simpledialog.askstring("Задача", "Название:", parent=self._research_window)
+        if title: self.research_workspace_service.create_task(self._research_project_id, title, priority="Normal", status="Backlog", people=(self.current_person_id,) if self.current_person_id else ()); self._select_research_project()
+    def _create_research_question(self):
+        text = simpledialog.askstring("Вопрос", "Открытый вопрос:", parent=self._research_window)
+        if text and self._research_project_id: self.research_workspace_service.add_question(self._research_project_id, text); self._select_research_project()
+    def _create_research_conclusion(self):
+        text = simpledialog.askstring("Вывод", "Вывод:", parent=self._research_window)
+        if text and self._research_project_id: self.research_workspace_service.add_conclusion(self._research_project_id, text); self._select_research_project()
+    def _open_research_timeline(self):
+        hypothesis = self._selected_research_hypothesis()
+        if hypothesis and hypothesis.people: self.current_person_id = hypothesis.people[0]
+        self.open_timeline_studio()
+    def _open_research_map(self):
+        hypothesis = self._selected_research_hypothesis()
+        if hypothesis and hypothesis.people: self.current_person_id = hypothesis.people[0]
+        self.open_geo_map_studio()
+    def _highlight_research_tree(self):
+        hypothesis = self._selected_research_hypothesis()
+        if hypothesis:
+            for person_id in hypothesis.people: self.highlight_tree_canvas_person(person_id)
+    def _export_research_workspace(self):
+        if not self._research_workspace: return
+        destination = filedialog.asksaveasfilename(parent=self._research_window, title="Экспорт исследования", initialdir=str(EXPORT_DIR), defaultextension=".md", filetypes=[("Markdown", "*.md"), ("HTML", "*.html"), ("PDF", "*.pdf")])
+        if destination:
+            export_format = {"md": "markdown"}.get(Path(destination).suffix.lower().lstrip("."), Path(destination).suffix.lower().lstrip("."))
+            return self._submit_repository_task("Экспорт исследования", lambda repository, _context: ResearchWorkspaceService(repository).export(self._research_workspace, destination, export_format), lambda _path: None, on_error=lambda error: messagebox.showerror("Экспорт", str(error), parent=self._research_window))
+    def _close_research_workspace(self):
+        if self._research_window is not None:
+            try: self._research_window.destroy()
+            except Exception: pass
+        self._research_window = self._research_workspace = self._research_project_tree = self._research_hypothesis_tree = self._research_task_tree = self._research_details = None; self._research_project_id = None
+
     def open_geo_map_studio(self):
         if self._geo_map_window is not None:
             try: self._geo_map_window.lift(); self._geo_map_window.focus_force(); return
@@ -4798,6 +4908,8 @@ class GenealogyViewer:
         self.timeline_studio_button.pack(side="left", padx=(10, 0))
         self.geo_map_button = tk.Button(top, text="Карта", command=self.open_geo_map_studio)
         self.geo_map_button.pack(side="left", padx=(10, 0))
+        self.research_button = tk.Button(top, text="Исследование", command=self.open_research_workspace)
+        self.research_button.pack(side="left", padx=(10, 0))
         self.source_manager_button = tk.Button(top, text="Источники", command=self.open_source_manager)
         self.source_manager_button.pack(side="left", padx=(10, 0))
         self.evidence_manager_button = tk.Button(
