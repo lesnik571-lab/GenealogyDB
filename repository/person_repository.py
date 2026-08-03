@@ -647,7 +647,7 @@ class PersonRepository:
                 data.get("description") or "",
             ),
         )
-        self.conn.commit()
+        self._commit_if_needed()
         return self.cur.lastrowid
 
     def create_person_media(self, data):
@@ -1068,7 +1068,7 @@ class PersonRepository:
                 event_id,
             ),
         )
-        self.conn.commit()
+        self._commit_if_needed()
         return self.cur.rowcount > 0
 
     def delete_person_event(self, event_id):

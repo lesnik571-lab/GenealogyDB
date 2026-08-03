@@ -28,6 +28,11 @@ from config import (
     prepare_user_environment,
 )
 from advanced_search_service import AdvancedSearchFilters, AdvancedSearchService
+from batch_operations_service import (
+    BatchOperation,
+    BatchOperationsService,
+    OPERATION_LABELS,
+)
 from data_quality_service import CATEGORY_DEFINITIONS, DataQualityService
 from database import backup_database, initialize_database, restore_database
 from family_tree_view_service import FamilyTreeModel, FamilyTreePerson, FamilyTreeViewService
@@ -54,6 +59,7 @@ from repository.person_timeline_service import PersonTimelineService
 from repository.relationship_service import RelationshipService
 from undo_manager import (
     AddPersonCommand,
+    AppliedDeltaCommand,
     DeletePersonCommand,
     EditPersonCommand,
     RecoveryUpdateCommand,
@@ -517,6 +523,12 @@ class GenealogyViewer:
         self._data_quality_issue_tree = None
         self._data_quality_severity_var = None
         self._data_quality_issue_map = {}
+        self._batch_operations_window = None
+        self._batch_operations_people_tree = None
+        self._batch_operations_preview_tree = None
+        self._batch_operations_preview = None
+        self._batch_operations_execute_button = None
+        self._batch_operations_vars = {}
         self._integrity_report_window = None
         self._integrity_report_body = None
         self._integrity_last_report = None
@@ -939,6 +951,268 @@ class GenealogyViewer:
             return
         for child in self._integrity_report_body.winfo_children():
             child.destroy()
+
+    def open_batch_operations(self):
+        if self._batch_operations_window is not None:
+            try:
+                self._batch_operations_window.lift()
+                self._batch_operations_window.focus_force()
+                return
+            except Exception:
+                self._batch_operations_window = None
+
+        window = self._create_dialog()
+        self._batch_operations_window = window
+        window.title("Пакетные операции")
+        window.geometry("1180x760")
+        window.minsize(900, 600)
+        window.protocol("WM_DELETE_WINDOW", self._close_batch_operations)
+
+        body = tk.PanedWindow(window, orient="horizontal", sashrelief="raised")
+        body.pack(fill="both", expand=True, padx=12, pady=12)
+        people_frame = tk.LabelFrame(body, text="Выбранные люди")
+        body.add(people_frame, minsize=300)
+        people_tree = ttk.Treeview(
+            people_frame,
+            columns=("id", "name", "birth"),
+            show="headings",
+            selectmode="extended",
+        )
+        for column, label, width in (
+            ("id", "ID", 60),
+            ("name", "Человек", 200),
+            ("birth", "Рождение", 100),
+        ):
+            people_tree.heading(column, text=label)
+            people_tree.column(column, width=width, anchor="w")
+        for person in self.repository.list_people_full():
+            person_id = int(person["id"])
+            name = " ".join(
+                value for value in (person.get("first_name", ""), person.get("last_name", ""))
+                if value
+            ) or "Без имени"
+            people_tree.insert(
+                "",
+                "end",
+                iid=f"batch-person-{person_id}",
+                values=(person_id, name, person.get("birth_date", "")),
+            )
+        people_tree.pack(side="left", fill="both", expand=True)
+        people_scroll = ttk.Scrollbar(people_frame, orient="vertical", command=people_tree.yview)
+        people_tree.configure(yscrollcommand=people_scroll.set)
+        people_scroll.pack(side="right", fill="y")
+        people_tree.bind("<<TreeviewSelect>>", self._invalidate_batch_preview)
+        self._batch_operations_people_tree = people_tree
+
+        right = tk.Frame(body)
+        body.add(right, minsize=580)
+        settings = tk.LabelFrame(right, text="Операция")
+        settings.pack(fill="x", pady=(0, 8))
+        self._batch_operations_vars = {
+            "operation": tk.StringVar(value=next(iter(OPERATION_LABELS.values()))),
+            "value": tk.StringVar(value=""),
+            "replacement": tk.StringVar(value=""),
+            "event_type": tk.StringVar(value="custom"),
+            "event_date": tk.StringVar(value=""),
+            "event_place": tk.StringVar(value=""),
+            "event_notes": tk.StringVar(value=""),
+        }
+        specs = (
+            ("operation", "Действие", tuple(OPERATION_LABELS.values())),
+            ("value", "Значение / найти", None),
+            ("replacement", "Заменить на", None),
+            ("event_type", "Тип события", SUPPORTED_EVENT_TYPES),
+            ("event_date", "Дата события", None),
+            ("event_place", "Место события", None),
+            ("event_notes", "Заметки события", None),
+        )
+        for row, (key, label, values) in enumerate(specs):
+            tk.Label(settings, text=f"{label}:").grid(row=row, column=0, sticky="w", padx=8, pady=3)
+            if values is None:
+                control = tk.Entry(settings, textvariable=self._batch_operations_vars[key])
+                control.bind("<KeyRelease>", self._invalidate_batch_preview)
+            else:
+                control = ttk.Combobox(
+                    settings,
+                    textvariable=self._batch_operations_vars[key],
+                    values=values,
+                    state="readonly",
+                )
+                control.bind("<<ComboboxSelected>>", self._invalidate_batch_preview)
+            control.grid(row=row, column=1, sticky="ew", padx=8, pady=3)
+        settings.grid_columnconfigure(1, weight=1)
+
+        preview_frame = tk.LabelFrame(right, text="Предварительный просмотр")
+        preview_frame.pack(fill="both", expand=True)
+        columns = ("person", "record", "field", "before", "after")
+        preview_tree = ttk.Treeview(preview_frame, columns=columns, show="headings")
+        for column, label, width in (
+            ("person", "Человек", 150),
+            ("record", "Запись", 80),
+            ("field", "Поле", 100),
+            ("before", "До", 190),
+            ("after", "После", 190),
+        ):
+            preview_tree.heading(column, text=label)
+            preview_tree.column(column, width=width, anchor="w")
+        preview_tree.pack(side="left", fill="both", expand=True)
+        preview_scroll = ttk.Scrollbar(preview_frame, orient="vertical", command=preview_tree.yview)
+        preview_tree.configure(yscrollcommand=preview_scroll.set)
+        preview_scroll.pack(side="right", fill="y")
+        self._batch_operations_preview_tree = preview_tree
+
+        controls = tk.Frame(window)
+        controls.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Button(controls, text="Предварительный просмотр", command=self._preview_batch_operations).pack(side="left")
+        execute_button = tk.Button(
+            controls,
+            text="Выполнить",
+            command=self._execute_batch_operations,
+            state="disabled",
+        )
+        execute_button.pack(side="left", padx=(8, 0))
+        tk.Button(controls, text="Закрыть", command=self._close_batch_operations).pack(side="right")
+        self._batch_operations_execute_button = execute_button
+
+        selected_person_id = self._selected_person_id()
+        if selected_person_id is not None:
+            item_id = f"batch-person-{selected_person_id}"
+            try:
+                people_tree.selection_set(item_id)
+                people_tree.see(item_id)
+            except Exception:
+                pass
+
+    def _selected_batch_person_ids(self):
+        tree = self._batch_operations_people_tree
+        if tree is None:
+            return ()
+        person_ids = []
+        for item_id in tree.selection():
+            values = tree.item(item_id).get("values", ())
+            if values:
+                person_ids.append(int(values[0]))
+        return tuple(person_ids)
+
+    def _collect_batch_operation(self):
+        labels_to_kinds = {label: kind for kind, label in OPERATION_LABELS.items()}
+        values = self._batch_operations_vars
+        kind = labels_to_kinds.get(values["operation"].get())
+        if not kind:
+            raise ValueError("Выберите пакетную операцию")
+        operation = BatchOperation(
+            kind=kind,
+            value=values["value"].get(),
+            replacement=values["replacement"].get(),
+            event_type=values["event_type"].get(),
+            event_date=values["event_date"].get(),
+            event_place=values["event_place"].get(),
+            event_notes=values["event_notes"].get(),
+        )
+        if kind == "replace_text" and not operation.value:
+            raise ValueError("Укажите текст для замены")
+        return operation
+
+    def _invalidate_batch_preview(self, _event=None):
+        self._batch_operations_preview = None
+        if self._batch_operations_execute_button is not None:
+            self._batch_operations_execute_button.config(state="disabled")
+
+    def _preview_batch_operations(self):
+        try:
+            person_ids = self._selected_batch_person_ids()
+            operation = self._collect_batch_operation()
+        except ValueError as error:
+            messagebox.showerror("Пакетные операции", str(error), parent=self._batch_operations_window)
+            return
+        return self._submit_repository_task(
+            "Предварительный просмотр пакетной операции",
+            lambda repository, _context: BatchOperationsService(repository).preview(
+                person_ids, operation
+            ),
+            self._show_batch_preview,
+            on_error=lambda error: messagebox.showerror(
+                "Пакетные операции", str(error), parent=self._batch_operations_window
+            ),
+        )
+
+    def _show_batch_preview(self, preview):
+        self._batch_operations_preview = preview
+        tree = self._batch_operations_preview_tree
+        if tree is not None:
+            for item_id in tree.get_children():
+                tree.delete(item_id)
+            for change in preview.changes:
+                record = change.record_type
+                if change.record_id is not None:
+                    record = f"{record} {change.record_id}"
+                tree.insert(
+                    "",
+                    "end",
+                    values=(
+                        change.person_name,
+                        record,
+                        change.field,
+                        change.before,
+                        change.after,
+                    ),
+                )
+        if self._batch_operations_execute_button is not None:
+            self._batch_operations_execute_button.config(
+                state="normal" if preview.changes else "disabled"
+            )
+
+    def _execute_batch_operations(self):
+        preview = self._batch_operations_preview
+        if preview is None or not preview.changes:
+            messagebox.showinfo(
+                "Пакетные операции",
+                "Сначала выполните предварительный просмотр.",
+                parent=self._batch_operations_window,
+            )
+            return
+
+        def execute(repository, context):
+            return BatchOperationsService(repository).execute(
+                preview,
+                progress_callback=lambda stage, completed, total: context.report(
+                    stage, completed, total
+                ),
+            )
+
+        return self._submit_repository_task(
+            "Пакетные операции",
+            execute,
+            self._complete_batch_operations,
+            on_error=lambda error: messagebox.showerror(
+                "Пакетные операции", str(error), parent=self._batch_operations_window
+            ),
+        )
+
+    def _complete_batch_operations(self, result):
+        self._get_undo_manager().record_applied(
+            AppliedDeltaCommand("Пакетные операции", self.repository, result.delta, result)
+        )
+        self._invalidate_batch_preview()
+        self.refresh_views()
+        messagebox.showinfo(
+            "Пакетные операции",
+            f"Изменено записей: {result.changed_records}; полей: {result.changed_fields}.",
+            parent=self._batch_operations_window,
+        )
+
+    def _close_batch_operations(self):
+        if self._batch_operations_window is not None:
+            try:
+                self._batch_operations_window.destroy()
+            except Exception:
+                pass
+        self._batch_operations_window = None
+        self._batch_operations_people_tree = None
+        self._batch_operations_preview_tree = None
+        self._batch_operations_preview = None
+        self._batch_operations_execute_button = None
+        self._batch_operations_vars = {}
 
     @staticmethod
     def _filter_data_quality_issues(report, category="all", severity="All"):
@@ -3291,6 +3565,12 @@ class GenealogyViewer:
         self.kinship_button.pack(side="left", padx=(10, 0))
         self.life_map_button = tk.Button(top, text="Карта жизни", command=self.open_life_map)
         self.life_map_button.pack(side="left", padx=(10, 0))
+        self.batch_operations_button = tk.Button(
+            top,
+            text="Пакетные операции",
+            command=self.open_batch_operations,
+        )
+        self.batch_operations_button.pack(side="left", padx=(10, 0))
         self.integrity_button = tk.Button(top, text="Проверка базы", command=self.open_integrity_report)
         self.integrity_button.pack(side="left", padx=(10, 0))
         self.data_quality_button = tk.Button(top, text="Качество данных", command=self.open_data_quality_center)

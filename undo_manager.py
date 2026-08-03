@@ -115,6 +115,26 @@ class RecoveryUpdateCommand(RepositoryDeltaCommand):
         super().__init__("Recovery Wizard change", repository, operation)
 
 
+class AppliedDeltaCommand:
+    """Undo an operation that was already committed by a worker repository."""
+
+    def __init__(self, name: str, repository: Any, delta: dict[str, TableDelta], result: Any = None) -> None:
+        self.name = name
+        self.repository = repository
+        self.delta = delta
+        self.result = result
+
+    @property
+    def has_effect(self) -> bool:
+        return bool(self.delta)
+
+    def undo(self) -> None:
+        self.repository.apply_command_delta(self.delta, use_before=True)
+
+    def redo(self) -> None:
+        self.repository.apply_command_delta(self.delta, use_before=False)
+
+
 class UndoManager:
     """Execute commands and maintain bounded undo and redo stacks."""
     def __init__(self, on_change: Callable[[], None] | None = None) -> None:
@@ -145,6 +165,13 @@ class UndoManager:
             self._redo_stack.clear()
             self._notify()
         return result
+
+    def record_applied(self, command: AppliedDeltaCommand) -> Any:
+        if command.has_effect:
+            self._undo_stack.append(command)
+            self._redo_stack.clear()
+            self._notify()
+        return command.result
 
     def undo(self) -> bool:
         if not self._undo_stack:
