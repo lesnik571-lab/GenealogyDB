@@ -64,6 +64,7 @@ from merge_service import MergeService
 from plugin_manager import PluginApp, PluginManager, ReadOnlyPluginData
 from performance_service import PerformanceService
 from recovery_wizard_service import RecoveryRecord, RecoveryWizardService
+from release_center_service import ReleaseCenterService
 from research_workspace_service import HYPOTHESIS_STATES, TASK_PRIORITIES, TASK_STATUSES, ResearchWorkspaceService
 from relationship_path_service import RelationshipPath, RelationshipPathService
 from source_service import CITATION_FIELDS, SOURCE_FIELDS, TARGET_TYPES, SourceService
@@ -456,6 +457,7 @@ class GenealogyViewer:
         self.root = root
         self._configure_ui_defaults()
         self.performance_service = PerformanceService()
+        self.release_center_service = ReleaseCenterService(database_path=self.repository.db_name)
         with self.performance_service.timer("database connection", "database"):
             self.repository = PersonRepository(DB_NAME)
         self.task_manager = TaskManager(root)
@@ -5006,6 +5008,7 @@ class GenealogyViewer:
         help_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
         self._plugin_menu_bar.add_cascade(label="Help", menu=help_menu)
         help_menu.add_command(label="User Manual", command=self._show_user_manual)
+        help_menu.add_command(label="Release Center", command=self.open_release_center)
         help_menu.add_command(label="Diagnostics", command=self._show_diagnostics)
         help_menu.add_command(label="About", command=self._show_about)
         diagnostics_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
@@ -5309,6 +5312,68 @@ class GenealogyViewer:
             plugins=getattr(self, "loaded_plugins", ()),
             services=service_names,
         )
+
+    def open_release_center(self):
+        dialog = self._create_dialog()
+        dialog.title("Release Center")
+        dialog.geometry("1040x700")
+        body = tk.Text(dialog, wrap="word")
+        body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
+
+        def refresh():
+            report = self.release_center_service.build_report(
+                plugins=getattr(self, "loaded_plugins", ()),
+                diagnostics=("Workspace Integration", "Performance Center", "Task Manager"),
+            )
+            body.config(state="normal"); body.delete("1.0", "end")
+            environment = report["environment"]
+            body.insert("end", "Release Center\n\n" + "\n".join(f"{key}: {value}" for key, value in environment.items()) + "\n\nSelf-check\n" + "\n".join(f"[{'OK' if item['passed'] else 'FAIL'}] {item['name']}: {item['detail']}" for item in report["checks"]))
+            body.config(state="disabled")
+
+        controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Button(controls, text="Обновить", command=refresh).pack(side="left")
+        tk.Button(controls, text="Markdown", command=lambda: self._export_release_report("markdown", dialog)).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="HTML", command=lambda: self._export_release_report("html", dialog)).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="ZIP", command=lambda: self._export_release_report("zip", dialog)).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Пакет release", command=lambda: self._export_release_package(dialog)).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Release Notes", command=self.open_release_notes).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Закрыть", command=dialog.destroy).pack(side="right")
+        refresh()
+
+    def _export_release_report(self, report_format, parent):
+        destination = filedialog.asksaveasfilename(parent=parent, defaultextension={"markdown": ".md", "html": ".html", "zip": ".zip"}[report_format], filetypes=[(report_format.upper(), f"*.{ {'markdown': 'md', 'html': 'html', 'zip': 'zip'}[report_format]}")])
+        if destination:
+            self.release_center_service.export_report(destination, report_format, plugins=getattr(self, "loaded_plugins", ()), diagnostics=("Workspace Integration", "Performance Center", "Task Manager"))
+
+    def _export_release_package(self, parent):
+        destination = filedialog.askdirectory(parent=parent, title="Папка release")
+        if destination:
+            self.release_center_service.export_release_package(Path(destination) / "release", plugins=getattr(self, "loaded_plugins", ()), diagnostics=("Workspace Integration", "Performance Center", "Task Manager"))
+
+    def open_release_notes(self):
+        dialog = self._create_dialog()
+        dialog.title("Release Notes")
+        dialog.geometry("900x660")
+        query = tk.StringVar(value="")
+        tk.Entry(dialog, textvariable=query).pack(fill="x", padx=12, pady=(12, 6))
+        body = tk.Text(dialog, wrap="word")
+        body.pack(fill="both", expand=True, padx=12, pady=(0, 6))
+
+        def render(_event=None):
+            lines = self.release_center_service.search_release_notes(query.get())
+            body.delete("1.0", "end"); body.insert("end", "\n".join(lines))
+
+        query.trace_add("write", render)
+        controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Button(controls, text="Копировать", command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(body.get("1.0", "end")))).pack(side="left")
+        tk.Button(controls, text="PDF", command=lambda: self._export_release_notes_pdf(dialog)).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Закрыть", command=dialog.destroy).pack(side="right")
+        render()
+
+    def _export_release_notes_pdf(self, parent):
+        destination = filedialog.asksaveasfilename(parent=parent, defaultextension=".pdf", filetypes=[("PDF", "*.pdf")])
+        if destination:
+            self.release_center_service.export_release_notes_pdf(destination)
 
     def open_performance_center(self):
         """Open read-only sidecar diagnostics; benchmarks never use the active database."""
