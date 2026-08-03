@@ -40,6 +40,7 @@ from batch_operations_service import (
 from beta_stabilization_service import BetaStabilizationService
 from beta_remediation_service import BetaRemediationService
 from collaboration_service import CollaborationService
+from project_merge_service import ProjectMergeService
 from rc_validation_service import RCValidationService
 from data_quality_service import CATEGORY_DEFINITIONS, DataQualityService
 from validation_center_service import ValidationCenterService, ValidationFixCommand
@@ -5034,6 +5035,7 @@ class GenealogyViewer:
         tools_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
         self._plugin_menu_bar.add_cascade(label="Tools", menu=tools_menu)
         tools_menu.add_command(label="Collaboration", command=self.open_collaboration)
+        tools_menu.add_command(label="Project Merge", command=self.open_project_merge)
         diagnostics_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
         self._plugin_menu_bar.add_cascade(label="Диагностика", menu=diagnostics_menu)
         diagnostics_menu.add_command(label="Производительность", command=self.open_performance_center)
@@ -5696,6 +5698,63 @@ class GenealogyViewer:
         tk.Button(controls, text="Refresh", command=refresh).pack(side="left")
         tk.Button(controls, text="Close", command=dialog.destroy).pack(side="right")
         refresh()
+
+    def open_project_merge(self):
+        dialog = self._create_dialog(); dialog.title("Project Merge"); dialog.geometry("860x560"); dialog.minsize(650, 420)
+        body = tk.Text(dialog, wrap="word"); body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
+        source = tk.StringVar(value=""); mode = tk.StringVar(value="Preview only")
+        current_preview = [None]
+        controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Entry(controls, textvariable=source, width=60).pack(side="left", fill="x", expand=True)
+        tk.Button(controls, text="Select project", command=lambda: source.set(filedialog.askopenfilename(parent=dialog, filetypes=[("GenealogyDB", "*.db")]))).pack(side="left", padx=(6, 0))
+        ttk.Combobox(controls, textvariable=mode, values=("Preview only", "Merge into current project", "Create new merged project copy"), state="readonly", width=28).pack(side="left", padx=(6, 0))
+        def preview():
+            if not source.get(): return
+            def render(result):
+                current_preview[0] = result
+                body.config(state="normal"); body.delete("1.0", "end"); body.insert("1.0", ProjectMergeService._markdown(result)); body.config(state="disabled")
+            return self._submit_repository_task("Project Merge", lambda repository, context: ProjectMergeService(repository).analyze(source.get(), mode=mode.get(), cancel_callback=context.raise_if_cancelled if context else None, progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None), render, on_error=lambda error: self._show_unified_error("Project Merge", error), cancellable=True)
+
+        def apply():
+            merge_preview = current_preview[0]
+            if merge_preview is None or merge_preview.mode == "Preview only":
+                return
+            destination = None
+            if merge_preview.mode == "Create new merged project copy":
+                destination = filedialog.asksaveasfilename(parent=dialog, defaultextension=".db", filetypes=[("GenealogyDB", "*.db")])
+                if not destination:
+                    return
+            if not messagebox.askyesno("Project Merge", "Apply the reviewed project merge? A backup will be created before any current-project change.", parent=dialog):
+                return
+            def execute(repository, context):
+                return ProjectMergeService(repository).apply(
+                    merge_preview,
+                    destination=destination,
+                    confirmed_overwrite=True,
+                    cancel_callback=context.raise_if_cancelled if context else None,
+                    progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None,
+                )
+            def complete(result):
+                if merge_preview.mode == "Merge into current project":
+                    self._get_undo_manager().record_applied(AppliedDeltaCommand("Project Merge", self.repository, result.delta, result))
+                    self.refresh_views()
+                messagebox.showinfo("Project Merge", f"Merge complete. Backup: {result.backup_path}", parent=dialog)
+            return self._submit_repository_task("Project Merge Apply", execute, complete, on_error=lambda error: self._show_unified_error("Project Merge", error), cancellable=True)
+
+        def export_report():
+            merge_preview = current_preview[0]
+            if merge_preview is None:
+                return
+            destination = filedialog.askdirectory(parent=dialog, title="Project merge report folder")
+            if destination:
+                service = ProjectMergeService(self.repository)
+                for report_format, suffix in (("json", "json"), ("markdown", "md"), ("html", "html"), ("csv", "csv")):
+                    service.export(merge_preview, Path(destination) / f"project-merge.{suffix}", report_format)
+
+        tk.Button(controls, text="Analyze", command=preview).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Apply", command=apply).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Export reports", command=export_report).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Close", command=dialog.destroy).pack(side="right")
 
     def open_release_center(self):
         dialog = self._create_dialog()
