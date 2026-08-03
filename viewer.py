@@ -41,6 +41,7 @@ from beta_stabilization_service import BetaStabilizationService
 from beta_remediation_service import BetaRemediationService
 from collaboration_service import CollaborationService
 from conflict_resolution_service import ConflictResolutionService
+from history_browser_service import HistoryBrowserService
 from project_merge_service import ProjectMergeService
 from rc_validation_service import RCValidationService
 from data_quality_service import CATEGORY_DEFINITIONS, DataQualityService
@@ -5038,6 +5039,7 @@ class GenealogyViewer:
         tools_menu.add_command(label="Collaboration", command=self.open_collaboration)
         tools_menu.add_command(label="Project Merge", command=self.open_project_merge)
         tools_menu.add_command(label="Conflict Resolution", command=self.open_conflict_resolution)
+        tools_menu.add_command(label="History Browser", command=self.open_history_browser)
         diagnostics_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
         self._plugin_menu_bar.add_cascade(label="Диагностика", menu=diagnostics_menu)
         diagnostics_menu.add_command(label="Производительность", command=self.open_performance_center)
@@ -5833,6 +5835,42 @@ class GenealogyViewer:
         tk.Button(resolution_controls, text="Apply", command=apply).pack(side="left", padx=(6, 0))
         tk.Button(resolution_controls, text="Reports", command=export_reports).pack(side="left", padx=(6, 0))
         tk.Button(controls, text="Close", command=dialog.destroy).pack(side="right")
+
+    def open_history_browser(self):
+        dialog = self._create_dialog(); dialog.title("History Browser"); dialog.geometry("980x620"); dialog.minsize(700, 460)
+        body = tk.Text(dialog, wrap="word"); body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
+        query = tk.StringVar(value=""); group = tk.StringVar(value="timeline"); selected = [None]; entries = [()]; preview = [None]
+        controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Entry(controls, textvariable=query, width=30).pack(side="left", fill="x", expand=True)
+        ttk.Combobox(controls, textvariable=group, values=("timeline", "session", "author", "entity", "category"), state="readonly", width=14).pack(side="left", padx=(6, 0))
+
+        def render(result):
+            values = tuple(item for group_entries in result.values() for item in group_entries) if isinstance(result, dict) else result
+            entries[0] = values; selected[0] = values[0] if values else None
+            body.config(state="normal"); body.delete("1.0", "end")
+            if isinstance(result, dict):
+                body.insert("1.0", "\n\n".join(f"{name}\n" + "\n".join(f"{item.entry_id} | {item.timestamp} | {item.summary}" for item in items) for name, items in result.items()))
+            else: body.insert("1.0", "\n".join(f"{item.entry_id} | {item.timestamp} | {item.category} | {item.summary}" for item in result))
+            body.config(state="disabled")
+
+        def index_history():
+            return self._submit_repository_task("History Browser", lambda repository, context: HistoryBrowserService(repository).entries(filters={"search": query.get()}, group_by=None if group.get() == "timeline" else group.get(), cancel_callback=context.raise_if_cancelled if context else None, progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None), render, on_error=lambda error: self._show_unified_error("History Browser", error), cancellable=True)
+
+        def build_preview():
+            if selected[0] is None: return
+            try:
+                preview[0] = HistoryBrowserService(self.repository).historical_preview(selected[0])
+                messagebox.showinfo("History Browser", f"Read-only historical view created: {preview[0].temporary_path}", parent=dialog)
+            except ValueError as error: self._show_unified_error("History Browser", error)
+
+        def close():
+            if preview[0] is not None: HistoryBrowserService(self.repository).close_preview(preview[0])
+            dialog.destroy()
+
+        tk.Button(controls, text="Index", command=index_history).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Historical preview", command=build_preview).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Reports", command=lambda: HistoryBrowserService(self.repository).export_all(entries[0])).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Close", command=close).pack(side="right")
 
     def open_release_center(self):
         dialog = self._create_dialog()

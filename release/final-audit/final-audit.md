@@ -5,10 +5,10 @@ Version staged: `2.0.0-beta1`
 
 | ID | Area | Status | Evidence | Reason |
 | --- | --- | --- | --- | --- |
-| viewer.interactions | Menus, toolbar buttons, and keyboard shortcuts | PASS | 347 command targets checked |  |
+| viewer.interactions | Menus, toolbar buttons, and keyboard shortcuts | PASS | 348 command targets checked |  |
 | viewer.help | Help entries have commands | PASS | entries: User Manual, Release Center, Beta Readiness, RC1 Validation, Diagnostics, About |  |
 | viewer.exports | Export entries have handlers | PASS | 46 export handlers; 39 save dialogs |  |
-| viewer.dialog-titles | Dialog titles are non-empty | PASS | 60 title calls |  |
+| viewer.dialog-titles | Dialog titles are non-empty | PASS | 61 title calls |  |
 | viewer.russian-labels | Russian labels are valid Unicode | PASS | 1522 Russian labels checked |  |
 | viewer.no-direct-sql | Viewer contains no direct SQL | PASS | AST scan |  |
 | viewer.services | Services instantiate once and remain registered | PASS | 29 startup services |  |
