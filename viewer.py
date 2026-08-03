@@ -39,6 +39,7 @@ from batch_operations_service import (
 )
 from beta_stabilization_service import BetaStabilizationService
 from beta_remediation_service import BetaRemediationService
+from collaboration_service import CollaborationService
 from rc_validation_service import RCValidationService
 from data_quality_service import CATEGORY_DEFINITIONS, DataQualityService
 from validation_center_service import ValidationCenterService, ValidationFixCommand
@@ -468,6 +469,7 @@ class GenealogyViewer:
         self.source_analysis_service = SourceAnalysisService(self.repository)
         self.beta_stabilization_service = BetaStabilizationService(self.repository)
         self.beta_remediation_service = BetaRemediationService(self.repository.db_name)
+        self.collaboration_service = CollaborationService(self.repository.db_name)
         self._intelligence_report = None
         self._intelligence_tree = None
         self._intelligence_window = None
@@ -5029,6 +5031,9 @@ class GenealogyViewer:
         help_menu.add_command(label="RC1 Validation", command=self.open_rc1_validation)
         help_menu.add_command(label="Diagnostics", command=self._show_diagnostics)
         help_menu.add_command(label="About", command=self._show_about)
+        tools_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
+        self._plugin_menu_bar.add_cascade(label="Tools", menu=tools_menu)
+        tools_menu.add_command(label="Collaboration", command=self.open_collaboration)
         diagnostics_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
         self._plugin_menu_bar.add_cascade(label="Диагностика", menu=diagnostics_menu)
         diagnostics_menu.add_command(label="Производительность", command=self.open_performance_center)
@@ -5667,6 +5672,30 @@ class GenealogyViewer:
         controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12))
         tk.Button(controls, text="Run validation", command=run).pack(side="left")
         tk.Button(controls, text="Close", command=dialog.destroy).pack(side="right")
+
+    def open_collaboration(self):
+        dialog = self._create_dialog()
+        dialog.title("Collaboration"); dialog.geometry("760x460"); dialog.minsize(600, 360)
+        body = tk.Text(dialog, wrap="word"); body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
+
+        def refresh():
+            diagnostic = self.collaboration_service.diagnostics(self.repository)
+            identity = diagnostic.project_identity
+            lines = [
+                "Local collaboration metadata", "",
+                f"Project UUID: {identity.project_uuid}", f"Dataset UUID: {identity.dataset_uuid}",
+                f"Editor: {identity.editor_identity or '-'}", f"Machine: {identity.machine_identifier or '-'}",
+                f"Edit session: {self.collaboration_service.session_id}", f"Changes: {diagnostic.change_count}",
+                f"Orphan metadata: {len(diagnostic.orphan_operation_ids)}",
+                f"Consistency issues: {', '.join(diagnostic.consistency_issues) or '-'}",
+                "", "Networking, cloud synchronization, merging, conflict resolution, and review workflows are deferred.",
+            ]
+            body.config(state="normal"); body.delete("1.0", "end"); body.insert("1.0", "\n".join(lines)); body.config(state="disabled")
+
+        controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Button(controls, text="Refresh", command=refresh).pack(side="left")
+        tk.Button(controls, text="Close", command=dialog.destroy).pack(side="right")
+        refresh()
 
     def open_release_center(self):
         dialog = self._create_dialog()

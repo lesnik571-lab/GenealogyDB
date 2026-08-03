@@ -3,7 +3,7 @@
     {
       "area": "Menus, toolbar buttons, and keyboard shortcuts",
       "check_id": "viewer.interactions",
-      "evidence": "344 command targets checked",
+      "evidence": "345 command targets checked",
       "reason": "",
       "status": "PASS"
     },
@@ -24,7 +24,7 @@
     {
       "area": "Dialog titles are non-empty",
       "check_id": "viewer.dialog-titles",
-      "evidence": "57 title calls",
+      "evidence": "58 title calls",
       "reason": "",
       "status": "PASS"
     },
@@ -45,7 +45,7 @@
     {
       "area": "Services instantiate once and remain registered",
       "check_id": "viewer.services",
-      "evidence": "28 startup services",
+      "evidence": "29 startup services",
       "reason": "",
       "status": "PASS"
     },
