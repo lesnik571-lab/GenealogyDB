@@ -3,9 +3,15 @@ import inspect
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from database import initialize_database
 from repository.person_repository import PersonRepository
-from tree_canvas_service import CARD_HEIGHT, CARD_WIDTH, MAX_ZOOM, MIN_ZOOM, TreeCanvasNavigation, TreeCanvasService
+from audit_service import AuditService
+from tree_canvas_service import (
+    CARD_HEIGHT, CARD_WIDTH, MAX_ZOOM, MIN_ZOOM, TreeCanvasChange,
+    TreeCanvasNavigation, TreeCanvasSafetyError, TreeCanvasService,
+)
 from viewer import GenealogyViewer
 
 
@@ -142,3 +148,74 @@ def test_headless_zoom_bounds_and_navigation_callbacks():
     assert viewer._tree_canvas_navigation.current == 1
     assert viewer._tree_canvas_collapsed_ids == set()
     assert calls[-1] == "load"
+
+
+def test_canvas_edit_preview_blocks_self_relationship_and_dry_run_never_writes(tmp_path):
+    repo = repository(tmp_path)
+    try:
+        add_person(repo, 1)
+        service = TreeCanvasService(repo, layout_dir=tmp_path / "layouts")
+        before = repo.capture_command_state()
+        preview = service.preview_changes([TreeCanvasChange("add_spouse", 1, 1)])
+
+        assert not preview.can_execute
+        assert "самим собой" in preview.blockers[0]
+        assert service.dry_run(preview)["can_execute"] is False
+        assert repo.capture_command_state() == before
+        with pytest.raises(TreeCanvasSafetyError):
+            service.execute_changes(preview, backup_dir=tmp_path / "backups")
+        assert repo.capture_command_state() == before
+    finally:
+        repo.close()
+
+
+def test_canvas_edit_changes_relationship_type_with_backup_and_audit(tmp_path):
+    repo = repository(tmp_path)
+    try:
+        add_person(repo, 1)
+        add_person(repo, 2)
+        family_id = family(repo, 1, 1, 2, [])
+        service = TreeCanvasService(repo, layout_dir=tmp_path / "layouts")
+        preview = service.preview_changes([
+            TreeCanvasChange("change_relationship_type", 1, 2, family_id, relationship_type="civil_partner")
+        ])
+
+        result = service.execute_changes(preview, backup_dir=tmp_path / "backups")
+
+        assert result.backup_path.exists()
+        assert repo.get_family(family_id)["relationship_type"] == "civil_partner"
+        records = AuditService.for_database(repo.db_name).list_records(service="tree_canvas_service")
+        assert any(record.service == "tree_canvas_service" for record in records)
+    finally:
+        repo.close()
+
+
+def test_canvas_edit_blocks_parent_removal_that_would_leave_children_in_partial_family(tmp_path):
+    repo = repository(tmp_path)
+    try:
+        for index in range(1, 4):
+            add_person(repo, index)
+        family_id = family(repo, 1, 1, 2, [3])
+        preview = TreeCanvasService(repo).preview_changes([
+            TreeCanvasChange("remove_relationship", 1, 2, family_id)
+        ])
+
+        assert not preview.can_execute
+        assert "неполную семью" in preview.blockers[0]
+    finally:
+        repo.close()
+
+
+def test_viewer_tree_canvas_editing_controls_are_preview_first_and_headless_safe():
+    opening = inspect.getsource(GenealogyViewer.open_tree_canvas)
+    drawing = inspect.getsource(GenealogyViewer._draw_tree_canvas)
+    closing = inspect.getsource(GenealogyViewer._close_tree_canvas)
+    menu = inspect.getsource(GenealogyViewer._tree_canvas_context_menu)
+
+    assert 'value="Просмотр"' in opening
+    assert '"Просмотр", "Редактирование"' in opening
+    for label in ("Добавить родителя", "Добавить ребёнка", "Добавить супруга", "Добавить партнёра", "Удалить связь", "Открыть карточку"):
+        assert f'label="{label}"' in menu
+    assert "tree-canvas-connector" in drawing
+    assert "Отменить неподтверждённые изменения?" in closing
+    assert "repository.conn" not in opening + drawing + menu

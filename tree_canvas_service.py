@@ -12,8 +12,12 @@ from typing import Callable, Iterable
 from xml.sax.saxutils import escape
 
 from config import DATA_DIR
-from graph_editor_service import GraphEditorService, GraphEdge, GraphFamily, GraphModel
+from audit_service import AuditService
+from database import backup_database
+from graph_editor_service import GraphEditorService, GraphModification
 from repository.person_repository import PersonRepository
+from repository.relationship_service import RelationshipService
+from undo_manager import RepositoryDeltaCommand, TableDelta
 
 
 LAYOUT_MODES = ("top_to_bottom", "left_to_right", "ancestors_only", "descendants_only", "hourglass")
@@ -23,6 +27,10 @@ H_GAP = 48
 V_GAP = 78
 MIN_ZOOM = 0.35
 MAX_ZOOM = 2.5
+EDIT_KINDS = (
+    "add_parent", "add_child", "add_spouse", "add_partner", "remove_relationship",
+    "reassign_child", "replace_parent", "change_relationship_type",
+)
 
 
 @dataclass(frozen=True)
@@ -59,6 +67,45 @@ class TreeCanvasModel:
     ancestor_depth: int
     descendant_depth: int
     collapsed_ids: frozenset[int]
+
+
+@dataclass(frozen=True)
+class TreeCanvasChange:
+    kind: str
+    source_id: int
+    target_id: int = 0
+    family_id: int = 0
+    parent_role: str = "father"
+    other_parent_id: int = 0
+    old_parent_id: int = 0
+    relationship_type: str = "unknown"
+
+
+@dataclass(frozen=True)
+class TreeCanvasEditPreview:
+    changes: tuple[TreeCanvasChange, ...]
+    source_fingerprint: tuple
+    affected_families: tuple[dict, ...]
+    links_to_create: tuple[str, ...]
+    links_to_remove: tuple[str, ...]
+    warnings: tuple[str, ...]
+    blockers: tuple[str, ...]
+
+    @property
+    def can_execute(self):
+        return not self.blockers
+
+
+@dataclass(frozen=True)
+class TreeCanvasExecutionResult:
+    delta: dict[str, TableDelta]
+    backup_path: Path
+    changes: tuple[TreeCanvasChange, ...]
+    descriptions: tuple[str, ...]
+
+
+class TreeCanvasSafetyError(ValueError):
+    """Raised when a pending canvas relationship change is unsafe."""
 
 
 class TreeCanvasNavigation:
@@ -106,6 +153,83 @@ class TreeCanvasService:
     def __init__(self, repository: PersonRepository, *, layout_dir=None) -> None:
         self.repository = repository
         self.layout_dir = Path(layout_dir or DATA_DIR / "tree_layouts")
+        self.relationships = RelationshipService(repository)
+
+    def preview_changes(self, changes) -> TreeCanvasEditPreview:
+        normalized = tuple(self._normalize_change(change) for change in changes)
+        if not normalized:
+            raise ValueError("Нет изменений связей для проверки")
+        graph_service = GraphEditorService(self.repository)
+        graph = graph_service.build_graph()
+        people = {node.person_id for node in graph.nodes}
+        families = {family.family_id: family for family in graph.families}
+        blockers, warnings, create, remove, affected = [], [], [], [], []
+        graph_changes = []
+        for change in normalized:
+            try:
+                self._validate_change(change, people, families, graph)
+                graph_change = self._graph_change(change, families)
+                if graph_change is not None:
+                    graph_changes.append(graph_change)
+                create.extend(self._created_links(change))
+                remove.extend(self._removed_links(change))
+                if change.family_id and change.family_id in families:
+                    affected.append(self._family_summary(families[change.family_id]))
+            except TreeCanvasSafetyError as error:
+                blockers.append(str(error))
+        if not blockers and graph_changes:
+            graph_preview = graph_service.preview(graph_changes)
+            blockers.extend(graph_preview.blockers)
+            warnings.extend(issue.description for issue in graph_preview.after.issues if issue.kind == "orphan")
+        return TreeCanvasEditPreview(
+            normalized, self._graph_fingerprint(graph), tuple(
+                {item["id"]: item for item in affected}.values()
+            ),
+            tuple(create), tuple(remove), tuple(dict.fromkeys(warnings)), tuple(dict.fromkeys(blockers)),
+        )
+
+    def execute_changes(self, preview: TreeCanvasEditPreview, *, backup_dir=None, dry_run=False) -> TreeCanvasExecutionResult | dict:
+        if dry_run:
+            return self.dry_run(preview)
+        if preview.blockers:
+            raise TreeCanvasSafetyError("; ".join(preview.blockers))
+        graph = GraphEditorService(self.repository).build_graph()
+        if self._graph_fingerprint(graph) != preview.source_fingerprint:
+            raise RuntimeError("Связи изменились после предварительного просмотра")
+        backup_path = backup_database(self.repository.db_name, backup_dir or DATA_DIR / "backups")
+        before = self.repository.capture_command_state()
+        descriptions = []
+        try:
+            with self.repository.transaction():
+                for change in preview.changes:
+                    descriptions.append(self._apply_change(change))
+        except Exception:
+            raise
+        after = self.repository.capture_command_state()
+        delta = RepositoryDeltaCommand._build_delta(before, after)
+        AuditService.for_database(self.repository.db_name).record_delta(
+            "relationship_change", delta,
+            database_id=tuple(dict.fromkeys(value for change in preview.changes for value in (change.source_id, change.target_id) if value)),
+            description=" ".join(descriptions), service="tree_canvas_service",
+            batch_id="canvas" if len(preview.changes) > 1 else "",
+        )
+        return TreeCanvasExecutionResult(delta, backup_path, preview.changes, tuple(descriptions))
+
+    def dry_run(self, preview: TreeCanvasEditPreview):
+        return {
+            "changes": [change.__dict__ for change in preview.changes],
+            "affected_families": list(preview.affected_families),
+            "links_to_create": list(preview.links_to_create),
+            "links_to_remove": list(preview.links_to_remove),
+            "warnings": list(preview.warnings), "blockers": list(preview.blockers),
+            "can_execute": preview.can_execute,
+        }
+
+    def export_preview_json(self, preview: TreeCanvasEditPreview, destination_path) -> Path:
+        destination = Path(destination_path).expanduser()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(self.dry_run(preview), ensure_ascii=False, indent=2), encoding="utf-8")
+        return destination
 
     def build(
         self,
@@ -338,6 +462,138 @@ class TreeCanvasService:
             return {int(item["left_id"]) for item in self.repository.find_duplicate_candidates()} | {int(item["right_id"]) for item in self.repository.find_duplicate_candidates()}
         except Exception:
             return set()
+
+    def _validate_change(self, change, people, families, graph):
+        if change.kind not in EDIT_KINDS:
+            raise TreeCanvasSafetyError("Неподдерживаемое изменение полотна")
+        if change.source_id not in people or (change.target_id and change.target_id not in people):
+            raise TreeCanvasSafetyError("Исходный или целевой человек больше не существует")
+        if change.kind in {"add_parent", "add_child", "add_spouse", "add_partner"} and change.source_id == change.target_id:
+            raise TreeCanvasSafetyError("Нельзя создать связь человека с самим собой")
+        if change.kind in {"add_spouse", "add_partner"}:
+            if self._is_ancestor_or_descendant(change.source_id, change.target_id, graph):
+                raise TreeCanvasSafetyError("Нельзя создать супружескую связь между предком и потомком")
+            if change.relationship_type not in RelationshipService.RELATIONSHIP_TYPES:
+                raise TreeCanvasSafetyError("Неподдерживаемый тип отношений")
+        if change.kind in {"remove_relationship", "reassign_child", "replace_parent", "change_relationship_type"}:
+            family = families.get(change.family_id)
+            if family is None:
+                raise TreeCanvasSafetyError("Семья для изменения не найдена")
+            if change.kind == "remove_relationship":
+                if change.source_id not in (family.husband_id, family.wife_id, *family.child_ids):
+                    raise TreeCanvasSafetyError("Выбранная связь больше не существует")
+                if change.target_id and change.target_id not in (family.husband_id, family.wife_id, *family.child_ids):
+                    raise TreeCanvasSafetyError("Целевая связь больше не существует")
+                if change.source_id in (family.husband_id, family.wife_id) and family.child_ids:
+                    raise TreeCanvasSafetyError("Удаление оставит недопустимую неполную семью с детьми")
+            if change.kind == "reassign_child" and change.source_id not in family.child_ids:
+                raise TreeCanvasSafetyError("Ребёнок не состоит в исходной семье")
+            if change.kind == "replace_parent":
+                if change.source_id not in family.child_ids or change.old_parent_id not in (family.husband_id, family.wife_id):
+                    raise TreeCanvasSafetyError("Исходная родительская связь не найдена")
+                if change.target_id == change.source_id:
+                    raise TreeCanvasSafetyError("Человек не может быть собственным родителем")
+            if change.kind == "change_relationship_type" and change.relationship_type not in RelationshipService.RELATIONSHIP_TYPES:
+                raise TreeCanvasSafetyError("Неподдерживаемый тип отношений")
+        if change.kind == "add_parent" and self._would_cycle(change.target_id, change.source_id, graph):
+            raise TreeCanvasSafetyError("Добавление родителя создаёт цикл родословной")
+        if change.kind == "add_child" and self._would_cycle(change.source_id, change.target_id, graph):
+            raise TreeCanvasSafetyError("Добавление ребёнка создаёт цикл родословной")
+        if change.kind == "replace_parent" and self._would_cycle(change.target_id, change.source_id, graph, exclude_family=change.family_id):
+            raise TreeCanvasSafetyError("Замена родителя создаёт цикл родословной")
+
+    def _graph_change(self, change, families):
+        if change.kind == "add_parent":
+            return GraphModification("link_parent", change.source_id, change.target_id, role=change.parent_role, relationship_type=change.relationship_type)
+        if change.kind == "add_child":
+            return GraphModification("link_parent", change.target_id, change.source_id, role=change.parent_role, other_parent_id=change.other_parent_id, relationship_type=change.relationship_type)
+        if change.kind in {"add_spouse", "add_partner"}:
+            return GraphModification("add_spouse", change.source_id, change.target_id, relationship_type=("civil_partner" if change.kind == "add_partner" else change.relationship_type or "marriage"))
+        if change.kind == "reassign_child":
+            return GraphModification("reattach_child", change.source_id, change.target_id, family_id=change.family_id, role=change.parent_role, other_parent_id=change.other_parent_id, relationship_type=change.relationship_type)
+        if change.kind == "replace_parent":
+            return GraphModification("change_parent", change.source_id, change.target_id, family_id=change.family_id, role=change.parent_role, old_parent_id=change.old_parent_id)
+        if change.kind == "change_relationship_type":
+            return None
+        family = families[change.family_id]
+        if change.source_id in family.child_ids:
+            parent = family.husband_id or family.wife_id
+            return GraphModification("remove_parent", change.source_id, parent or 0, family_id=change.family_id, role="father" if family.husband_id else "mother")
+        return GraphModification("remove_spouse", change.source_id, family_id=change.family_id)
+
+    def _apply_change(self, change):
+        if change.kind == "add_parent":
+            self.relationships.link_parent(change.source_id, change.target_id, change.parent_role)
+            return f"Добавлен родитель ID {change.target_id} для ID {change.source_id}."
+        if change.kind == "add_child":
+            self.relationships.link_child(change.source_id, change.target_id, change.other_parent_id, change.relationship_type)
+            return f"Добавлен ребёнок ID {change.target_id} для ID {change.source_id}."
+        if change.kind in {"add_spouse", "add_partner"}:
+            relationship_type = "civil_partner" if change.kind == "add_partner" else (change.relationship_type or "marriage")
+            self.relationships.link_partner(change.source_id, change.target_id, relationship_type)
+            return f"Добавлена партнёрская связь ID {change.source_id} и ID {change.target_id}."
+        if change.kind == "reassign_child":
+            self.relationships.remove_child_link(change.family_id, change.source_id)
+            self.relationships.link_child(change.target_id, change.source_id, change.other_parent_id, change.relationship_type)
+            return f"Ребёнок ID {change.source_id} перепривязан к ID {change.target_id}."
+        if change.kind == "replace_parent":
+            self.relationships.remove_parent_link(change.source_id, change.family_id, change.parent_role)
+            self.relationships.link_parent(change.source_id, change.target_id, change.parent_role)
+            return f"Родитель ID {change.old_parent_id} заменён на ID {change.target_id}."
+        family = self.repository.get_family(change.family_id)
+        if family is None:
+            raise TreeCanvasSafetyError("Семья для изменения не найдена")
+        if change.kind == "change_relationship_type":
+            self.relationships.update_family(change.family_id, family.get("husband", ""), family.get("wife", ""), family.get("children", []), change.relationship_type)
+            return f"Изменён тип отношений семьи ID {change.family_id}."
+        if change.source_id in family.get("children", []):
+            self.relationships.remove_child_link(change.family_id, change.source_id)
+        else:
+            self.relationships.remove_partner_link(change.source_id, change.family_id)
+        return f"Удалена связь в семье ID {change.family_id}."
+
+    @staticmethod
+    def _normalize_change(change):
+        if isinstance(change, TreeCanvasChange):
+            return change
+        if isinstance(change, dict):
+            return TreeCanvasChange(**change)
+        raise TypeError("Изменение полотна должно быть TreeCanvasChange или dict")
+
+    @staticmethod
+    def _family_summary(family):
+        return {"id": family.family_id, "gedcom_id": family.gedcom_id, "relationship_type": family.relationship_type, "parents": tuple(value for value in (family.husband_id, family.wife_id) if value), "children": family.child_ids}
+
+    @staticmethod
+    def _created_links(change):
+        return (f"{change.kind}: {change.source_id} -> {change.target_id}",) if change.kind != "remove_relationship" else ()
+
+    @staticmethod
+    def _removed_links(change):
+        return (f"remove: {change.source_id} -> {change.target_id or change.family_id}",) if change.kind in {"remove_relationship", "reassign_child", "replace_parent"} else ()
+
+    @staticmethod
+    def _graph_fingerprint(graph):
+        return tuple((family.family_id, family.husband_id, family.wife_id, family.child_ids, family.relationship_type) for family in graph.families)
+
+    @staticmethod
+    def _would_cycle(parent_id, child_id, graph, exclude_family=0):
+        children = defaultdict(set)
+        for edge in graph.edges:
+            if edge.kind == "parent" and edge.family_id != exclude_family:
+                children[edge.source_id].add(edge.target_id)
+        stack, seen = [child_id], set()
+        while stack:
+            current = stack.pop()
+            if current == parent_id:
+                return True
+            if current not in seen:
+                seen.add(current)
+                stack.extend(children[current])
+        return False
+
+    def _is_ancestor_or_descendant(self, first, second, graph):
+        return self._would_cycle(first, second, graph) or self._would_cycle(second, first, graph)
 
     def _layout_path(self, center_id):
         return self.layout_dir / f"tree_{int(center_id)}.json"

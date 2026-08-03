@@ -69,7 +69,9 @@ from tree_canvas_service import (
     CARD_WIDTH,
     MAX_ZOOM as TREE_CANVAS_MAX_ZOOM,
     MIN_ZOOM as TREE_CANVAS_MIN_ZOOM,
+    TreeCanvasChange,
     TreeCanvasNavigation,
+    TreeCanvasSafetyError,
     TreeCanvasService,
 )
 from repository import PersonRepository
@@ -5267,10 +5269,35 @@ class GenealogyViewer:
         self._tree_canvas_positions = {}
         self._tree_canvas_collapsed_ids = set()
         self._tree_canvas_zoom = 1.0
+        self._tree_canvas_edit_mode_var = tk.StringVar(value="Просмотр")
+        self._tree_canvas_edit_action_var = tk.StringVar(value="add_parent")
+        self._tree_canvas_relationship_type_var = tk.StringVar(value="marriage")
+        self._tree_canvas_pending_changes = []
+        self._tree_canvas_edit_source_id = None
+        self._tree_canvas_selected_connector = None
+        self._tree_canvas_pending_list = None
         toolbar = tk.Frame(window)
         toolbar.pack(fill="x", padx=12, pady=(12, 6))
         tk.Button(toolbar, text="Назад", command=self._tree_canvas_back).pack(side="left")
         tk.Button(toolbar, text="Вперёд", command=self._tree_canvas_forward).pack(side="left", padx=(4, 0))
+        tk.Label(toolbar, text="Режим").pack(side="left", padx=(14, 3))
+        ttk.Combobox(
+            toolbar, textvariable=self._tree_canvas_edit_mode_var,
+            values=("Просмотр", "Редактирование"), state="readonly", width=16,
+        ).pack(side="left")
+        tk.Label(toolbar, text="Действие").pack(side="left", padx=(8, 3))
+        ttk.Combobox(
+            toolbar, textvariable=self._tree_canvas_edit_action_var,
+            values=(
+                "add_parent", "add_child", "add_spouse", "add_partner",
+                "remove_relationship", "reassign_child", "replace_parent", "change_relationship_type",
+            ),
+            state="readonly", width=14,
+        ).pack(side="left")
+        ttk.Combobox(
+            toolbar, textvariable=self._tree_canvas_relationship_type_var,
+            values=RelationshipService.RELATIONSHIP_TYPES, state="readonly", width=14,
+        ).pack(side="left", padx=(4, 0))
         tk.Label(toolbar, text="Предки").pack(side="left", padx=(14, 3))
         self._tree_canvas_ancestor_var = tk.StringVar(value="3")
         ttk.Combobox(toolbar, textvariable=self._tree_canvas_ancestor_var, values=tuple(str(value) for value in range(1, 9)), state="readonly", width=3).pack(side="left")
@@ -5288,6 +5315,7 @@ class GenealogyViewer:
         tk.Button(toolbar, text="SVG", command=lambda: self._export_tree_canvas("svg")).pack(side="left", padx=(12, 0))
         tk.Button(toolbar, text="PNG", command=lambda: self._export_tree_canvas("png")).pack(side="left", padx=(4, 0))
         tk.Button(toolbar, text="PDF", command=lambda: self._export_tree_canvas("pdf")).pack(side="left", padx=(4, 0))
+        tk.Button(toolbar, text="JSON", command=self._export_tree_canvas_preview).pack(side="left", padx=(4, 0))
         self._tree_canvas_status = tk.Label(toolbar, text="")
         self._tree_canvas_status.pack(side="right")
         frame = tk.Frame(window)
@@ -5305,6 +5333,16 @@ class GenealogyViewer:
         canvas.bind("<MouseWheel>", self._tree_canvas_mousewheel)
         canvas.bind("<ButtonPress-2>", self._start_tree_canvas_pan)
         canvas.bind("<B2-Motion>", self._pan_tree_canvas)
+        pending = tk.Frame(window)
+        pending.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Label(pending, text="Неподтверждённые изменения").pack(anchor="w")
+        self._tree_canvas_pending_list = tk.Listbox(pending, height=3)
+        self._tree_canvas_pending_list.pack(side="left", fill="x", expand=True, pady=(4, 0))
+        controls = tk.Frame(pending)
+        controls.pack(side="right", padx=(8, 0), pady=(4, 0))
+        tk.Button(controls, text="Применить", command=self._preview_tree_canvas_changes).pack(fill="x")
+        tk.Button(controls, text="Отменить", command=self._cancel_tree_canvas_change).pack(fill="x", pady=(3, 0))
+        tk.Button(controls, text="Очистить все", command=self._clear_tree_canvas_changes).pack(fill="x", pady=(3, 0))
         self._load_tree_canvas()
 
     def _load_tree_canvas(self) -> None:
@@ -5353,7 +5391,13 @@ class GenealogyViewer:
                 points = ((source[0] + CARD_WIDTH / 2) * zoom, (source[1] + CARD_HEIGHT) * zoom, (source[0] + CARD_WIDTH / 2) * zoom, ((source[1] + CARD_HEIGHT + target[1]) / 2) * zoom, (target[0] + CARD_WIDTH / 2) * zoom, ((source[1] + CARD_HEIGHT + target[1]) / 2) * zoom, (target[0] + CARD_WIDTH / 2) * zoom, target[1] * zoom)
             else:
                 points = ((source[0] + CARD_WIDTH) * zoom, (source[1] + CARD_HEIGHT / 2) * zoom, target[0] * zoom, (target[1] + CARD_HEIGHT / 2) * zoom)
-            canvas.create_line(*points, fill="#8c4b19" if connector.special else "#5e7180", width=2, dash=(7, 4) if connector.special else (), arrow="last" if connector.kind == "parent" else "both")
+            tag = f"tree-canvas-connector:{connector.key}"
+            canvas.create_line(
+                *points, fill="#8c4b19" if connector.special else "#5e7180", width=2,
+                dash=(7, 4) if connector.special else (),
+                arrow="last" if connector.kind == "parent" else "both", tags=(tag,),
+            )
+            canvas.tag_bind(tag, "<Button-1>", lambda _event, item=connector: self._select_tree_canvas_connector(item))
         for node in model.nodes:
             x, y = self._tree_canvas_positions[node.person_id]
             left, top = x * zoom, y * zoom
@@ -5377,13 +5421,146 @@ class GenealogyViewer:
             canvas.tag_bind(tag, "<B1-Motion>", self._drag_tree_canvas_card)
             canvas.tag_bind(tag, "<ButtonRelease-1>", self._finish_tree_canvas_drag)
             canvas.tag_bind(tag, "<Double-1>", lambda _event, person_id=node.person_id: self._visit_tree_canvas_person(person_id))
-            canvas.tag_bind(tag, "<Button-3>", lambda _event, person_id=node.person_id: self._toggle_tree_canvas_branch(person_id))
+            canvas.tag_bind(tag, "<Button-3>", lambda event, person_id=node.person_id: self._tree_canvas_context_menu(event, person_id))
         self._tree_canvas_bounds = bounds
         maximum_x = max((position[0] for position in self._tree_canvas_positions.values()), default=800) + CARD_WIDTH + 100
         maximum_y = max((position[1] for position in self._tree_canvas_positions.values()), default=600) + CARD_HEIGHT + 100
         canvas.configure(scrollregion=(0, 0, maximum_x * zoom, maximum_y * zoom))
 
+    def _select_tree_canvas_person(self, person_id) -> None:
+        if self._tree_canvas_edit_source_id is None:
+            self._tree_canvas_edit_source_id = person_id
+            self._tree_canvas_status.config(text=f"Источник изменения: ID {person_id}")
+            return
+        if person_id == self._tree_canvas_edit_source_id:
+            self._tree_canvas_edit_source_id = None
+            self._tree_canvas_status.config(text="Источник изменения снят")
+            return
+        change = TreeCanvasChange(
+            self._tree_canvas_edit_action_var.get(), self._tree_canvas_edit_source_id, person_id,
+            family_id=(self._tree_canvas_selected_connector.family_id if self._tree_canvas_selected_connector else 0),
+            old_parent_id=(self._tree_canvas_selected_connector.source_id if self._tree_canvas_selected_connector else 0),
+            relationship_type=self._tree_canvas_relationship_type_var.get(),
+        )
+        self._tree_canvas_pending_changes.append(change)
+        self._tree_canvas_edit_source_id = None
+        self._refresh_tree_canvas_pending_changes()
+
+    def _select_tree_canvas_connector(self, connector) -> None:
+        self._tree_canvas_selected_connector = connector
+        self._tree_canvas_status.config(
+            text=(f"Связь: {connector.relationship_type} | семья ID {connector.family_id} | "
+                  f"{connector.source_id} -> {connector.target_id}")
+        )
+
+    def _tree_canvas_context_menu(self, event, person_id) -> None:
+        menu = tk.Menu(self._tree_canvas_window, tearoff=0)
+        menu.add_command(label="Добавить родителя", command=lambda: self._begin_tree_canvas_context_change(person_id, "add_parent"))
+        menu.add_command(label="Добавить ребёнка", command=lambda: self._begin_tree_canvas_context_change(person_id, "add_child"))
+        menu.add_command(label="Добавить супруга", command=lambda: self._begin_tree_canvas_context_change(person_id, "add_spouse"))
+        menu.add_command(label="Добавить партнёра", command=lambda: self._begin_tree_canvas_context_change(person_id, "add_partner"))
+        menu.add_command(label="Удалить связь", command=self._queue_tree_canvas_connector_removal)
+        menu.add_command(label="Открыть карточку", command=lambda: self.show_person(person_id))
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _begin_tree_canvas_context_change(self, person_id, action) -> None:
+        self._tree_canvas_edit_mode_var.set("Редактирование")
+        self._tree_canvas_edit_action_var.set(action)
+        self._tree_canvas_edit_source_id = person_id
+        self._tree_canvas_status.config(text=f"Источник ID {person_id}; выберите целевую карточку")
+
+    def _queue_tree_canvas_connector_removal(self) -> None:
+        connector = self._tree_canvas_selected_connector
+        if connector is None:
+            messagebox.showwarning("Интерактивное полотно", "Сначала выберите линию связи.", parent=self._tree_canvas_window)
+            return
+        self._tree_canvas_pending_changes.append(TreeCanvasChange(
+            "remove_relationship", connector.source_id, connector.target_id, connector.family_id,
+        ))
+        self._refresh_tree_canvas_pending_changes()
+
+    def _refresh_tree_canvas_pending_changes(self) -> None:
+        pending = self._tree_canvas_pending_list
+        if pending is not None:
+            pending.delete(0, tk.END)
+            for change in self._tree_canvas_pending_changes:
+                pending.insert("end", f"{change.kind}: ID {change.source_id} -> ID {change.target_id}")
+        if self._tree_canvas_status is not None:
+            self._tree_canvas_status.config(text=f"Неподтверждённых изменений: {len(self._tree_canvas_pending_changes)}")
+
+    def _cancel_tree_canvas_change(self) -> None:
+        if self._tree_canvas_pending_changes:
+            self._tree_canvas_pending_changes.pop()
+        self._tree_canvas_edit_source_id = None
+        self._refresh_tree_canvas_pending_changes()
+
+    def _clear_tree_canvas_changes(self) -> None:
+        self._tree_canvas_pending_changes.clear()
+        self._tree_canvas_edit_source_id = None
+        self._refresh_tree_canvas_pending_changes()
+
+    def _preview_tree_canvas_changes(self) -> None:
+        changes = tuple(self._tree_canvas_pending_changes)
+        if not changes:
+            return
+        return self._submit_repository_task(
+            "Проверка изменений полотна", lambda repository, _context: TreeCanvasService(repository).preview_changes(changes),
+            self._show_tree_canvas_preview,
+            on_error=lambda error: messagebox.showerror("Интерактивное полотно", str(error), parent=self._tree_canvas_window),
+            cancellable=True,
+        )
+
+    def _show_tree_canvas_preview(self, preview) -> None:
+        details = [
+            "Операции:", *[f"- {change.kind}: {change.source_id} -> {change.target_id}" for change in preview.changes],
+            "Добавляется:", *[f"- {item}" for item in preview.links_to_create],
+            "Удаляется:", *[f"- {item}" for item in preview.links_to_remove],
+        ]
+        if preview.warnings:
+            details.extend(("Предупреждения:", *[f"- {item}" for item in preview.warnings]))
+        if preview.blockers:
+            details.extend(("Блокировки:", *[f"- {item}" for item in preview.blockers]))
+            messagebox.showwarning("Предпросмотр изменений", "\n".join(details), parent=self._tree_canvas_window)
+            return
+        if messagebox.askyesno("Предпросмотр изменений", "\n".join(details) + "\n\nПодтвердить изменения?", parent=self._tree_canvas_window):
+            self._execute_tree_canvas_preview(preview)
+
+    def _execute_tree_canvas_preview(self, preview) -> None:
+        return self._submit_repository_task(
+            "Применение изменений полотна", lambda repository, _context: TreeCanvasService(repository).execute_changes(preview),
+            self._complete_tree_canvas_changes,
+            on_error=lambda error: messagebox.showerror("Интерактивное полотно", str(error), parent=self._tree_canvas_window),
+        )
+
+    def _complete_tree_canvas_changes(self, result) -> None:
+        self._get_undo_manager().record_applied(
+            AppliedDeltaCommand("Изменения интерактивного полотна", self.repository, result.delta, result)
+        )
+        self._clear_tree_canvas_changes()
+        self._load_tree_canvas()
+
+    def _export_tree_canvas_preview(self) -> None:
+        if not self._tree_canvas_pending_changes:
+            return
+        destination = filedialog.asksaveasfilename(
+            parent=self._tree_canvas_window, title="Экспорт предпросмотра", initialdir=str(EXPORT_DIR),
+            initialfile="tree_canvas_preview.json", defaultextension=".json", filetypes=[("JSON", "*.json")],
+        )
+        if not destination:
+            return
+        changes = tuple(self._tree_canvas_pending_changes)
+        return self._submit_repository_task(
+            "Экспорт предпросмотра полотна",
+            lambda repository, _context: TreeCanvasService(repository).export_preview_json(
+                TreeCanvasService(repository).preview_changes(changes), destination,
+            ), lambda _path: None,
+            on_error=lambda error: messagebox.showerror("Экспорт предпросмотра", str(error), parent=self._tree_canvas_window),
+        )
+
     def _start_tree_canvas_drag(self, event, person_id) -> None:
+        if self._tree_canvas_edit_mode_var.get() == "Редактирование":
+            self._select_tree_canvas_person(person_id)
+            return
         x, y = self._tree_canvas.canvasx(event.x), self._tree_canvas.canvasy(event.y)
         position = self._tree_canvas_positions[person_id]
         self._tree_canvas_drag = (person_id, x / self._tree_canvas_zoom - position[0], y / self._tree_canvas_zoom - position[1])
@@ -5467,6 +5644,10 @@ class GenealogyViewer:
         return self._submit_repository_task("Экспорт полотна дерева", lambda repository, _context: getattr(TreeCanvasService(repository), f"export_{export_format}")(model, destination, scale=self._tree_canvas_zoom), lambda _path: None, on_error=lambda error: messagebox.showerror("Экспорт полотна", str(error), parent=self._tree_canvas_window))
 
     def _close_tree_canvas(self) -> None:
+        if self._tree_canvas_pending_changes and not messagebox.askyesno(
+            "Интерактивное полотно", "Отменить неподтверждённые изменения?", parent=self._tree_canvas_window,
+        ):
+            return
         if self._tree_canvas_window is not None:
             try:
                 self._tree_canvas_window.destroy()
@@ -5476,6 +5657,8 @@ class GenealogyViewer:
         self._tree_canvas = None
         self._tree_canvas_model = None
         self._tree_canvas_navigation = None
+        self._tree_canvas_pending_changes = []
+        self._tree_canvas_edit_source_id = None
 
     def _load_graph_editor(self):
         return self._submit_repository_task(
