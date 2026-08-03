@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import re
+import uuid
 from dataclasses import dataclass
 from typing import Any, Callable
 
 from logging_service import get_logger
+from audit_service import AuditService
 from repository.person_repository import PersonRepository
 from undo_manager import RepositoryDeltaCommand, TableDelta
 
@@ -127,6 +129,16 @@ class BatchOperationsService:
         after_state = self.repository.capture_command_state()
         delta = RepositoryDeltaCommand._build_delta(before_state, after_state)
         result = BatchExecutionResult(preview.affected_records, len(preview.changes), delta)
+        people = [self.repository.get_person_record(person_id) for person_id in preview.person_ids]
+        AuditService.for_database(self.repository.db_name).record_delta(
+            "batch_operations",
+            delta,
+            database_id=preview.person_ids,
+            gedcom_id=tuple(person["gedcom_id"] for person in people if person and person["gedcom_id"]),
+            description=f"Пакетная операция: {OPERATION_LABELS[preview.operation.kind]}.",
+            service="batch_operations_service",
+            batch_id=uuid.uuid4().hex,
+        )
         self.logger.info(
             "Batch operation completed: operation=%s records=%s fields=%s",
             preview.operation.kind,

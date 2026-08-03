@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from audit_service import AuditService
 from repository.person_repository import PersonRepository
 
 
@@ -140,6 +141,7 @@ class RelationshipPlaceholderRepairService:
     def apply_repair_plan(self, plan: dict[str, Any], fail_after_changes: int | None = None) -> dict[str, Any]:
         changes = list(plan.get("changes", []))
         applied_count = 0
+        before_state = self.repository.capture_command_state()
 
         with self.repository.transaction():
             for change in changes:
@@ -164,7 +166,7 @@ class RelationshipPlaceholderRepairService:
                 if fail_after_changes is not None and applied_count >= fail_after_changes:
                     raise RuntimeError("forced failure to verify rollback")
 
-        return {
+        result = {
             "applied_changes": applied_count,
             "changes": changes,
             "repaired_placeholders": [
@@ -176,6 +178,25 @@ class RelationshipPlaceholderRepairService:
                 for entry in plan.get("repairs", [])
             ],
         }
+        after_state = self.repository.capture_command_state()
+        repaired = result["repaired_placeholders"]
+        repaired_people = [
+            self.repository.get_person_record(item["replacement_id"])
+            for item in repaired
+        ]
+        AuditService.for_database(self.repository.db_name).record_state_change(
+            "placeholder_repair",
+            before_state,
+            after_state,
+            database_id=tuple(item["replacement_id"] for item in repaired),
+            gedcom_id=tuple(
+                person["gedcom_id"] for person in repaired_people
+                if person and person["gedcom_id"]
+            ),
+            description=f"Исправлено ссылок-заполнителей: {applied_count}.",
+            service="relationship_placeholder_repair_service",
+        )
+        return result
 
     def _collect_referenced_person_tokens(self) -> set[str]:
         referenced: set[str] = set()

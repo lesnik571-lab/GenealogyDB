@@ -9,6 +9,7 @@ import tkinter as tk
 import unicodedata
 import os
 import webbrowser
+from collections import Counter, defaultdict
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Mapping
@@ -28,6 +29,7 @@ from config import (
     prepare_user_environment,
 )
 from advanced_search_service import AdvancedSearchFilters, AdvancedSearchService
+from audit_service import AuditService
 from batch_operations_service import (
     BatchOperation,
     BatchOperationsService,
@@ -35,7 +37,16 @@ from batch_operations_service import (
 )
 from data_quality_service import CATEGORY_DEFINITIONS, DataQualityService
 from database import backup_database, initialize_database, restore_database
+from evidence_service import (
+    CONFIDENCE_LEVELS,
+    PROOF_STATUSES,
+    EvidenceAppliedCommand,
+    EvidenceOperation,
+    EvidenceService,
+)
+from gedcom_repair_service import GedcomRepairCommand, GedcomRepairService
 from family_tree_view_service import FamilyTreeModel, FamilyTreePerson, FamilyTreeViewService
+from graph_editor_service import GraphEditorService, GraphModification
 from integrity_service import IntegrityCheckService
 from kinship_service import KinshipAnalysis, KinshipService
 from logging_service import (
@@ -45,10 +56,12 @@ from logging_service import (
     get_logger,
     install_exception_logging,
 )
+from merge_service import MergeService
 from plugin_manager import PluginApp, PluginManager, ReadOnlyPluginData
 from recovery_wizard_service import RecoveryRecord, RecoveryWizardService
 from relationship_path_service import RelationshipPath, RelationshipPathService
 from source_service import CITATION_FIELDS, SOURCE_FIELDS, TARGET_TYPES, SourceService
+from split_service import SPLIT_FIELDS, SplitService
 from task_manager import TaskManager
 from timeline_service import FamilyTimelineService, SUPPORTED_EVENT_TYPES, TimelineFilters
 from repository import PersonRepository
@@ -511,6 +524,22 @@ class GenealogyViewer:
         self._source_browser_tree = None
         self._source_usage_map = {}
         self._source_statistics_text = None
+        self._evidence_window = None
+        self._evidence_model = None
+        self._evidence_source_tree = None
+        self._evidence_citation_tree = None
+        self._evidence_usage_tree = None
+        self._evidence_details_text = None
+        self._evidence_diagnostics_text = None
+        self._evidence_read_only_var = None
+        self._evidence_mutation_buttons = []
+        self._gedcom_repair_window = None
+        self._gedcom_repair_preview = None
+        self._gedcom_repair_source_path = None
+        self._gedcom_repair_issue_tree = None
+        self._gedcom_repair_status = None
+        self._gedcom_repair_diagnostics_var = None
+        self._gedcom_repair_apply_button = None
         self._relationship_inspector_window = None
         self._relationship_inspector_path = None
         self._kinship_window = None
@@ -529,6 +558,40 @@ class GenealogyViewer:
         self._batch_operations_preview = None
         self._batch_operations_execute_button = None
         self._batch_operations_vars = {}
+        self._merge_window = None
+        self._merge_plan = None
+        self._merge_scalar_vars = {}
+        self._merge_scalar_result_entries = {}
+        self._split_window = None
+        self._split_plan = None
+        self._split_source_vars = {}
+        self._split_new_vars = {}
+        self._split_move_vars = {}
+        self._split_collection_lists = {}
+        self._split_relationship_tree = None
+        self._split_execute_button = None
+        self._graph_editor_window = None
+        self._graph_editor_canvas = None
+        self._graph_editor_model = None
+        self._graph_editor_positions = {}
+        self._graph_editor_zoom = 1.0
+        self._graph_editor_selected_person_id = None
+        self._graph_editor_selected_edge = None
+        self._graph_editor_card_drag = None
+        self._graph_editor_link_line = None
+        self._graph_editor_mode_var = None
+        self._graph_editor_role_var = None
+        self._graph_editor_status = None
+        self._graph_preview_window = None
+        self._graph_preview = None
+        self.audit_service = AuditService.for_database(self.repository.db_name)
+        self._audit_window = None
+        self._audit_records = []
+        self._audit_record_map = {}
+        self._audit_filter_vars = {}
+        self._audit_tree = None
+        self._audit_before_text = None
+        self._audit_after_text = None
         self._integrity_report_window = None
         self._integrity_report_body = None
         self._integrity_last_report = None
@@ -938,7 +1001,17 @@ class GenealogyViewer:
 
     def _apply_relationship_change(self, callback):
         try:
-            self._get_undo_manager().execute(RelationshipEditCommand(self.repository, callback))
+            command = RelationshipEditCommand(self.repository, callback)
+            self._get_undo_manager().execute(command)
+            person = self.repository.get_person_record(self.current_person_id) if self.current_person_id else None
+            self._record_audit_command(
+                "relationship_change",
+                command,
+                database_id=self.current_person_id or "",
+                gedcom_id=person["gedcom_id"] if person else "",
+                description="Изменены родственные связи.",
+                service="relationship_service",
+            )
         except ValueError as error:
             messagebox.showerror("Ошибка", str(error), parent=self._person_dialog or self.root)
             return False
@@ -951,6 +1024,573 @@ class GenealogyViewer:
             return
         for child in self._integrity_report_body.winfo_children():
             child.destroy()
+
+    def open_split_wizard(self):
+        source_id = self.current_person_id
+        if source_id is None:
+            messagebox.showwarning("Разделить человека", "Сначала выберите человека из списка.")
+            return
+        source = self.repository.get_person_record(source_id)
+        if source is None:
+            messagebox.showerror("Разделить человека", "Человек не найден.")
+            return
+        new_values = {
+            "first_name": source.get("first_name") or "",
+            "last_name": source.get("last_name") or "",
+        }
+        return self._submit_repository_task(
+            "Подготовка разделения человека",
+            lambda repository, _context: SplitService(repository).plan_split(
+                source_id, {}, new_values=new_values
+            ),
+            self._show_split_wizard,
+            on_error=lambda error: messagebox.showerror(
+                "Разделить человека", str(error), parent=self.root
+            ),
+        )
+
+    def _show_split_wizard(self, plan):
+        if self._split_window is not None:
+            try:
+                self._split_window.destroy()
+            except Exception:
+                pass
+        self._split_plan = plan
+        self._split_source_vars = {}
+        self._split_new_vars = {}
+        self._split_move_vars = {}
+        self._split_collection_lists = {}
+        window = self._create_dialog()
+        self._split_window = window
+        window.title("Разделить человека")
+        window.geometry("1280x840")
+        window.minsize(980, 660)
+        window.protocol("WM_DELETE_WINDOW", self._close_split_wizard)
+
+        source_name = " ".join(
+            value for value in (plan.source.get("first_name", ""), plan.source.get("last_name", "")) if value
+        )
+        tk.Label(
+            window,
+            text=f"Исходная карточка: {source_name or 'Без имени'} | ID {plan.source['id']} | GEDCOM {plan.source.get('gedcom_id') or '-'}",
+            anchor="w",
+        ).pack(fill="x", padx=12, pady=(12, 8))
+
+        notebook = ttk.Notebook(window)
+        notebook.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        fields_tab = tk.Frame(notebook)
+        collections_tab = tk.Frame(notebook)
+        relationships_tab = tk.Frame(notebook)
+        notebook.add(fields_tab, text="Поля")
+        notebook.add(collections_tab, text="События и материалы")
+        notebook.add(relationships_tab, text="Родственные связи")
+        self._build_split_fields_tab(fields_tab, plan)
+        self._build_split_collections_tab(collections_tab, plan)
+        self._build_split_relationships_tab(relationships_tab, plan)
+
+        messages = [*(f"Предупреждение: {item}" for item in plan.warnings)]
+        messages.extend(f"Блокировка: {item}" for item in plan.blockers)
+        tk.Label(
+            window,
+            text="\n".join(messages) or "Dry-run готов: база данных не изменена.",
+            justify="left",
+            anchor="w",
+            foreground="#9b1c1c" if plan.blockers else "#245c36",
+        ).pack(fill="x", padx=12, pady=(0, 8))
+
+        controls = tk.Frame(window)
+        controls.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Button(controls, text="Обновить dry-run", command=self._preview_split).pack(side="left")
+        tk.Button(controls, text="Экспорт CSV", command=self._export_split_csv).pack(side="left", padx=(8, 0))
+        tk.Button(controls, text="Экспорт JSON", command=self._export_split_json).pack(side="left", padx=(8, 0))
+        self._split_execute_button = tk.Button(
+            controls,
+            text="Выполнить разделение",
+            command=self._execute_split_plan,
+            state="normal" if plan.can_execute else "disabled",
+        )
+        self._split_execute_button.pack(side="left", padx=(16, 0))
+        tk.Button(controls, text="Закрыть", command=self._close_split_wizard).pack(side="right")
+
+    def _build_split_fields_tab(self, parent, plan):
+        labels = {
+            "first_name": "Имя", "last_name": "Фамилия", "sex": "Пол",
+            "birth_date": "Дата рождения", "birth_place": "Место рождения",
+            "death_date": "Дата смерти", "death_place": "Место смерти",
+            "occupation": "Занятие", "note": "Заметки",
+        }
+        for column, heading in enumerate(("Перенести", "Поле", "Останется", "Новая карточка")):
+            tk.Label(parent, text=heading).grid(row=0, column=column, sticky="w", padx=6, pady=6)
+        selected_fields = set(plan.selection["fields"])
+        for row, field in enumerate(SPLIT_FIELDS, start=1):
+            move_var = tk.BooleanVar(value=field in selected_fields)
+            source_var = tk.StringVar(value=plan.source_preview[field])
+            new_var = tk.StringVar(value=plan.new_person_preview[field])
+            tk.Checkbutton(
+                parent, variable=move_var, command=self._invalidate_split_preview
+            ).grid(row=row, column=0, padx=6, pady=4)
+            tk.Label(parent, text=labels.get(field, field)).grid(row=row, column=1, sticky="w", padx=6, pady=4)
+            source_entry = tk.Entry(parent, textvariable=source_var)
+            new_entry = tk.Entry(parent, textvariable=new_var)
+            source_entry.grid(row=row, column=2, sticky="ew", padx=6, pady=4)
+            new_entry.grid(row=row, column=3, sticky="ew", padx=6, pady=4)
+            source_entry.bind("<KeyRelease>", self._invalidate_split_preview)
+            new_entry.bind("<KeyRelease>", self._invalidate_split_preview)
+            self._split_move_vars[field] = move_var
+            self._split_source_vars[field] = source_var
+            self._split_new_vars[field] = new_var
+        parent.grid_columnconfigure(2, weight=1)
+        parent.grid_columnconfigure(3, weight=1)
+
+    def _build_split_collections_tab(self, parent, plan):
+        labels = {
+            "events": "События", "sources": "Источники",
+            "citations": "Цитаты", "attachments": "Вложения",
+        }
+        for column, (key, records) in enumerate(plan.collections.items()):
+            frame = tk.LabelFrame(parent, text=labels.get(key, key))
+            frame.grid(row=0, column=column, sticky="nsew", padx=6, pady=6)
+            listbox = tk.Listbox(frame, selectmode="extended", exportselection=False)
+            listbox.pack(fill="both", expand=True)
+            listbox._records = list(records)
+            for index, record in enumerate(records):
+                summary = json.dumps(
+                    {field: value for field, value in record.items() if field != "selected"},
+                    ensure_ascii=False, default=str,
+                )
+                listbox.insert("end", summary)
+                if record["selected"]:
+                    listbox.selection_set(index)
+            listbox.bind("<<ListboxSelect>>", self._invalidate_split_preview)
+            self._split_collection_lists[key] = listbox
+            parent.grid_columnconfigure(column, weight=1)
+        parent.grid_rowconfigure(0, weight=1)
+
+    def _build_split_relationships_tab(self, parent, plan):
+        columns = ("category", "family", "type", "before", "after", "effects")
+        tree = ttk.Treeview(parent, columns=columns, show="headings", selectmode="extended")
+        self._split_relationship_tree = tree
+        for column, heading, width in (
+            ("category", "Категория", 100), ("family", "Семья", 70),
+            ("type", "Тип", 110), ("before", "До", 260),
+            ("after", "После", 260), ("effects", "Связанные изменения", 360),
+        ):
+            tree.heading(column, text=heading)
+            tree.column(column, width=width, anchor="w")
+        for relationship in plan.relationships:
+            tree.insert("", "end", iid=relationship.key, values=(
+                relationship.category, relationship.family_id,
+                relationship.relationship_type, relationship.before,
+                relationship.after, " ".join(relationship.implicit_effects),
+            ))
+            if relationship.selected:
+                tree.selection_add(relationship.key)
+        if not plan.relationships:
+            tree.insert("", "end", iid="none", values=("", "", "", "Связей нет", "", ""))
+        tree.bind("<<TreeviewSelect>>", self._invalidate_split_preview)
+        tree.pack(fill="both", expand=True)
+
+    def _split_selection(self):
+        selection = {
+            "fields": tuple(field for field, variable in self._split_move_vars.items() if variable.get()),
+            "relationships": tuple(
+                item for item in self._split_relationship_tree.selection() if item != "none"
+            ),
+        }
+        for key, listbox in self._split_collection_lists.items():
+            selection[key] = tuple(
+                int(listbox._records[index]["id"]) for index in listbox.curselection()
+            )
+        return selection
+
+    def _preview_split(self):
+        plan = self._split_plan
+        if plan is None:
+            return
+        selection = self._split_selection()
+        source_values = {field: variable.get() for field, variable in self._split_source_vars.items()}
+        new_values = {field: variable.get() for field, variable in self._split_new_vars.items()}
+        return self._submit_repository_task(
+            "Dry-run разделения человека",
+            lambda repository, _context: SplitService(repository).plan_split(
+                plan.source["id"], selection,
+                source_values=source_values, new_values=new_values,
+            ),
+            self._show_split_wizard,
+            on_error=lambda error: messagebox.showerror(
+                "Разделить человека", str(error), parent=self._split_window
+            ),
+        )
+
+    def _invalidate_split_preview(self, _event=None):
+        if self._split_execute_button is not None:
+            self._split_execute_button.config(state="disabled")
+
+    def _execute_split_plan(self):
+        plan = self._split_plan
+        if plan is None or not plan.can_execute:
+            return
+        if not messagebox.askyesno(
+            "Подтверждение разделения",
+            "Будет создана вторая карточка и перенесены выбранные данные. Продолжить?",
+            parent=self._split_window,
+        ):
+            return
+
+        def execute(repository, context):
+            return SplitService(repository).execute(
+                plan,
+                progress_callback=lambda stage, completed, total: context.report(
+                    stage, completed, total
+                ),
+            )
+
+        return self._submit_repository_task(
+            "Разделение человека",
+            execute,
+            self._complete_split,
+            on_error=lambda error: messagebox.showerror(
+                "Разделить человека", str(error), parent=self._split_window
+            ),
+        )
+
+    def _complete_split(self, result):
+        self._get_undo_manager().record_applied(
+            AppliedDeltaCommand("Разделение человека", self.repository, result.delta, result)
+        )
+        self._close_split_wizard()
+        self.refresh_views()
+        self.show_person(result.new_person_id)
+        messagebox.showinfo(
+            "Разделить человека",
+            f"Создана карточка ID {result.new_person_id}.\nРезервная копия: {result.backup_path}",
+            parent=self.root,
+        )
+
+    def _export_split_csv(self):
+        self._export_split_preview("csv")
+
+    def _export_split_json(self):
+        self._export_split_preview("json")
+
+    def _export_split_preview(self, extension):
+        plan = self._split_plan
+        if plan is None:
+            return
+        destination = filedialog.asksaveasfilename(
+            parent=self._split_window,
+            title=f"Экспорт dry-run в {extension.upper()}",
+            defaultextension=f".{extension}",
+            filetypes=[(extension.upper(), f"*.{extension}")],
+        )
+        if not destination:
+            return
+        service = SplitService(self.repository)
+        if extension == "csv":
+            service.export_csv(plan, destination)
+        else:
+            service.export_json(plan, destination)
+
+    def _close_split_wizard(self):
+        if self._split_window is not None:
+            try:
+                self._split_window.destroy()
+            except Exception:
+                pass
+        self._split_window = None
+        self._split_plan = None
+        self._split_collection_lists = {}
+        self._split_relationship_tree = None
+        self._split_execute_button = None
+
+    def open_merge_wizard(self):
+        primary_reference = self._choose_person("Выберите основного человека")
+        if not primary_reference:
+            return
+        duplicate_reference = self._choose_person(
+            "Выберите дублирующую карточку",
+            exclude_reference=primary_reference,
+        )
+        if not duplicate_reference:
+            return
+        primary_id = self.repository.resolve_person_reference(primary_reference)
+        duplicate_id = self.repository.resolve_person_reference(duplicate_reference)
+        if primary_id is None or duplicate_id is None:
+            messagebox.showerror("Объединить людей", "Человек не найден.", parent=self.root)
+            return
+        return self._submit_repository_task(
+            "Подготовка объединения людей",
+            lambda repository, _context: MergeService(repository).plan_merge(
+                primary_id, duplicate_id
+            ),
+            self._show_merge_wizard,
+            on_error=lambda error: messagebox.showerror(
+                "Объединить людей", str(error), parent=self.root
+            ),
+        )
+
+    def _show_merge_wizard(self, plan):
+        if self._merge_window is not None:
+            try:
+                self._merge_window.destroy()
+            except Exception:
+                pass
+        self._merge_plan = plan
+        self._merge_scalar_vars = {}
+        self._merge_scalar_result_entries = {}
+        window = self._create_dialog()
+        self._merge_window = window
+        window.title("Объединить людей")
+        window.geometry("1280x820")
+        window.minsize(980, 640)
+        window.protocol("WM_DELETE_WINDOW", self._close_merge_wizard)
+
+        header = tk.LabelFrame(window, text="Карточки")
+        header.pack(fill="x", padx=12, pady=(12, 8))
+        primary_name = " ".join(
+            value for value in (plan.primary.get("first_name", ""), plan.primary.get("last_name", ""))
+            if value
+        ) or "Без имени"
+        duplicate_name = " ".join(
+            value for value in (plan.duplicate.get("first_name", ""), plan.duplicate.get("last_name", ""))
+            if value
+        ) or "Без имени"
+        tk.Label(
+            header,
+            text=(
+                f"Основной: {primary_name} | ID {plan.primary['id']} | GEDCOM {plan.primary.get('gedcom_id') or '-'}\n"
+                f"Поглощаемый: {duplicate_name} | ID {plan.duplicate['id']} | GEDCOM {plan.duplicate.get('gedcom_id') or '-'}"
+            ),
+            justify="left",
+            anchor="w",
+        ).pack(fill="x", padx=8, pady=8)
+
+        notebook = ttk.Notebook(window)
+        notebook.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        scalar_tab = tk.Frame(notebook)
+        collections_tab = tk.Frame(notebook)
+        relationships_tab = tk.Frame(notebook)
+        notebook.add(scalar_tab, text="Поля")
+        notebook.add(collections_tab, text="События и материалы")
+        notebook.add(relationships_tab, text="Связи и безопасность")
+        self._build_merge_scalar_tab(scalar_tab, plan)
+        self._build_merge_collections_tab(collections_tab, plan)
+        self._build_merge_relationships_tab(relationships_tab, plan)
+
+        status_lines = [*(f"Предупреждение: {item}" for item in plan.warnings)]
+        status_lines.extend(f"Блокировка: {item}" for item in plan.blockers)
+        status = tk.Label(
+            window,
+            text="\n".join(status_lines) or "Dry-run готов: запись в базу не выполнялась.",
+            justify="left",
+            anchor="w",
+            foreground="#9b1c1c" if plan.blockers else "#245c36",
+        )
+        status.pack(fill="x", padx=12, pady=(0, 8))
+
+        controls = tk.Frame(window)
+        controls.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Button(controls, text="Обновить dry-run", command=self._refresh_merge_plan).pack(side="left")
+        tk.Button(controls, text="Экспорт CSV", command=self._export_merge_csv).pack(side="left", padx=(8, 0))
+        tk.Button(controls, text="Экспорт JSON", command=self._export_merge_json).pack(side="left", padx=(8, 0))
+        tk.Button(
+            controls,
+            text="Выполнить объединение",
+            command=self._execute_merge_plan,
+            state="normal" if plan.can_execute else "disabled",
+        ).pack(side="left", padx=(16, 0))
+        tk.Button(controls, text="Закрыть", command=self._close_merge_wizard).pack(side="right")
+
+    def _build_merge_scalar_tab(self, parent, plan):
+        labels = {
+            "first_name": "Имя", "last_name": "Фамилия", "sex": "Пол",
+            "birth_date": "Дата рождения", "birth_place": "Место рождения",
+            "death_date": "Дата смерти", "death_place": "Место смерти",
+            "occupation": "Занятие", "note": "Заметки",
+        }
+        headings = ("Поле", "Основной", "Дубликат", "Выбор", "Результат / вручную")
+        for column, heading in enumerate(headings):
+            tk.Label(parent, text=heading).grid(row=0, column=column, sticky="w", padx=6, pady=6)
+        choice_labels = {
+            "primary": "Оставить основной",
+            "duplicate": "Использовать дубликат",
+            "manual": "Ввести вручную",
+        }
+        for row, item in enumerate(plan.scalar_resolutions, start=1):
+            tk.Label(parent, text=labels.get(item.field, item.field)).grid(row=row, column=0, sticky="nw", padx=6, pady=4)
+            tk.Label(parent, text=item.primary_value, wraplength=220, justify="left").grid(row=row, column=1, sticky="nw", padx=6, pady=4)
+            tk.Label(parent, text=item.duplicate_value, wraplength=220, justify="left").grid(row=row, column=2, sticky="nw", padx=6, pady=4)
+            choice_var = tk.StringVar(value=choice_labels[item.choice])
+            choice = ttk.Combobox(
+                parent,
+                textvariable=choice_var,
+                values=tuple(choice_labels.values()),
+                state="readonly",
+                width=22,
+            )
+            choice.grid(row=row, column=3, sticky="ew", padx=6, pady=4)
+            result_var = tk.StringVar(value=item.result_value)
+            entry = tk.Entry(parent, textvariable=result_var)
+            entry.grid(row=row, column=4, sticky="ew", padx=6, pady=4)
+            self._merge_scalar_vars[item.field] = (choice_var, result_var)
+            self._merge_scalar_result_entries[item.field] = entry
+        parent.grid_columnconfigure(1, weight=1)
+        parent.grid_columnconfigure(2, weight=1)
+        parent.grid_columnconfigure(4, weight=1)
+
+    def _build_merge_collections_tab(self, parent, plan):
+        columns = ("side", "collection", "record")
+        tree = ttk.Treeview(parent, columns=columns, show="headings")
+        for column, heading, width in (
+            ("side", "Карточка", 100),
+            ("collection", "Раздел", 130),
+            ("record", "Полная запись", 850),
+        ):
+            tree.heading(column, text=heading)
+            tree.column(column, width=width, anchor="w")
+        for side, collections in (
+            ("Основной", plan.primary_collections),
+            ("Дубликат", plan.duplicate_collections),
+        ):
+            for collection, records in collections.items():
+                if not records:
+                    tree.insert("", "end", values=(side, collection, "Нет данных"))
+                    continue
+                for record in records:
+                    tree.insert(
+                        "",
+                        "end",
+                        values=(side, collection, json.dumps(record, ensure_ascii=False, default=str)),
+                    )
+        tree.pack(side="left", fill="both", expand=True)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+
+    def _build_merge_relationships_tab(self, parent, plan):
+        columns = ("family", "type", "before", "after", "action")
+        tree = ttk.Treeview(parent, columns=columns, show="headings")
+        for column, heading, width in (
+            ("family", "Семья", 70), ("type", "Тип", 130),
+            ("before", "До", 330), ("after", "После", 330),
+            ("action", "Действие", 110),
+        ):
+            tree.heading(column, text=heading)
+            tree.column(column, width=width, anchor="w")
+        for change in plan.relationship_changes:
+            tree.insert("", "end", values=(
+                change.family_id, change.relationship_type, change.before,
+                change.after, change.action,
+            ))
+        if not plan.relationship_changes:
+            tree.insert("", "end", values=("", "", "Изменений связей нет", "", ""))
+        tree.pack(side="left", fill="both", expand=True)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+
+    def _merge_resolutions(self):
+        choices = {
+            "Оставить основной": "primary",
+            "Использовать дубликат": "duplicate",
+            "Ввести вручную": "manual",
+        }
+        return {
+            field: (choices[choice_var.get()], result_var.get())
+            for field, (choice_var, result_var) in self._merge_scalar_vars.items()
+        }
+
+    def _refresh_merge_plan(self):
+        plan = self._merge_plan
+        if plan is None:
+            return
+        resolutions = self._merge_resolutions()
+        return self._submit_repository_task(
+            "Dry-run объединения людей",
+            lambda repository, _context: MergeService(repository).plan_merge(
+                plan.primary["id"], plan.duplicate["id"], resolutions
+            ),
+            self._show_merge_wizard,
+            on_error=lambda error: messagebox.showerror(
+                "Объединить людей", str(error), parent=self._merge_window
+            ),
+        )
+
+    def _execute_merge_plan(self):
+        plan = self._merge_plan
+        if plan is None or not plan.can_execute:
+            return
+        if not messagebox.askyesno(
+            "Подтверждение объединения",
+            "Дублирующая карточка будет поглощена. Продолжить?",
+            parent=self._merge_window,
+        ):
+            return
+
+        def execute(repository, context):
+            service = MergeService(repository)
+            return service.execute(
+                plan,
+                progress_callback=lambda stage, completed, total: context.report(
+                    stage, completed, total
+                ),
+            )
+
+        return self._submit_repository_task(
+            "Объединение людей",
+            execute,
+            self._complete_merge,
+            on_error=lambda error: messagebox.showerror(
+                "Объединить людей", str(error), parent=self._merge_window
+            ),
+        )
+
+    def _complete_merge(self, result):
+        self._get_undo_manager().record_applied(
+            AppliedDeltaCommand("Объединение людей", self.repository, result.delta, result)
+        )
+        primary_id = result.primary_id
+        self._close_merge_wizard()
+        self.refresh_views()
+        self.show_person(primary_id)
+        messagebox.showinfo(
+            "Объединить людей",
+            f"Карточка ID {result.absorbed_id} объединена с ID {primary_id}.\nРезервная копия: {result.backup_path}",
+            parent=self.root,
+        )
+
+    def _export_merge_csv(self):
+        self._export_merge_preview("csv")
+
+    def _export_merge_json(self):
+        self._export_merge_preview("json")
+
+    def _export_merge_preview(self, extension):
+        plan = self._merge_plan
+        if plan is None:
+            return
+        destination = filedialog.asksaveasfilename(
+            parent=self._merge_window,
+            title=f"Экспорт dry-run в {extension.upper()}",
+            defaultextension=f".{extension}",
+            filetypes=[(extension.upper(), f"*.{extension}")],
+        )
+        if not destination:
+            return
+        service = MergeService(self.repository)
+        saved = service.export_csv(plan, destination) if extension == "csv" else service.export_json(plan, destination)
+        messagebox.showinfo("Объединить людей", f"Предварительный просмотр сохранён: {saved}", parent=self._merge_window)
+
+    def _close_merge_wizard(self):
+        if self._merge_window is not None:
+            try:
+                self._merge_window.destroy()
+            except Exception:
+                pass
+        self._merge_window = None
+        self._merge_plan = None
+        self._merge_scalar_vars = {}
+        self._merge_scalar_result_entries = {}
 
     def open_batch_operations(self):
         if self._batch_operations_window is not None:
@@ -1213,6 +1853,155 @@ class GenealogyViewer:
         self._batch_operations_preview = None
         self._batch_operations_execute_button = None
         self._batch_operations_vars = {}
+
+    def open_audit_history(self):
+        if self._audit_window is not None:
+            try:
+                self._audit_window.lift()
+                self._audit_window.focus_force()
+                return
+            except Exception:
+                self._audit_window = None
+        window = self._create_dialog()
+        self._audit_window = window
+        window.title("История изменений")
+        window.geometry("1280x820")
+        window.minsize(960, 620)
+        window.protocol("WM_DELETE_WINDOW", self._close_audit_history)
+
+        filters = tk.LabelFrame(window, text="Фильтры")
+        filters.pack(fill="x", padx=12, pady=(12, 8))
+        options = self._get_audit_service().filter_options()
+        definitions = (
+            ("person", "Человек (ID/GEDCOM)", ()),
+            ("operation", "Операция", ("", *options["operations"])),
+            ("date_from", "Дата от", ()),
+            ("date_to", "Дата до", ()),
+            ("service", "Сервис", ("", *options["services"])),
+            ("batch_id", "Batch ID", ("", *options["batch_ids"])),
+        )
+        self._audit_filter_vars = {}
+        for column, (key, label, values) in enumerate(definitions):
+            cell = tk.Frame(filters)
+            cell.grid(row=0, column=column, sticky="ew", padx=6, pady=6)
+            tk.Label(cell, text=label).pack(anchor="w")
+            variable = tk.StringVar(value="")
+            self._audit_filter_vars[key] = variable
+            if values:
+                control = ttk.Combobox(cell, textvariable=variable, values=values, state="readonly")
+            else:
+                control = tk.Entry(cell, textvariable=variable)
+            control.pack(fill="x")
+            filters.grid_columnconfigure(column, weight=1)
+        actions = tk.Frame(filters)
+        actions.grid(row=1, column=0, columnspan=6, sticky="ew", padx=6, pady=(0, 6))
+        tk.Button(actions, text="Применить", command=self._load_audit_history).pack(side="left")
+        tk.Button(actions, text="Сбросить", command=self._reset_audit_filters).pack(side="left", padx=(8, 0))
+        tk.Button(actions, text="Экспорт CSV", command=self._export_audit_csv).pack(side="left", padx=(16, 0))
+        tk.Button(actions, text="Экспорт JSON", command=self._export_audit_json).pack(side="left", padx=(8, 0))
+        tk.Button(actions, text="Закрыть", command=self._close_audit_history).pack(side="right")
+
+        columns = ("timestamp", "operation", "person", "tables", "service", "batch", "description")
+        tree = ttk.Treeview(window, columns=columns, show="headings", height=12)
+        self._audit_tree = tree
+        for column, heading, width in (
+            ("timestamp", "Время", 190), ("operation", "Операция", 140),
+            ("person", "Человек", 120), ("tables", "Таблицы", 180),
+            ("service", "Сервис", 150), ("batch", "Batch ID", 130),
+            ("description", "Описание", 300),
+        ):
+            tree.heading(column, text=heading)
+            tree.column(column, width=width, anchor="w")
+        tree.pack(fill="both", expand=True, padx=12)
+        tree.bind("<<TreeviewSelect>>", self._show_selected_audit_record)
+
+        tk.Label(window, text="До  ↓  После").pack(pady=(8, 2))
+        comparison = tk.PanedWindow(window, orient="horizontal", sashwidth=6)
+        comparison.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        before_frame = tk.LabelFrame(comparison, text="До")
+        after_frame = tk.LabelFrame(comparison, text="После")
+        comparison.add(before_frame, stretch="always")
+        comparison.add(after_frame, stretch="always")
+        self._audit_before_text = tk.Text(before_frame, wrap="none", height=12)
+        self._audit_after_text = tk.Text(after_frame, wrap="none", height=12)
+        self._audit_before_text.pack(fill="both", expand=True)
+        self._audit_after_text.pack(fill="both", expand=True)
+        self._set_audit_comparison({}, {})
+        self._load_audit_history()
+
+    def _load_audit_history(self):
+        values = {key: variable.get().strip() for key, variable in self._audit_filter_vars.items()}
+        self._audit_records = self._get_audit_service().list_records(**values)
+        self._audit_record_map = {str(record.id): record for record in self._audit_records}
+        tree = self._audit_tree
+        for item_id in tree.get_children():
+            tree.delete(item_id)
+        for record in self._audit_records:
+            identity = record.database_id
+            if record.gedcom_id:
+                identity = f"{identity} / {record.gedcom_id}" if identity else record.gedcom_id
+            tree.insert("", "end", iid=str(record.id), values=(
+                record.timestamp, record.operation_type, identity,
+                ", ".join(record.affected_tables), record.service,
+                record.batch_id, record.description,
+            ))
+        self._set_audit_comparison({}, {})
+
+    def _show_selected_audit_record(self, _event=None):
+        selection = self._audit_tree.selection()
+        if not selection:
+            return
+        record = self._audit_record_map.get(str(selection[0]))
+        if record:
+            self._set_audit_comparison(record.before_snapshot, record.after_snapshot)
+
+    def _set_audit_comparison(self, before, after):
+        for widget, snapshot in (
+            (self._audit_before_text, before), (self._audit_after_text, after),
+        ):
+            if widget is None:
+                continue
+            widget.config(state="normal")
+            widget.delete("1.0", "end")
+            widget.insert("1.0", json.dumps(snapshot, ensure_ascii=False, indent=2, default=str))
+            widget.config(state="disabled")
+
+    def _reset_audit_filters(self):
+        for variable in self._audit_filter_vars.values():
+            variable.set("")
+        self._load_audit_history()
+
+    def _export_audit_csv(self):
+        self._export_audit_history("csv")
+
+    def _export_audit_json(self):
+        self._export_audit_history("json")
+
+    def _export_audit_history(self, extension):
+        destination = filedialog.asksaveasfilename(
+            parent=self._audit_window,
+            title=f"Экспорт истории в {extension.upper()}",
+            defaultextension=f".{extension}",
+            filetypes=[(extension.upper(), f"*.{extension}")],
+        )
+        if not destination:
+            return
+        service = self._get_audit_service()
+        if extension == "csv":
+            service.export_csv(self._audit_records, destination)
+        else:
+            service.export_json(self._audit_records, destination)
+
+    def _close_audit_history(self):
+        if self._audit_window is not None:
+            try:
+                self._audit_window.destroy()
+            except Exception:
+                pass
+        self._audit_window = None
+        self._audit_tree = None
+        self._audit_before_text = None
+        self._audit_after_text = None
 
     @staticmethod
     def _filter_data_quality_issues(report, category="all", severity="All"):
@@ -2950,10 +3739,18 @@ class GenealogyViewer:
         record = self._batch_records[self._batch_index]
         try:
             form_data = self._batch_form_data()
-            self._get_undo_manager().execute(RecoveryUpdateCommand(
+            command = RecoveryUpdateCommand(
                 self.repository,
                 lambda: self.recovery_wizard_service.update_existing_person(record.person_id, form_data),
-            ))
+            )
+            self._get_undo_manager().execute(command)
+            person = self.repository.get_person_record(record.person_id)
+            self._record_audit_command(
+                "recovery_wizard", command, database_id=record.person_id,
+                gedcom_id=person["gedcom_id"] if person else "",
+                description="Карточка восстановлена в пакетном режиме.",
+                service="recovery_wizard_service",
+            )
         except Exception as exc:
             messagebox.showerror("Пакетный режим", str(exc), parent=self._batch_window)
             return "break"
@@ -3337,10 +4134,18 @@ class GenealogyViewer:
         record = self._recovery_records[self._recovery_index]
         data = self._recovery_form_data()
         try:
-            self._get_undo_manager().execute(RecoveryUpdateCommand(
+            command = RecoveryUpdateCommand(
                 self.repository,
                 lambda: self.recovery_wizard_service.update_existing_person(record.person_id, data),
-            ))
+            )
+            self._get_undo_manager().execute(command)
+            person = self.repository.get_person_record(record.person_id)
+            self._record_audit_command(
+                "recovery_wizard", command, database_id=record.person_id,
+                gedcom_id=person["gedcom_id"] if person else "",
+                description="Карточка восстановлена мастером восстановления.",
+                service="recovery_wizard_service",
+            )
         except Exception as exc:
             messagebox.showerror("Мастер восстановления", str(exc))
             return
@@ -3551,10 +4356,28 @@ class GenealogyViewer:
         self.relationship_button.pack(side="left")
         self.family_tree_button = tk.Button(top, text="Семейное дерево", command=self.open_family_tree)
         self.family_tree_button.pack(side="left", padx=(10, 0))
+        self.graph_editor_button = tk.Button(
+            top,
+            text="Редактор дерева",
+            command=self.open_graph_editor,
+        )
+        self.graph_editor_button.pack(side="left", padx=(10, 0))
         self.family_timeline_button = tk.Button(top, text="Хронология", command=self.open_family_timeline)
         self.family_timeline_button.pack(side="left", padx=(10, 0))
         self.source_manager_button = tk.Button(top, text="Источники", command=self.open_source_manager)
         self.source_manager_button.pack(side="left", padx=(10, 0))
+        self.evidence_manager_button = tk.Button(
+            top,
+            text="Источники и доказательства",
+            command=self.open_evidence_manager,
+        )
+        self.evidence_manager_button.pack(side="left", padx=(10, 0))
+        self.gedcom_repair_button = tk.Button(
+            top,
+            text="Исправление GEDCOM",
+            command=self.open_gedcom_repair_center,
+        )
+        self.gedcom_repair_button.pack(side="left", padx=(10, 0))
         self.relationship_inspector_button = tk.Button(
             top,
             text="Связь между людьми",
@@ -3571,6 +4394,24 @@ class GenealogyViewer:
             command=self.open_batch_operations,
         )
         self.batch_operations_button.pack(side="left", padx=(10, 0))
+        self.merge_people_button = tk.Button(
+            top,
+            text="Объединить людей",
+            command=self.open_merge_wizard,
+        )
+        self.merge_people_button.pack(side="left", padx=(10, 0))
+        self.split_person_button = tk.Button(
+            top,
+            text="Разделить человека",
+            command=self.open_split_wizard,
+        )
+        self.split_person_button.pack(side="left", padx=(10, 0))
+        self.audit_history_button = tk.Button(
+            top,
+            text="История изменений",
+            command=self.open_audit_history,
+        )
+        self.audit_history_button.pack(side="left", padx=(10, 0))
         self.integrity_button = tk.Button(top, text="Проверка базы", command=self.open_integrity_report)
         self.integrity_button.pack(side="left", padx=(10, 0))
         self.data_quality_button = tk.Button(top, text="Качество данных", command=self.open_data_quality_center)
@@ -3625,14 +4466,49 @@ class GenealogyViewer:
             self.undo_manager = manager
         return manager
 
+    def _get_audit_service(self):
+        service = getattr(self, "audit_service", None)
+        if service is None:
+            service = AuditService.for_database(self.repository.db_name)
+            self.audit_service = service
+        return service
+
+    def _record_audit_command(
+        self, operation_type, command, *, database_id="", gedcom_id="",
+        description, service, reverse=False,
+    ):
+        if command is None or not command.delta:
+            return None
+        return self._get_audit_service().record_delta(
+            operation_type,
+            command.delta,
+            database_id=database_id,
+            gedcom_id=gedcom_id,
+            description=description,
+            service=service,
+            reverse=reverse,
+        )
+
     def _undo_command(self, _event=None):
-        if self._get_undo_manager().undo():
+        manager = self._get_undo_manager()
+        command = manager._undo_stack[-1] if manager.can_undo else None
+        if manager.undo():
+            self._record_audit_command(
+                "undo", command, description=f"Отменено: {command.name}.",
+                service="undo_manager", reverse=True,
+            )
             self.refresh_views()
             self._refresh_person_card()
         return "break"
 
     def _redo_command(self, _event=None):
-        if self._get_undo_manager().redo():
+        manager = self._get_undo_manager()
+        command = manager._redo_stack[-1] if manager.can_redo else None
+        if manager.redo():
+            self._record_audit_command(
+                "redo", command, description=f"Повторено: {command.name}.",
+                service="undo_manager",
+            )
             self.refresh_views()
             self._refresh_person_card()
         return "break"
@@ -4275,6 +5151,511 @@ class GenealogyViewer:
         self._relationship_inspector_window = None
         self._relationship_inspector_path = None
 
+    def open_graph_editor(self):
+        person_id = self._selected_person_id() or self.current_person_id
+        if person_id is None:
+            messagebox.showwarning("Редактор дерева", "Сначала выберите человека.")
+            return
+        if self._graph_editor_window is not None:
+            try:
+                self._graph_editor_window.lift()
+                self._graph_editor_window.focus_force()
+                self._graph_editor_selected_person_id = int(person_id)
+                self._load_graph_editor()
+                return
+            except Exception:
+                self._graph_editor_window = None
+        window = self._create_dialog()
+        self._graph_editor_window = window
+        window.title("Редактор дерева")
+        window.geometry("1280x820")
+        window.minsize(900, 600)
+        window.protocol("WM_DELETE_WINDOW", self._close_graph_editor)
+        self._graph_editor_selected_person_id = int(person_id)
+        self._graph_editor_zoom = 1.0
+        self._graph_editor_positions = {}
+
+        toolbar = tk.Frame(window)
+        toolbar.pack(fill="x", padx=12, pady=(12, 6))
+        self._graph_editor_mode_var = tk.StringVar(value="Перемещение")
+        ttk.Combobox(
+            toolbar,
+            textvariable=self._graph_editor_mode_var,
+            values=("Перемещение", "Родитель → ребёнок", "Супруги"),
+            state="readonly",
+            width=22,
+        ).pack(side="left")
+        self._graph_editor_role_var = tk.StringVar(value="father")
+        ttk.Combobox(
+            toolbar,
+            textvariable=self._graph_editor_role_var,
+            values=("father", "mother"),
+            state="readonly",
+            width=9,
+        ).pack(side="left", padx=(6, 0))
+        tk.Button(toolbar, text="−", command=lambda: self._zoom_graph_editor(-0.1)).pack(side="left", padx=(12, 0))
+        tk.Button(toolbar, text="+", command=lambda: self._zoom_graph_editor(0.1)).pack(side="left", padx=(4, 0))
+        tk.Button(toolbar, text="Вписать", command=self._fit_graph_editor).pack(side="left", padx=(8, 0))
+        tk.Button(toolbar, text="Центр", command=self._center_graph_editor_selected).pack(side="left", padx=(8, 0))
+        tk.Button(toolbar, text="Обновить", command=self._load_graph_editor).pack(side="left", padx=(8, 0))
+        tk.Button(toolbar, text="Закрыть", command=self._close_graph_editor).pack(side="right")
+        self._graph_editor_status = tk.Label(toolbar, text="")
+        self._graph_editor_status.pack(side="right", padx=12)
+
+        canvas_frame = tk.Frame(window)
+        canvas_frame.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        canvas = tk.Canvas(canvas_frame, background="#f4f7f8", highlightthickness=0)
+        self._graph_editor_canvas = canvas
+        horizontal = ttk.Scrollbar(canvas_frame, orient="horizontal", command=canvas.xview)
+        vertical = ttk.Scrollbar(canvas_frame, orient="vertical", command=canvas.yview)
+        canvas.configure(xscrollcommand=horizontal.set, yscrollcommand=vertical.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vertical.grid(row=0, column=1, sticky="ns")
+        horizontal.grid(row=1, column=0, sticky="ew")
+        canvas_frame.grid_rowconfigure(0, weight=1)
+        canvas_frame.grid_columnconfigure(0, weight=1)
+        canvas.bind("<MouseWheel>", self._graph_editor_mousewheel)
+        canvas.bind("<ButtonPress-2>", self._start_graph_editor_pan)
+        canvas.bind("<B2-Motion>", self._pan_graph_editor)
+        canvas.bind("<Button-3>", self._open_graph_context_menu)
+        self._load_graph_editor()
+
+    def _load_graph_editor(self):
+        return self._submit_repository_task(
+            "Загрузка редактора дерева",
+            lambda repository, _context: GraphEditorService(repository).build_graph(),
+            self._render_graph_editor,
+            on_error=lambda error: messagebox.showerror(
+                "Редактор дерева", str(error), parent=self._graph_editor_window
+            ),
+        )
+
+    def _render_graph_editor(self, model):
+        self._graph_editor_model = model
+        node_ids = {node.person_id for node in model.nodes}
+        self._graph_editor_positions = {
+            person_id: position for person_id, position in self._graph_editor_positions.items()
+            if person_id in node_ids
+        }
+        if len(self._graph_editor_positions) != len(model.nodes):
+            self._graph_editor_positions.update(self._graph_editor_auto_layout(model))
+        self._draw_graph_editor()
+        counts = Counter(issue.kind for issue in model.issues)
+        summary = " | ".join(f"{kind}: {count}" for kind, count in sorted(counts.items()))
+        self._graph_editor_status.configure(text=summary or "Связи корректны")
+        if self._graph_editor_selected_person_id in node_ids:
+            self._graph_editor_canvas.after_idle(self._center_graph_editor_selected)
+
+    @staticmethod
+    def _graph_editor_auto_layout(model):
+        parent_edges = [edge for edge in model.edges if edge.kind == "parent"]
+        incoming = Counter(edge.target_id for edge in parent_edges)
+        children = defaultdict(set)
+        for edge in parent_edges:
+            children[edge.source_id].add(edge.target_id)
+        roots = [node.person_id for node in model.nodes if not incoming[node.person_id]]
+        levels = {person_id: 0 for person_id in roots}
+        pending = list(roots)
+        while pending:
+            parent = pending.pop(0)
+            for child in children[parent]:
+                proposed = levels[parent] + 1
+                if proposed > levels.get(child, -1):
+                    levels[child] = proposed
+                    pending.append(child)
+        for node in model.nodes:
+            levels.setdefault(node.person_id, 0)
+        rows = defaultdict(list)
+        for node in model.nodes:
+            rows[levels[node.person_id]].append(node.person_id)
+        positions = {}
+        for level, person_ids in sorted(rows.items()):
+            for index, person_id in enumerate(sorted(person_ids)):
+                positions[person_id] = (100 + index * 230, 90 + level * 190)
+        return positions
+
+    def _draw_graph_editor(self):
+        canvas = self._graph_editor_canvas
+        model = self._graph_editor_model
+        if canvas is None or model is None:
+            return
+        canvas.delete("all")
+        zoom = self._graph_editor_zoom
+        card_width = 180 * zoom
+        card_height = 98 * zoom
+        issue_nodes = defaultdict(set)
+        issue_edges = defaultdict(set)
+        for issue in model.issues:
+            for person_id in issue.node_ids:
+                issue_nodes[person_id].add(issue.kind)
+            for edge_key in issue.edge_keys:
+                issue_edges[edge_key].add(issue.kind)
+        self._graph_editor_card_bounds = {}
+        self._graph_editor_edge_items = {}
+        for edge in model.edges:
+            if edge.source_id not in self._graph_editor_positions or edge.target_id not in self._graph_editor_positions:
+                continue
+            source = self._graph_editor_positions[edge.source_id]
+            target = self._graph_editor_positions[edge.target_id]
+            source_x = (source[0] + 90) * zoom
+            target_x = (target[0] + 90) * zoom
+            if edge.kind == "parent":
+                source_y = (source[1] + 98) * zoom
+                target_y = target[1] * zoom
+                middle_y = (source_y + target_y) / 2
+                points = (source_x, source_y, source_x, middle_y, target_x, middle_y, target_x, target_y)
+            else:
+                source_y = (source[1] + 49) * zoom
+                target_y = (target[1] + 49) * zoom
+                middle_x = (source_x + target_x) / 2
+                points = (source_x, source_y, middle_x, source_y, middle_x, target_y, target_x, target_y)
+            color = self._graph_editor_issue_color(issue_edges.get(edge.key, set()), default="#687681")
+            item = canvas.create_line(
+                *points, fill=color, width=4 if edge.key == self._graph_editor_selected_edge else 2,
+                arrow="last" if edge.kind == "parent" else "both",
+                tags=(f"graph-edge:{edge.key}", "graph-edge"),
+            )
+            self._graph_editor_edge_items[edge.key] = item
+            canvas.tag_bind(
+                f"graph-edge:{edge.key}", "<Button-1>",
+                lambda _event, key=edge.key: self._select_graph_editor_edge(key),
+            )
+            canvas.tag_bind(
+                f"graph-edge:{edge.key}", "<Button-3>",
+                lambda event, key=edge.key: self._open_graph_context_menu(event, edge_key=key),
+            )
+        for node in model.nodes:
+            left, top = self._graph_editor_positions[node.person_id]
+            left *= zoom
+            top *= zoom
+            right = left + card_width
+            bottom = top + card_height
+            self._graph_editor_card_bounds[node.person_id] = (left, top, right, bottom)
+            issues = issue_nodes.get(node.person_id, set())
+            outline = self._graph_editor_issue_color(issues, default="#687681")
+            fill = "#dceeff" if node.person_id == self._graph_editor_selected_person_id else "white"
+            tag = f"graph-person:{node.person_id}"
+            canvas.create_rectangle(
+                left, top, right, bottom, fill=fill, outline=outline,
+                width=4 if issues or node.person_id == self._graph_editor_selected_person_id else 2,
+                tags=(tag, "graph-person"),
+            )
+            lines = (
+                node.full_name,
+                f"ID {node.person_id} | {node.gedcom_id or '-'}",
+                f"{node.birth_date or '-'} — {node.death_date or '-'}",
+                ", ".join(sorted(issues)) or "ok",
+            )
+            for index, text in enumerate(lines):
+                canvas.create_text(
+                    left + 9 * zoom, top + (12 + index * 21) * zoom,
+                    text=text, anchor="nw", tags=(tag,),
+                    font=("Segoe UI", max(7, round((10 if index == 0 else 8) * zoom)), "bold" if index == 0 else "normal"),
+                )
+            canvas.tag_bind(tag, "<ButtonPress-1>", lambda event, value=node.person_id: self._start_graph_card_drag(event, value))
+            canvas.tag_bind(tag, "<B1-Motion>", self._drag_graph_card)
+            canvas.tag_bind(tag, "<ButtonRelease-1>", self._finish_graph_card_drag)
+            canvas.tag_bind(tag, "<Double-1>", lambda _event, value=node.person_id: self.show_person(value))
+            canvas.tag_bind(tag, "<Button-3>", lambda event, value=node.person_id: self._open_graph_context_menu(event, person_id=value))
+        max_x = max((value[0] for value in self._graph_editor_positions.values()), default=900) + 320
+        max_y = max((value[1] for value in self._graph_editor_positions.values()), default=600) + 240
+        canvas.configure(scrollregion=(0, 0, max_x * zoom, max_y * zoom))
+
+    @staticmethod
+    def _graph_editor_issue_color(kinds, default):
+        priority = (
+            ("cycle", "#c62828"), ("invalid", "#ad1457"),
+            ("duplicate", "#ef6c00"), ("orphan", "#7b8790"),
+        )
+        return next((color for kind, color in priority if kind in kinds), default)
+
+    def _start_graph_card_drag(self, event, person_id):
+        self._graph_editor_selected_person_id = int(person_id)
+        canvas = self._graph_editor_canvas
+        x = canvas.canvasx(event.x)
+        y = canvas.canvasy(event.y)
+        mode = self._graph_editor_mode_var.get()
+        position = self._graph_editor_positions[int(person_id)]
+        self._graph_editor_card_drag = {
+            "person_id": int(person_id), "mode": mode,
+            "offset": (x / self._graph_editor_zoom - position[0], y / self._graph_editor_zoom - position[1]),
+        }
+        if mode != "Перемещение":
+            self._graph_editor_link_line = canvas.create_line(x, y, x, y, fill="#276f86", width=3, dash=(6, 4))
+        self._draw_graph_editor()
+
+    def _drag_graph_card(self, event):
+        drag = self._graph_editor_card_drag
+        if not drag:
+            return
+        canvas = self._graph_editor_canvas
+        x = canvas.canvasx(event.x)
+        y = canvas.canvasy(event.y)
+        if drag["mode"] == "Перемещение":
+            offset_x, offset_y = drag["offset"]
+            self._graph_editor_positions[drag["person_id"]] = (
+                x / self._graph_editor_zoom - offset_x,
+                y / self._graph_editor_zoom - offset_y,
+            )
+            self._draw_graph_editor()
+        elif self._graph_editor_link_line is not None:
+            source = self._graph_editor_positions[drag["person_id"]]
+            source_x = (source[0] + 90) * self._graph_editor_zoom
+            source_y = (source[1] + 49) * self._graph_editor_zoom
+            canvas.coords(self._graph_editor_link_line, source_x, source_y, x, y)
+
+    def _finish_graph_card_drag(self, event):
+        drag = self._graph_editor_card_drag
+        self._graph_editor_card_drag = None
+        if not drag:
+            return
+        if drag["mode"] == "Перемещение":
+            return
+        canvas = self._graph_editor_canvas
+        if self._graph_editor_link_line is not None:
+            canvas.delete(self._graph_editor_link_line)
+            self._graph_editor_link_line = None
+        target = self._graph_editor_person_at(canvas.canvasx(event.x), canvas.canvasy(event.y))
+        if target is None or target == drag["person_id"]:
+            return
+        if drag["mode"] == "Супруги":
+            modification = GraphModification(
+                "add_spouse", drag["person_id"], target, relationship_type="marriage"
+            )
+        else:
+            modification = GraphModification(
+                "link_parent", target, drag["person_id"], role=self._graph_editor_role_var.get()
+            )
+        self._preview_graph_editor_modifications((modification,))
+
+    def _graph_editor_person_at(self, x, y):
+        for person_id, (left, top, right, bottom) in self._graph_editor_card_bounds.items():
+            if left <= x <= right and top <= y <= bottom:
+                return person_id
+        return None
+
+    def _select_graph_editor_edge(self, edge_key):
+        self._graph_editor_selected_edge = edge_key
+        self._draw_graph_editor()
+
+    def _open_graph_context_menu(self, event, person_id=None, edge_key=None):
+        if person_id is not None:
+            self._graph_editor_selected_person_id = int(person_id)
+        if edge_key is not None:
+            self._graph_editor_selected_edge = edge_key
+        menu = tk.Menu(self._graph_editor_window, tearoff=False)
+        person_menu = tk.Menu(menu, tearoff=False)
+        family_menu = tk.Menu(menu, tearoff=False)
+        relationship_menu = tk.Menu(menu, tearoff=False)
+        menu.add_cascade(label="Person", menu=person_menu)
+        menu.add_cascade(label="Family", menu=family_menu)
+        menu.add_cascade(label="Relationship", menu=relationship_menu)
+        person_menu.add_command(label="Открыть карточку", command=self._open_graph_editor_person)
+        person_menu.add_command(label="Центрировать", command=self._center_graph_editor_selected)
+        family_menu.add_command(label="Добавить супруга", command=self._graph_editor_add_spouse)
+        relationship_menu.add_command(label="Удалить связь", command=self._graph_editor_remove_selected_relationship)
+        relationship_menu.add_command(label="Сменить родителя", command=self._graph_editor_change_parent)
+        relationship_menu.add_command(label="Перепривязать ребёнка", command=self._graph_editor_reattach_child)
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _open_graph_editor_person(self):
+        if self._graph_editor_selected_person_id is not None:
+            self.show_person(self._graph_editor_selected_person_id)
+
+    def _graph_editor_add_spouse(self):
+        person_id = self._graph_editor_selected_person_id
+        if person_id is None:
+            return
+        reference = self._choose_person("Выберите супруга/партнёра", exclude_reference=str(person_id))
+        related_id = self.repository.resolve_person_reference(reference) if reference else None
+        if related_id is not None:
+            self._preview_graph_editor_modifications((GraphModification(
+                "add_spouse", person_id, int(related_id), relationship_type="marriage"
+            ),))
+
+    def _graph_editor_selected_edge_record(self):
+        if self._graph_editor_model is None or self._graph_editor_selected_edge is None:
+            return None
+        return next(
+            (edge for edge in self._graph_editor_model.edges if edge.key == self._graph_editor_selected_edge),
+            None,
+        )
+
+    def _graph_editor_remove_selected_relationship(self):
+        edge = self._graph_editor_selected_edge_record()
+        if edge is None:
+            return
+        if edge.kind == "spouse":
+            modification = GraphModification("remove_spouse", edge.source_id, family_id=edge.family_id)
+        else:
+            family = next(item for item in self._graph_editor_model.families if item.family_id == edge.family_id)
+            role = "father" if family.husband_id == edge.source_id else "mother"
+            modification = GraphModification(
+                "remove_parent", edge.target_id, edge.source_id,
+                family_id=edge.family_id, role=role,
+            )
+        self._preview_graph_editor_modifications((modification,))
+
+    def _graph_editor_change_parent(self):
+        edge = self._graph_editor_selected_edge_record()
+        if edge is None or edge.kind != "parent":
+            return
+        reference = self._choose_person("Выберите нового родителя", exclude_reference=str(edge.target_id))
+        new_parent_id = self.repository.resolve_person_reference(reference) if reference else None
+        if new_parent_id is None:
+            return
+        family = next(item for item in self._graph_editor_model.families if item.family_id == edge.family_id)
+        role = "father" if family.husband_id == edge.source_id else "mother"
+        self._preview_graph_editor_modifications((GraphModification(
+            "change_parent", edge.target_id, int(new_parent_id),
+            family_id=edge.family_id, role=role, old_parent_id=edge.source_id,
+        ),))
+
+    def _graph_editor_reattach_child(self):
+        edge = self._graph_editor_selected_edge_record()
+        if edge is None or edge.kind != "parent":
+            return
+        reference = self._choose_person("Выберите нового родителя", exclude_reference=str(edge.target_id))
+        new_parent_id = self.repository.resolve_person_reference(reference) if reference else None
+        if new_parent_id is None:
+            return
+        self._preview_graph_editor_modifications((GraphModification(
+            "reattach_child", edge.target_id, int(new_parent_id),
+            family_id=edge.family_id, role="father",
+        ),))
+
+    def _preview_graph_editor_modifications(self, modifications):
+        return self._submit_repository_task(
+            "Предварительный просмотр изменения дерева",
+            lambda repository, _context: GraphEditorService(repository).preview(modifications),
+            self._show_graph_editor_preview,
+            on_error=lambda error: messagebox.showerror(
+                "Редактор дерева", str(error), parent=self._graph_editor_window
+            ),
+        )
+
+    def _show_graph_editor_preview(self, preview):
+        if self._graph_preview_window is not None:
+            try:
+                self._graph_preview_window.destroy()
+            except Exception:
+                pass
+        self._graph_preview = preview
+        window = self._create_dialog(self._graph_editor_window)
+        self._graph_preview_window = window
+        window.title("Предварительный просмотр")
+        window.geometry("900x560")
+        tk.Label(window, text="\n".join(preview.descriptions), justify="left", anchor="w").pack(fill="x", padx=12, pady=12)
+        comparison = tk.PanedWindow(window, orient="horizontal", sashwidth=6)
+        comparison.pack(fill="both", expand=True, padx=12)
+        for label, model in (("До", preview.before), ("После", preview.after)):
+            frame = tk.LabelFrame(comparison, text=label)
+            text = tk.Text(frame, wrap="word")
+            issue_text = "\n".join(
+                f"{issue.kind}: {issue.description}" for issue in model.issues
+            ) or "Проблем не обнаружено"
+            text.insert("1.0", issue_text)
+            text.config(state="disabled")
+            text.pack(fill="both", expand=True)
+            comparison.add(frame, stretch="always")
+        if preview.blockers:
+            tk.Label(
+                window, text="\n".join(preview.blockers), foreground="#9b1c1c",
+                justify="left", anchor="w",
+            ).pack(fill="x", padx=12, pady=8)
+        controls = tk.Frame(window)
+        controls.pack(fill="x", padx=12, pady=12)
+        tk.Button(
+            controls, text="Применить", command=self._execute_graph_editor_preview,
+            state="normal" if preview.can_execute else "disabled",
+        ).pack(side="left")
+        tk.Button(controls, text="Отмена", command=self._close_graph_editor_preview).pack(side="right")
+
+    def _execute_graph_editor_preview(self):
+        preview = self._graph_preview
+        if preview is None or not preview.can_execute:
+            return
+        return self._submit_repository_task(
+            "Изменение дерева",
+            lambda repository, _context: GraphEditorService(repository).execute(preview),
+            self._complete_graph_editor_modification,
+            on_error=lambda error: messagebox.showerror(
+                "Редактор дерева", str(error), parent=self._graph_preview_window
+            ),
+        )
+
+    def _complete_graph_editor_modification(self, result):
+        self._get_undo_manager().record_applied(
+            AppliedDeltaCommand("Редактор дерева", self.repository, result.delta, result)
+        )
+        self._close_graph_editor_preview()
+        self.refresh_views()
+        self._load_graph_editor()
+
+    def _close_graph_editor_preview(self):
+        if self._graph_preview_window is not None:
+            try:
+                self._graph_preview_window.destroy()
+            except Exception:
+                pass
+        self._graph_preview_window = None
+        self._graph_preview = None
+
+    def _zoom_graph_editor(self, change):
+        self._graph_editor_zoom = max(0.35, min(2.5, round(self._graph_editor_zoom + change, 2)))
+        self._draw_graph_editor()
+
+    def _graph_editor_mousewheel(self, event):
+        self._zoom_graph_editor(0.1 if getattr(event, "delta", 0) > 0 else -0.1)
+        return "break"
+
+    def _start_graph_editor_pan(self, event):
+        self._graph_editor_canvas.scan_mark(event.x, event.y)
+
+    def _pan_graph_editor(self, event):
+        self._graph_editor_canvas.scan_dragto(event.x, event.y, gain=1)
+
+    def _fit_graph_editor(self):
+        if not self._graph_editor_positions:
+            return
+        min_x = min(position[0] for position in self._graph_editor_positions.values())
+        max_x = max(position[0] for position in self._graph_editor_positions.values()) + 180
+        min_y = min(position[1] for position in self._graph_editor_positions.values())
+        max_y = max(position[1] for position in self._graph_editor_positions.values()) + 98
+        width = max(1, self._graph_editor_canvas.winfo_width() - 40)
+        height = max(1, self._graph_editor_canvas.winfo_height() - 40)
+        self._graph_editor_zoom = max(0.35, min(2.5, min(width / max(1, max_x - min_x), height / max(1, max_y - min_y))))
+        self._draw_graph_editor()
+        self._graph_editor_canvas.xview_moveto(0)
+        self._graph_editor_canvas.yview_moveto(0)
+
+    def _center_graph_editor_selected(self):
+        person_id = self._graph_editor_selected_person_id
+        if person_id not in self._graph_editor_positions:
+            return
+        canvas = self._graph_editor_canvas
+        canvas.update_idletasks()
+        x, y = self._graph_editor_positions[person_id]
+        region = canvas.cget("scrollregion").split()
+        if len(region) != 4:
+            return
+        total_width = max(1, float(region[2]) - float(region[0]))
+        total_height = max(1, float(region[3]) - float(region[1]))
+        canvas.xview_moveto(max(0, min(1, (x * self._graph_editor_zoom - canvas.winfo_width() / 2) / total_width)))
+        canvas.yview_moveto(max(0, min(1, (y * self._graph_editor_zoom - canvas.winfo_height() / 2) / total_height)))
+
+    def _close_graph_editor(self):
+        self._close_graph_editor_preview()
+        if self._graph_editor_window is not None:
+            try:
+                self._graph_editor_window.destroy()
+            except Exception:
+                pass
+        self._graph_editor_window = None
+        self._graph_editor_canvas = None
+        self._graph_editor_model = None
+        self._graph_editor_positions = {}
+
     def open_family_tree(self) -> None:
         """Open the interactive read-only tree for the selected person."""
         person_id = self._selected_person_id()
@@ -4428,6 +5809,552 @@ class GenealogyViewer:
         self._family_timeline_status.pack(side="left", padx=16)
         tk.Button(controls, text="Закрыть", command=self._close_family_timeline).pack(side="right")
         self._load_family_timeline()
+
+    def open_gedcom_repair_center(self) -> None:
+        if self._gedcom_repair_window is not None:
+            try:
+                self._gedcom_repair_window.lift()
+                self._gedcom_repair_window.focus_force()
+                return
+            except Exception:
+                self._gedcom_repair_window = None
+        window = self._create_dialog()
+        self._gedcom_repair_window = window
+        window.title("Исправление GEDCOM")
+        window.geometry("1160x680")
+        window.minsize(850, 500)
+        window.protocol("WM_DELETE_WINDOW", self._close_gedcom_repair_center)
+        controls = tk.Frame(window)
+        controls.pack(fill="x", padx=12, pady=12)
+        tk.Button(controls, text="Выбрать GEDCOM", command=self._choose_gedcom_repair_file).pack(side="left")
+        tk.Button(controls, text="Исправить все безопасные", command=self._repair_all_safe_gedcom).pack(side="left", padx=(8, 0))
+        tk.Button(controls, text="Экспорт отчёта CSV", command=lambda: self._export_gedcom_repair_report("csv")).pack(side="left", padx=(16, 0))
+        tk.Button(controls, text="JSON", command=lambda: self._export_gedcom_repair_report("json")).pack(side="left", padx=(8, 0))
+        self._gedcom_repair_diagnostics_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            controls, text="Только диагностика", variable=self._gedcom_repair_diagnostics_var,
+            command=self._update_gedcom_repair_controls,
+        ).pack(side="right")
+        columns = ("selected", "severity", "location", "description", "repair", "automatic")
+        tree = ttk.Treeview(window, columns=columns, show="headings")
+        for column, label, width in (
+            ("selected", "Выбор", 60), ("severity", "Важность", 85),
+            ("location", "Расположение", 205), ("description", "Проблема", 310),
+            ("repair", "Рекомендация", 290), ("automatic", "Авто", 55),
+        ):
+            tree.heading(column, text=label)
+            tree.column(column, width=width, anchor="center" if column in {"selected", "automatic"} else "w")
+        tree.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        tree.bind("<Double-1>", self._toggle_gedcom_repair_issue)
+        self._gedcom_repair_issue_tree = tree
+        footer = tk.Frame(window)
+        footer.pack(fill="x", padx=12, pady=(0, 12))
+        self._gedcom_repair_status = tk.Label(footer, text="Выберите GEDCOM для анализа.")
+        self._gedcom_repair_status.pack(side="left")
+        self._gedcom_repair_apply_button = tk.Button(
+            footer, text="Исправить выбранные", command=self._repair_selected_gedcom, state="disabled",
+        )
+        self._gedcom_repair_apply_button.pack(side="right")
+
+    def _choose_gedcom_repair_file(self) -> None:
+        path = filedialog.askopenfilename(
+            parent=self._gedcom_repair_window, title="Выберите GEDCOM",
+            filetypes=[("GEDCOM", "*.ged *.GED"), ("Все файлы", "*.*")],
+        )
+        if path:
+            self._gedcom_repair_source_path = Path(path)
+            self._analyze_gedcom_repair_file()
+
+    def _analyze_gedcom_repair_file(self) -> None:
+        source_path = self._gedcom_repair_source_path
+        if source_path is None:
+            return
+        diagnostics_only = bool(self._gedcom_repair_diagnostics_var and self._gedcom_repair_diagnostics_var.get())
+        return self._submit_repository_task(
+            "Анализ GEDCOM",
+            lambda repository, _context: GedcomRepairService(
+                repository.db_name, diagnostics_only=diagnostics_only
+            ).analyze(source_path),
+            self._render_gedcom_repair_preview,
+            on_error=lambda error: messagebox.showerror("Исправление GEDCOM", str(error), parent=self._gedcom_repair_window),
+        )
+
+    def _render_gedcom_repair_preview(self, preview) -> None:
+        self._gedcom_repair_preview = preview
+        tree = self._gedcom_repair_issue_tree
+        for item in tree.get_children():
+            tree.delete(item)
+        for issue in preview.issues:
+            tree.insert("", "end", iid=issue.issue_id, values=(
+                "[x]" if issue.automatic_repair else "", issue.severity, issue.location,
+                issue.description, issue.recommended_repair, "Да" if issue.automatic_repair else "Нет",
+            ))
+        self._update_gedcom_repair_controls()
+
+    def _toggle_gedcom_repair_issue(self, _event=None) -> None:
+        tree = self._gedcom_repair_issue_tree
+        selected = tree.selection()
+        if not selected or self._gedcom_repair_preview is None:
+            return
+        item = selected[0]
+        issue = next(issue for issue in self._gedcom_repair_preview.issues if issue.issue_id == item)
+        if not issue.automatic_repair:
+            return
+        values = list(tree.item(item)["values"])
+        values[0] = "" if values[0] else "[x]"
+        tree.item(item, values=values)
+        self._update_gedcom_repair_controls()
+
+    def _selected_gedcom_repair_issue_ids(self):
+        if self._gedcom_repair_issue_tree is None:
+            return ()
+        return tuple(
+            item for item in self._gedcom_repair_issue_tree.get_children()
+            if self._gedcom_repair_issue_tree.item(item)["values"][0] == "[x]"
+        )
+
+    def _update_gedcom_repair_controls(self) -> None:
+        diagnostics_only = bool(self._gedcom_repair_diagnostics_var and self._gedcom_repair_diagnostics_var.get())
+        selected = self._selected_gedcom_repair_issue_ids()
+        if self._gedcom_repair_apply_button is not None:
+            self._gedcom_repair_apply_button.config(
+                state="normal" if selected and not diagnostics_only else "disabled"
+            )
+        if self._gedcom_repair_status is not None and self._gedcom_repair_preview is not None:
+            self._gedcom_repair_status.config(
+                text=f"Проблем: {len(self._gedcom_repair_preview.issues)} | Выбрано безопасных: {len(selected)}"
+            )
+
+    def _repair_selected_gedcom(self) -> None:
+        self._repair_gedcom_issue_ids(self._selected_gedcom_repair_issue_ids())
+
+    def _repair_all_safe_gedcom(self) -> None:
+        if self._gedcom_repair_preview is not None:
+            self._repair_gedcom_issue_ids(self._gedcom_repair_preview.safe_issue_ids)
+
+    def _repair_gedcom_issue_ids(self, issue_ids) -> None:
+        if not issue_ids or self._gedcom_repair_preview is None:
+            return
+        if self._gedcom_repair_diagnostics_var and self._gedcom_repair_diagnostics_var.get():
+            messagebox.showinfo("Исправление GEDCOM", "В режиме диагностики исправления отключены.", parent=self._gedcom_repair_window)
+            return
+        destination = filedialog.asksaveasfilename(
+            parent=self._gedcom_repair_window, title="Сохранить исправленный GEDCOM",
+            initialdir=str(self._gedcom_repair_preview.source_path.parent),
+            initialfile=f"{self._gedcom_repair_preview.source_path.stem}.repaired.ged",
+            defaultextension=".ged", filetypes=[("GEDCOM", "*.ged")],
+        )
+        if not destination:
+            return
+        source_path = self._gedcom_repair_preview.source_path
+        diagnostics_only = bool(self._gedcom_repair_diagnostics_var and self._gedcom_repair_diagnostics_var.get())
+
+        def repair(repository, _context):
+            service = GedcomRepairService(repository.db_name, diagnostics_only=diagnostics_only)
+            preview = service.preview(source_path, issue_ids)
+            return service.execute(preview, destination)
+
+        return self._submit_repository_task(
+            "Исправление GEDCOM", repair, self._complete_gedcom_repair,
+            on_error=lambda error: messagebox.showerror("Исправление GEDCOM", str(error), parent=self._gedcom_repair_window),
+        )
+
+    def _complete_gedcom_repair(self, result) -> None:
+        self._get_undo_manager().record_applied(GedcomRepairCommand(result))
+        self._analyze_gedcom_repair_file()
+        messagebox.showinfo("Исправление GEDCOM", f"Исправленный файл сохранён: {result.repaired_path}", parent=self._gedcom_repair_window)
+
+    def _export_gedcom_repair_report(self, export_format) -> None:
+        preview = self._gedcom_repair_preview
+        if preview is None:
+            return
+        destination = filedialog.asksaveasfilename(
+            parent=self._gedcom_repair_window, title="Экспорт отчёта GEDCOM",
+            initialdir=str(preview.source_path.parent), initialfile=f"{preview.source_path.stem}.repair-report.{export_format}",
+            defaultextension=f".{export_format}", filetypes=[(export_format.upper(), f"*.{export_format}")],
+        )
+        if not destination:
+            return
+        return self._submit_repository_task(
+            "Экспорт отчёта GEDCOM",
+            lambda repository, _context: getattr(GedcomRepairService(repository.db_name), f"export_report_{export_format}")(preview, destination),
+            lambda _path: None,
+            on_error=lambda error: messagebox.showerror("Экспорт отчёта", str(error), parent=self._gedcom_repair_window),
+        )
+
+    def _close_gedcom_repair_center(self) -> None:
+        if self._gedcom_repair_window is not None:
+            try:
+                self._gedcom_repair_window.destroy()
+            except Exception:
+                pass
+        self._gedcom_repair_window = None
+        self._gedcom_repair_preview = None
+        self._gedcom_repair_source_path = None
+        self._gedcom_repair_issue_tree = None
+        self._gedcom_repair_status = None
+        self._gedcom_repair_diagnostics_var = None
+        self._gedcom_repair_apply_button = None
+
+    def open_evidence_manager(self) -> None:
+        if self._evidence_window is not None:
+            try:
+                self._evidence_window.lift()
+                self._evidence_window.focus_force()
+                self._load_evidence_manager()
+                return
+            except Exception:
+                self._evidence_window = None
+
+        window = self._create_dialog()
+        self._evidence_window = window
+        window.title("Источники и доказательства")
+        window.geometry("1320x720")
+        window.minsize(960, 560)
+        window.protocol("WM_DELETE_WINDOW", self._close_evidence_manager)
+
+        toolbar = tk.Frame(window)
+        toolbar.pack(fill="x", padx=12, pady=(12, 6))
+        actions = (
+            ("Создать источник", self._create_evidence_source),
+            ("Изменить источник", self._edit_evidence_source),
+            ("Дублировать", self._duplicate_evidence_source),
+            ("Объединить дубликаты", self._merge_evidence_sources),
+            ("Прикрепить цитату", self._attach_evidence_citation),
+            ("Открепить цитату", self._detach_evidence_citation),
+        )
+        self._evidence_mutation_buttons = []
+        for label, command in actions:
+            button = tk.Button(toolbar, text=label, command=command)
+            button.pack(side="left", padx=(0, 6))
+            self._evidence_mutation_buttons.append(button)
+        tk.Button(toolbar, text="CSV", command=lambda: self._export_evidence("csv")).pack(side="left", padx=(12, 4))
+        tk.Button(toolbar, text="JSON", command=lambda: self._export_evidence("json")).pack(side="left")
+        self._evidence_read_only_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            toolbar, text="Только диагностика", variable=self._evidence_read_only_var,
+            command=self._toggle_evidence_read_only,
+        ).pack(side="right")
+
+        panes = tk.PanedWindow(window, orient="horizontal", sashwidth=6)
+        panes.pack(fill="both", expand=True, padx=12, pady=6)
+        source_frame = tk.LabelFrame(panes, text="Источники")
+        citation_frame = tk.LabelFrame(panes, text="Выбранная цитата")
+        usage_frame = tk.LabelFrame(panes, text="Объекты, использующие источник")
+        panes.add(source_frame, width=380, stretch="always")
+        panes.add(citation_frame, width=430, stretch="always")
+        panes.add(usage_frame, width=440, stretch="always")
+
+        self._evidence_source_tree = self._evidence_tree(
+            source_frame,
+            (("id", "ID", 55), ("title", "Название", 190),
+             ("repository", "Репозиторий", 120), ("count", "Цитат", 55)),
+        )
+        self._evidence_source_tree.bind("<<TreeviewSelect>>", self._select_evidence_source)
+        self._evidence_source_tree.bind("<Double-1>", lambda _event: self._edit_evidence_source())
+
+        self._evidence_citation_tree = self._evidence_tree(
+            citation_frame,
+            (("id", "ID", 50), ("page", "Страница", 85),
+             ("confidence", "Достоверность", 105), ("proof", "Статус", 105)),
+        )
+        self._evidence_citation_tree.bind("<<TreeviewSelect>>", self._select_evidence_citation)
+        self._evidence_citation_tree.bind("<Double-1>", lambda _event: self._edit_evidence_citation())
+        self._evidence_details_text = tk.Text(citation_frame, height=10, wrap="word")
+        self._evidence_details_text.pack(fill="both", expand=False, padx=8, pady=(0, 8))
+
+        self._evidence_usage_tree = self._evidence_tree(
+            usage_frame,
+            (("type", "Тип", 90), ("target", "Объект", 250),
+             ("confidence", "Достоверность", 105)),
+        )
+        self._evidence_usage_tree.bind("<Double-1>", self._open_evidence_usage)
+        self._evidence_diagnostics_text = tk.Text(window, height=7, wrap="word")
+        self._evidence_diagnostics_text.pack(fill="x", padx=12, pady=(6, 12))
+        self._load_evidence_manager()
+
+    @staticmethod
+    def _evidence_tree(parent, definitions):
+        columns = tuple(item[0] for item in definitions)
+        tree = ttk.Treeview(parent, columns=columns, show="headings")
+        for column, label, width in definitions:
+            tree.heading(column, text=label)
+            tree.column(column, width=width, anchor="center" if column in {"id", "count"} else "w")
+        tree.pack(fill="both", expand=True, padx=8, pady=8)
+        return tree
+
+    def _load_evidence_manager(self) -> None:
+        read_only = bool(self._evidence_read_only_var and self._evidence_read_only_var.get())
+        return self._submit_repository_task(
+            "Источники и доказательства",
+            lambda repository, _context: EvidenceService(repository, read_only=read_only).build_model(),
+            self._render_evidence_manager,
+            on_error=lambda error: messagebox.showerror(
+                "Источники и доказательства", str(error), parent=self._evidence_window
+            ),
+        )
+
+    def _render_evidence_manager(self, model) -> None:
+        self._evidence_model = model
+        for tree in (self._evidence_source_tree, self._evidence_citation_tree, self._evidence_usage_tree):
+            if tree is not None:
+                for item in tree.get_children():
+                    tree.delete(item)
+        if self._evidence_source_tree is not None:
+            for source in model.sources:
+                self._evidence_source_tree.insert("", "end", iid=f"source-{source['id']}", values=(
+                    source["id"], source["title"], source["repository"], source.get("citation_count", 0),
+                ))
+        issue_counts = Counter(issue.kind for issue in model.issues)
+        lines = [f"{kind}: {count}" for kind, count in sorted(issue_counts.items())]
+        if self._evidence_diagnostics_text is not None:
+            self._evidence_diagnostics_text.config(state="normal")
+            self._evidence_diagnostics_text.delete("1.0", "end")
+            self._evidence_diagnostics_text.insert("1.0", "\n".join(lines) or "Проблем не обнаружено")
+            self._evidence_diagnostics_text.config(state="disabled")
+        self._set_evidence_mutation_state(model.read_only)
+
+    def _toggle_evidence_read_only(self) -> None:
+        self._set_evidence_mutation_state(bool(self._evidence_read_only_var.get()))
+        self._load_evidence_manager()
+
+    def _set_evidence_mutation_state(self, read_only) -> None:
+        for button in self._evidence_mutation_buttons:
+            button.config(state="disabled" if read_only else "normal")
+
+    def _selected_evidence_source_id(self):
+        if self._evidence_source_tree is None or not self._evidence_source_tree.selection():
+            return None
+        return int(self._evidence_source_tree.item(self._evidence_source_tree.selection()[0])["values"][0])
+
+    def _selected_evidence_citation_id(self):
+        if self._evidence_citation_tree is None or not self._evidence_citation_tree.selection():
+            return None
+        return int(self._evidence_citation_tree.item(self._evidence_citation_tree.selection()[0])["values"][0])
+
+    def _select_evidence_source(self, _event=None) -> None:
+        source_id = self._selected_evidence_source_id()
+        if source_id is None or self._evidence_model is None:
+            return
+        for tree in (self._evidence_citation_tree, self._evidence_usage_tree):
+            for item in tree.get_children():
+                tree.delete(item)
+        for citation in self._evidence_model.citations:
+            if int(citation["source_id"]) == source_id:
+                self._evidence_citation_tree.insert("", "end", iid=f"citation-{citation['id']}", values=(
+                    citation["id"], citation["page"], citation["confidence"], citation["proof_status"],
+                ))
+        for usage in self._evidence_model.usages:
+            if int(usage["source_id"]) == source_id:
+                self._evidence_usage_tree.insert("", "end", iid=f"usage-{usage['id']}", values=(
+                    usage["target_type"], usage["target"], usage["confidence"],
+                ))
+        self._show_evidence_details(None)
+
+    def _select_evidence_citation(self, _event=None) -> None:
+        citation_id = self._selected_evidence_citation_id()
+        citation = next((
+            item for item in self._evidence_model.citations
+            if int(item["id"]) == citation_id
+        ), None) if self._evidence_model else None
+        self._show_evidence_details(citation)
+
+    def _show_evidence_details(self, citation) -> None:
+        if self._evidence_details_text is None:
+            return
+        lines = [] if citation is None else [
+            f"Страница: {citation['page']}",
+            f"Достоверность: {citation['confidence']}",
+            f"Статус: {citation['proof_status']}",
+            f"Медиа: {citation['media_reference'] or '-'}",
+            f"Транскрипция: {citation['transcription']}",
+            f"Комментарий: {citation['comment']}",
+        ]
+        self._evidence_details_text.config(state="normal")
+        self._evidence_details_text.delete("1.0", "end")
+        self._evidence_details_text.insert("1.0", "\n".join(lines))
+        self._evidence_details_text.config(state="disabled")
+
+    def _create_evidence_source(self) -> None:
+        self._edit_evidence_source_dialog()
+
+    def _edit_evidence_source(self) -> None:
+        source_id = self._selected_evidence_source_id()
+        if source_id is None or self._evidence_model is None:
+            return
+        source = next(item for item in self._evidence_model.sources if int(item["id"]) == source_id)
+        self._edit_evidence_source_dialog(source)
+
+    def _edit_evidence_source_dialog(self, source=None) -> None:
+        dialog = self._create_dialog(self._evidence_window)
+        dialog.title("Источник")
+        fields = {}
+        labels = {
+            "title": "Название", "author": "Автор", "publication": "Публикация",
+            "repository": "Репозиторий", "call_number": "Шифр", "url": "URL", "notes": "Примечания",
+        }
+        for row, field in enumerate(SOURCE_FIELDS):
+            tk.Label(dialog, text=f"{labels[field]}:").grid(row=row, column=0, sticky="w", padx=12, pady=4)
+            entry = tk.Entry(dialog, width=58)
+            entry.insert(0, (source or {}).get(field, ""))
+            entry.grid(row=row, column=1, sticky="ew", padx=(0, 12), pady=4)
+            fields[field] = entry
+
+        def save():
+            data = {field: entry.get().strip() for field, entry in fields.items()}
+            operation = EvidenceOperation(
+                "edit_source" if source else "create_source",
+                source_id=int(source["id"]) if source else 0,
+                data=data,
+            )
+            dialog.destroy()
+            self._run_evidence_operations((operation,))
+
+        tk.Button(dialog, text="Сохранить", command=save).grid(row=len(SOURCE_FIELDS), column=1, sticky="e", padx=12, pady=12)
+
+    def _duplicate_evidence_source(self) -> None:
+        source_id = self._selected_evidence_source_id()
+        if source_id is not None:
+            self._run_evidence_operations((EvidenceOperation("duplicate_source", source_id=source_id),))
+
+    def _merge_evidence_sources(self) -> None:
+        target_id = self._selected_evidence_source_id()
+        if target_id is None or self._evidence_model is None:
+            return
+        duplicates = tuple(
+            source_id for issue in self._evidence_model.issues if issue.kind == "duplicate_source"
+            and target_id in issue.source_ids for source_id in issue.source_ids if source_id != target_id
+        )
+        if not duplicates:
+            messagebox.showinfo("Доказательства", "Для выбранного источника дубликаты не обнаружены.", parent=self._evidence_window)
+            return
+        if messagebox.askyesno(
+            "Объединение источников", f"Объединить источники {duplicates} с ID {target_id}?",
+            parent=self._evidence_window,
+        ):
+            self._run_evidence_operations((EvidenceOperation(
+                "merge_sources", source_id=target_id, source_ids=duplicates,
+            ),))
+
+    def _attach_evidence_citation(self) -> None:
+        source_id = self._selected_evidence_source_id()
+        if source_id is not None:
+            self._edit_evidence_citation_dialog(source_id)
+
+    def _edit_evidence_citation(self) -> None:
+        source_id = self._selected_evidence_source_id()
+        citation_id = self._selected_evidence_citation_id()
+        if source_id is None or citation_id is None or self._evidence_model is None:
+            return
+        citation = next(item for item in self._evidence_model.citations if int(item["id"]) == citation_id)
+        self._edit_evidence_citation_dialog(source_id, citation)
+
+    def _edit_evidence_citation_dialog(self, source_id, citation=None) -> None:
+        dialog = self._create_dialog(self._evidence_window)
+        dialog.title("Цитата")
+        values = {
+            "target_type": tk.StringVar(value=(citation or {}).get("target_type", "person")),
+            "target_id": tk.StringVar(value=(citation or {}).get("target_id", str(self.current_person_id or ""))),
+            "page": tk.StringVar(value=(citation or {}).get("page", "")),
+            "confidence": tk.StringVar(value=(citation or {}).get("confidence", "Unknown")),
+            "proof_status": tk.StringVar(value=(citation or {}).get("proof_status", "Unreviewed")),
+            "media_reference": tk.StringVar(value=(citation or {}).get("media_reference", "")),
+            "transcription": tk.StringVar(value=(citation or {}).get("transcription", "")),
+            "comment": tk.StringVar(value=(citation or {}).get("comment", "")),
+        }
+        definitions = (
+            ("target_type", "Тип объекта", TARGET_TYPES), ("target_id", "ID объекта", None),
+            ("page", "Страница", None), ("confidence", "Достоверность", CONFIDENCE_LEVELS),
+            ("proof_status", "Статус доказательства", PROOF_STATUSES),
+            ("media_reference", "ID/путь медиа", None), ("transcription", "Транскрипция", None),
+            ("comment", "Комментарий", None),
+        )
+        for row, (key, label, options) in enumerate(definitions):
+            tk.Label(dialog, text=f"{label}:").grid(row=row, column=0, sticky="w", padx=12, pady=4)
+            control = ttk.Combobox(dialog, textvariable=values[key], values=options, state="readonly", width=40) if options else tk.Entry(dialog, textvariable=values[key], width=43)
+            control.grid(row=row, column=1, sticky="ew", padx=(0, 12), pady=4)
+
+        def save():
+            data = {key: variable.get().strip() for key, variable in values.items()}
+            operation = EvidenceOperation(
+                "edit_citation" if citation else "attach_citation",
+                source_id=source_id,
+                citation_id=int(citation["id"]) if citation else 0,
+                target_type=data.pop("target_type"),
+                target_id=data.pop("target_id"),
+                data=data,
+            )
+            dialog.destroy()
+            self._run_evidence_operations((operation,))
+
+        tk.Button(dialog, text="Сохранить", command=save).grid(row=len(definitions), column=1, sticky="e", padx=12, pady=12)
+
+    def _detach_evidence_citation(self) -> None:
+        citation_id = self._selected_evidence_citation_id()
+        if citation_id is not None and messagebox.askyesno(
+            "Цитата", "Открепить выбранную цитату?", parent=self._evidence_window,
+        ):
+            self._run_evidence_operations((EvidenceOperation("detach_citation", citation_id=citation_id),))
+
+    def _run_evidence_operations(self, operations) -> None:
+        read_only = bool(self._evidence_read_only_var and self._evidence_read_only_var.get())
+
+        def execute(repository, _context):
+            service = EvidenceService(repository, read_only=read_only)
+            return service.execute(service.preview(operations))
+
+        return self._submit_repository_task(
+            "Изменение доказательств", execute, self._complete_evidence_operations,
+            on_error=lambda error: messagebox.showerror(
+                "Источники и доказательства", str(error), parent=self._evidence_window
+            ),
+        )
+
+    def _complete_evidence_operations(self, result) -> None:
+        self._get_undo_manager().record_applied(EvidenceAppliedCommand(self.repository, result))
+        self.refresh_views()
+
+    def _open_evidence_usage(self, _event=None) -> None:
+        if self._evidence_usage_tree is None or not self._evidence_usage_tree.selection() or self._evidence_model is None:
+            return
+        citation_id = int(self._evidence_usage_tree.selection()[0].split("-", 1)[1])
+        usage = next(item for item in self._evidence_model.usages if int(item["id"]) == citation_id)
+        if usage.get("linked_person_id") is not None:
+            self.show_person(int(usage["linked_person_id"]))
+
+    def _export_evidence(self, export_format) -> None:
+        destination = filedialog.asksaveasfilename(
+            parent=self._evidence_window,
+            title="Экспорт доказательств",
+            initialdir=str(EXPORT_DIR),
+            initialfile=f"evidence.{export_format}",
+            defaultextension=f".{export_format}",
+            filetypes=[(export_format.upper(), f"*.{export_format}")],
+        )
+        if not destination:
+            return
+        return self._submit_repository_task(
+            "Экспорт доказательств",
+            lambda repository, _context: getattr(EvidenceService(repository), f"export_{export_format}")(destination),
+            lambda path: messagebox.showinfo("Экспорт", f"Файл сохранён: {path}", parent=self._evidence_window),
+            on_error=lambda error: messagebox.showerror("Экспорт", str(error), parent=self._evidence_window),
+        )
+
+    def _close_evidence_manager(self) -> None:
+        if self._evidence_window is not None:
+            try:
+                self._evidence_window.destroy()
+            except Exception:
+                pass
+        self._evidence_window = None
+        self._evidence_model = None
+        self._evidence_source_tree = None
+        self._evidence_citation_tree = None
+        self._evidence_usage_tree = None
+        self._evidence_details_text = None
+        self._evidence_diagnostics_text = None
+        self._evidence_read_only_var = None
+        self._evidence_mutation_buttons = []
 
     def open_source_manager(self) -> None:
         """Open source management and read-only usage browser tabs."""
@@ -5708,9 +7635,23 @@ class GenealogyViewer:
             "note": (data or {}).get("note", "") or "",
         }
         if person_id is None:
-            person_id = self._get_undo_manager().execute(AddPersonCommand(self.repository, payload))
+            command = AddPersonCommand(self.repository, payload)
+            person_id = self._get_undo_manager().execute(command)
+            person = self.repository.get_person_record(person_id)
+            self._record_audit_command(
+                "person_create", command, database_id=person_id,
+                gedcom_id=person["gedcom_id"] if person else "",
+                description="Создана карточка человека.", service="viewer",
+            )
         else:
-            self._get_undo_manager().execute(EditPersonCommand(self.repository, person_id, payload))
+            command = EditPersonCommand(self.repository, person_id, payload)
+            self._get_undo_manager().execute(command)
+            person = self.repository.get_person_record(person_id)
+            self._record_audit_command(
+                "person_edit", command, database_id=person_id,
+                gedcom_id=person["gedcom_id"] if person else "",
+                description="Изменена карточка человека.", service="viewer",
+            )
         self.current_person_id = person_id
         return person_id
 
@@ -5718,7 +7659,14 @@ class GenealogyViewer:
         if person_id is None:
             return False
         if messagebox.askyesno("Удаление", "Удалить выбранного человека?"):
-            deleted = self._get_undo_manager().execute(DeletePersonCommand(self.repository, person_id))
+            person = self.repository.get_person_record(person_id)
+            command = DeletePersonCommand(self.repository, person_id)
+            deleted = self._get_undo_manager().execute(command)
+            self._record_audit_command(
+                "person_delete", command, database_id=person_id,
+                gedcom_id=person["gedcom_id"] if person else "",
+                description="Удалена карточка человека.", service="viewer",
+            )
             self.current_person_id = None
             self.search_people()
             return deleted
@@ -5905,6 +7853,8 @@ class GenealogyViewer:
     def refresh_views(self):
         self.search_people()
         self._refresh_family_tree()
+        if getattr(self, "_evidence_window", None) is not None:
+            self._load_evidence_manager()
 
     def _refresh_family_tree(self):
         if not hasattr(self, "family_tree_text"):

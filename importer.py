@@ -1,4 +1,5 @@
 from config import DB_NAME
+from audit_service import AuditService
 from gedcom.parser import parse_gedcom
 from logging_service import log_operation
 from repository import DatabaseRepository
@@ -11,6 +12,8 @@ class GedcomImporter:
 
     @log_operation("GEDCOM import")
     def import_gedcom(self, filename):
+        audit = AuditService.for_database(self.db_name)
+        before_state = audit.capture_database_state(self.db_name)
         data = self._load_data(filename)
         conn = self.repository.connect()
 
@@ -26,6 +29,13 @@ class GedcomImporter:
 
         print(f"Импортировано людей: {imported_people}")
         print(f"Импортировано семей: {len(data['families'])}")
+        audit.record_state_change(
+            "import",
+            before_state,
+            audit.capture_database_state(self.db_name),
+            description=f"Импортирован GEDCOM-файл: {filename}.",
+            service="importer",
+        )
         return {"people": imported_people, "families": len(data['families']), "family_children": None}
 
     def _load_data(self, filename):

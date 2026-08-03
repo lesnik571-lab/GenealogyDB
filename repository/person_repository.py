@@ -49,6 +49,10 @@ class PersonRepository:
         "person_events": ("id", "person_id", "event_type", "event_date", "event_place", "description"),
         "person_media": ("id", "person_id", "media_type", "title", "file_path", "description", "created_at"),
         "person_sources": ("id", "person_id", "title", "source_url", "archive_reference", "note", "created_at"),
+        "citations": (
+            "id", "source_id", "target_type", "target_id", "page", "quality",
+            "transcription", "comment", "created_at",
+        ),
     }
 
     def __init__(self, db_name=DB_NAME):
@@ -104,12 +108,12 @@ class PersonRepository:
         if not delta:
             return
         delete_order = (
-            "person_events", "person_media", "person_sources", "family_children",
+            "citations", "person_events", "person_media", "person_sources", "family_children",
             "families", "people",
         )
         insert_order = (
             "people", "families", "family_children", "person_events",
-            "person_media", "person_sources",
+            "person_media", "person_sources", "citations",
         )
         with self.transaction():
             for table in delete_order:
