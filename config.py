@@ -38,11 +38,6 @@ PLUGIN_DIR = APP_HOME / "plugins"
 USER_CONFIG_PATH = APP_HOME / "config.json"
 DEFAULT_CONFIG_PATH = RESOURCE_DIR / "resources" / "default_config.json"
 USER_MANUAL_PATH = RESOURCE_DIR / "USER_MANUAL.md"
-DEFAULT_DB_PATH = (DATA_DIR / "genealogy.db").resolve()
-DB_NAME = str(_resolve_path(
-    os.getenv("GENEALOGYDB_DB_NAME"),
-    DEFAULT_DB_PATH,
-))
 
 
 def _load_configuration():
@@ -76,6 +71,12 @@ def prepare_user_environment():
 
 
 _CONFIGURATION = _load_configuration()
+
+DEFAULT_DB_PATH = (DATA_DIR / "genealogy.db").resolve()
+DB_NAME = str(_resolve_path(
+    os.getenv("GENEALOGYDB_DB_NAME", _CONFIGURATION.get("database_path")),
+    DEFAULT_DB_PATH,
+))
 
 GEOCODING_PROVIDER = os.getenv(
     "GENEALOGYDB_GEOCODING_PROVIDER",

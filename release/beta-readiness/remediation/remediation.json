@@ -1,0 +1,68 @@
+{
+  "recommendation": "NOT READY",
+  "database": {
+    "path": "C:\\Users\\lesni\\AppData\\Local\\GenealogyDB\\data\\genealogy.db",
+    "classification": "empty SQLite file",
+    "exists": true,
+    "size_bytes": 0,
+    "writable": true,
+    "tables": [],
+    "missing_mandatory": [
+      "families",
+      "family_children",
+      "people",
+      "person_events"
+    ],
+    "missing_optional": [
+      "geocoding_cache",
+      "person_media",
+      "person_sources"
+    ],
+    "integrity_result": "ok",
+    "detail": "SQLite file contains no application tables."
+  },
+  "checks": [
+    {
+      "name": "Database classification",
+      "status": "blocker",
+      "detail": "SQLite file contains no application tables.",
+      "data_effect": "Reads genealogy data only."
+    },
+    {
+      "name": "Historical crash logs",
+      "status": "warning",
+      "detail": "Historical tracebacks: genealogydb.log, genealogydb.log.1",
+      "data_effect": "Reads diagnostic logs only."
+    },
+    {
+      "name": "Manual scaling checklist",
+      "status": "warning",
+      "detail": "Record 125%, 150%, and 175% manual checks.",
+      "data_effect": "Reads UI-state sidecar only."
+    },
+    {
+      "name": "Performance baseline",
+      "status": "warning",
+      "detail": "No saved synthetic performance baseline.",
+      "data_effect": "Reads diagnostic sidecars only."
+    },
+    {
+      "name": "Read-only integrity check",
+      "status": "passed",
+      "detail": "integrity_check: ok",
+      "data_effect": "Reads genealogy data only."
+    },
+    {
+      "name": "Verified temporary backup",
+      "status": "blocker",
+      "detail": "SQLite file contains no application tables.",
+      "data_effect": "Reads genealogy data only when backup cannot be verified."
+    },
+    {
+      "name": "Version metadata",
+      "status": "passed",
+      "detail": "Version metadata is synchronized.",
+      "data_effect": "Reads source/version files only."
+    }
+  ]
+}

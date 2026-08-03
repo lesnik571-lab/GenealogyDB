@@ -1,0 +1,20 @@
+<!doctype html><html><meta charset="utf-8"><body><pre># GenealogyDB Beta Readiness Remediation
+
+## Recommendation
+
+NOT READY
+
+## Database
+- Path: C:\Users\lesni\AppData\Local\GenealogyDB\data\genealogy.db
+- Classification: empty SQLite file
+- Tables: -
+
+## Checks
+- [BLOCKER] **Database classification**: SQLite file contains no application tables. (Reads genealogy data only.)
+- [WARNING] **Historical crash logs**: Historical tracebacks: genealogydb.log, genealogydb.log.1 (Reads diagnostic logs only.)
+- [WARNING] **Manual scaling checklist**: Record 125%, 150%, and 175% manual checks. (Reads UI-state sidecar only.)
+- [WARNING] **Performance baseline**: No saved synthetic performance baseline. (Reads diagnostic sidecars only.)
+- [PASSED] **Read-only integrity check**: integrity_check: ok (Reads genealogy data only.)
+- [BLOCKER] **Verified temporary backup**: SQLite file contains no application tables. (Reads genealogy data only when backup cannot be verified.)
+- [PASSED] **Version metadata**: Version metadata is synchronized. (Reads source/version files only.)
+</pre></body></html>

@@ -294,8 +294,13 @@ def validate_database_file(database_path):
     if not path.is_file():
         raise ValueError(f"Путь к базе не является файлом: {path}")
 
+    connection = None
     try:
-        with sqlite3.connect(path) as connection:
+        connection = sqlite3.connect(
+            f"file:{path.resolve().as_posix()}?mode=ro",
+            uri=True,
+        )
+        try:
             integrity_check = connection.execute("PRAGMA integrity_check").fetchone()
             if not integrity_check or str(integrity_check[0]).upper() != "OK":
                 raise ValueError(f"Файл базы повреждён: {path}")
@@ -316,6 +321,8 @@ def validate_database_file(database_path):
                     raise ValueError(
                         f"Таблица {table_name} не содержит ожидаемых столбцов: {', '.join(missing_columns)}"
                     )
+        finally:
+            connection.close()
     except sqlite3.DatabaseError as error:
         raise ValueError(f"Не удалось прочитать файл SQLite: {path}") from error
 
@@ -347,7 +354,16 @@ def backup_database(source_path, destination_path=None):
     validate_database_file(source)
     destination = _build_backup_path(source, destination_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, destination)
+    source_connection = sqlite3.connect(
+        f"file:{source.resolve().as_posix()}?mode=ro",
+        uri=True,
+    )
+    destination_connection = sqlite3.connect(destination)
+    try:
+        source_connection.backup(destination_connection)
+    finally:
+        destination_connection.close()
+        source_connection.close()
     validate_database_file(destination)
     return destination
 

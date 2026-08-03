@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.0.0-beta1] - 2026-08-03
+
+### Changed
+- Beta readiness remediation and safe database-path diagnostics.
+
 ## [2.0] - 2026-07-31
 
 ### Added

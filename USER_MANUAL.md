@@ -1,5 +1,7 @@
 # GenealogyDB User Manual
 
+Version: 2.0.0-beta1
+
 ## Getting started
 
 GenealogyDB stores your database and related files in the GenealogyDB folder under your Windows Local AppData directory. The application creates its data, backups, exports, logs, and plugins folders on first start.

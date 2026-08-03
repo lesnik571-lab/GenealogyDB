@@ -39,6 +39,7 @@ from batch_operations_service import (
 )
 from beta_stabilization_service import BetaStabilizationService
 from beta_remediation_service import BetaRemediationService
+from rc_validation_service import RCValidationService
 from data_quality_service import CATEGORY_DEFINITIONS, DataQualityService
 from validation_center_service import ValidationCenterService, ValidationFixCommand
 from database import backup_database, initialize_database, restore_database
@@ -5026,6 +5027,7 @@ class GenealogyViewer:
         help_menu.add_command(label="User Manual", command=self._show_user_manual)
         help_menu.add_command(label="Release Center", command=self.open_release_center)
         help_menu.add_command(label="Beta Readiness", command=self.open_beta_readiness)
+        help_menu.add_command(label="RC1 Validation", command=self.open_rc1_validation)
         help_menu.add_command(label="Diagnostics", command=self._show_diagnostics)
         help_menu.add_command(label="About", command=self._show_about)
         diagnostics_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
@@ -5641,6 +5643,31 @@ class GenealogyViewer:
             except Exception: pass
         self._beta_readiness_window = self._beta_readiness_report = self._beta_readiness_body = None
         self._beta_remediation_report = None
+
+    def open_rc1_validation(self):
+        dialog = self._create_dialog()
+        dialog.title("RC1 Validation"); dialog.geometry("1100x700"); dialog.minsize(800, 500)
+        body = tk.Text(dialog, wrap="word"); body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
+        status = tk.Label(dialog, anchor="w"); status.pack(fill="x", padx=12, pady=(0, 6))
+
+        def run():
+            status.config(text="RC1 validation is running against temporary databases and sidecars.")
+            return self._submit_repository_task(
+                "RC1 Validation",
+                lambda repository, _context: RCValidationService(repository.db_name).validate(),
+                lambda report: render(report),
+                on_error=lambda error: self._show_unified_error("RC1 Validation", error),
+                cancellable=True,
+            )
+
+        def render(report):
+            body.config(state="normal"); body.delete("1.0", "end")
+            body.insert("1.0", RCValidationService._markdown(report)); body.config(state="disabled")
+            status.config(text=f"{report.recommendation}; reports: release/rc1-validation/")
+
+        controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Button(controls, text="Run validation", command=run).pack(side="left")
+        tk.Button(controls, text="Close", command=dialog.destroy).pack(side="right")
 
     def open_release_center(self):
         dialog = self._create_dialog()

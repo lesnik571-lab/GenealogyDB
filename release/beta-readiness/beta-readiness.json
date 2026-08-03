@@ -1,0 +1,173 @@
+{
+  "recommendation": "NOT READY",
+  "checks": [
+    {
+      "name": "Duplicate Viewer buttons",
+      "status": "passed",
+      "detail": "No duplicate button labels.",
+      "section": "Accessibility"
+    },
+    {
+      "name": "Duplicate menu commands",
+      "status": "passed",
+      "detail": "No duplicate menu command labels.",
+      "section": "Accessibility"
+    },
+    {
+      "name": "Escape dialog close support",
+      "status": "passed",
+      "detail": "Escape close bindings are present.",
+      "section": "Accessibility"
+    },
+    {
+      "name": "Keyboard shortcuts registered",
+      "status": "passed",
+      "detail": "Keyboard shortcut bindings are registered.",
+      "section": "Accessibility"
+    },
+    {
+      "name": "Toolbar scaling smoke check",
+      "status": "warning",
+      "detail": "Manual verification remains required at 125%, 150%, and 175% scaling.",
+      "section": "Accessibility"
+    },
+    {
+      "name": "Commands referencing missing functions",
+      "status": "passed",
+      "detail": "All self command targets are defined.",
+      "section": "Build status"
+    },
+    {
+      "name": "Plugin loading",
+      "status": "passed",
+      "detail": "Plugin sources passed static loading validation.",
+      "section": "Build status"
+    },
+    {
+      "name": "Python compilation",
+      "status": "passed",
+      "detail": "Core Python modules compile.",
+      "section": "Build status"
+    },
+    {
+      "name": "Release resources",
+      "status": "passed",
+      "detail": "All required resources are present.",
+      "section": "Build status"
+    },
+    {
+      "name": "Stale Viewer imports",
+      "status": "passed",
+      "detail": "No proven unused Viewer imports found.",
+      "section": "Build status"
+    },
+    {
+      "name": "Tkinter windows during import",
+      "status": "passed",
+      "detail": "No Tkinter windows are created at module import time.",
+      "section": "Build status"
+    },
+    {
+      "name": "Unavailable services",
+      "status": "passed",
+      "detail": "All referenced Viewer services are initialized or lazily provided.",
+      "section": "Build status"
+    },
+    {
+      "name": "Unresolved crash diagnostics",
+      "status": "warning",
+      "detail": "Tracebacks found in: genealogydb.log, genealogydb.log.1",
+      "section": "Build status"
+    },
+    {
+      "name": "Viewer service failure handling",
+      "status": "passed",
+      "detail": "Service failures use the logged, guarded concise Russian error path.",
+      "section": "Build status"
+    },
+    {
+      "name": "Configuration validity",
+      "status": "passed",
+      "detail": "Configuration JSON is valid.",
+      "section": "Data safety"
+    },
+    {
+      "name": "Database backup capability",
+      "status": "blocker",
+      "detail": "Файл базы не содержит ожидаемых таблиц: families, family_children, geocoding_cache, people, person_events, person_media, person_sources",
+      "section": "Data safety"
+    },
+    {
+      "name": "Database integrity",
+      "status": "blocker",
+      "detail": "Файл базы не содержит ожидаемых таблиц: families, family_children, geocoding_cache, people, person_events, person_media, person_sources",
+      "section": "Data safety"
+    },
+    {
+      "name": "Direct SQL in viewer.py",
+      "status": "passed",
+      "detail": "No direct repository SQL calls found.",
+      "section": "Data safety"
+    },
+    {
+      "name": "UI and diagnostic sidecars",
+      "status": "passed",
+      "detail": "Sidecars are valid or absent and services recreate their directories on write.",
+      "section": "Data safety"
+    },
+    {
+      "name": "Unresolved critical validation issues",
+      "status": "warning",
+      "detail": "Validation check unavailable: 'types.SimpleNamespace' object has no attribute 'conn'",
+      "section": "Data safety"
+    },
+    {
+      "name": "Writable user-data directories",
+      "status": "passed",
+      "detail": "Data, log, plugin, and backup folders are writable.",
+      "section": "Data safety"
+    },
+    {
+      "name": "Bounded caches",
+      "status": "passed",
+      "detail": "Available.",
+      "section": "Performance"
+    },
+    {
+      "name": "Performance baseline availability",
+      "status": "warning",
+      "detail": "Performance baseline has not been saved.",
+      "section": "Performance"
+    },
+    {
+      "name": "Person-list pagination",
+      "status": "warning",
+      "detail": "Static smoke check did not find expected instrumentation.",
+      "section": "Performance"
+    },
+    {
+      "name": "Startup instrumentation",
+      "status": "passed",
+      "detail": "Available.",
+      "section": "Performance"
+    },
+    {
+      "name": "Task Manager cancellation",
+      "status": "passed",
+      "detail": "Available.",
+      "section": "Performance"
+    },
+    {
+      "name": "Full test-suite status",
+      "status": "passed",
+      "detail": "50 focused test modules are available; canonical execution is performed by the release workflow.",
+      "section": "Test status"
+    },
+    {
+      "name": "Version consistency",
+      "status": "warning",
+      "detail": "USER_MANUAL.md: version 1.0.0 not mentioned; CHANGELOG.md: version 1.0.0 not mentioned",
+      "section": "Version consistency"
+    }
+  ]
+}
