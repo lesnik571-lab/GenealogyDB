@@ -37,6 +37,8 @@ from batch_operations_service import (
     BatchOperationsService,
     OPERATION_LABELS,
 )
+from beta_stabilization_service import BetaStabilizationService
+from beta_remediation_service import BetaRemediationService
 from data_quality_service import CATEGORY_DEFINITIONS, DataQualityService
 from validation_center_service import ValidationCenterService, ValidationFixCommand
 from database import backup_database, initialize_database, restore_database
@@ -66,7 +68,7 @@ from plugin_manager import PluginApp, PluginManager, ReadOnlyPluginData
 from performance_service import PerformanceService
 from recovery_wizard_service import RecoveryRecord, RecoveryWizardService
 from release_center_service import ReleaseCenterService
-from research_workspace_service import HYPOTHESIS_STATES, TASK_PRIORITIES, TASK_STATUSES, ResearchWorkspaceService
+from research_workspace_service import TASK_STATUSES, ResearchWorkspaceService
 from relationship_path_service import RelationshipPath, RelationshipPathService
 from source_service import CITATION_FIELDS, SOURCE_FIELDS, TARGET_TYPES, SourceService
 from source_analysis_service import SourceAnalysisService
@@ -84,7 +86,6 @@ from tree_canvas_service import (
     TreeCanvasLayoutCommand,
     TreeCanvasNavigation,
     TreeCanvasPrintOptions,
-    TreeCanvasSafetyError,
     TreeCanvasService,
     TreeLayoutOptions,
 )
@@ -459,13 +460,22 @@ class GenealogyViewer:
         self.root = root
         self._configure_ui_defaults()
         self.performance_service = PerformanceService()
+        with self.performance_service.timer("database connection", "database"):
+            self.repository = PersonRepository(DB_NAME)
         self.release_center_service = ReleaseCenterService(database_path=self.repository.db_name)
         self.intelligence_service = IntelligenceService(self.repository)
+        self.source_analysis_service = SourceAnalysisService(self.repository)
+        self.beta_stabilization_service = BetaStabilizationService(self.repository)
+        self.beta_remediation_service = BetaRemediationService(self.repository.db_name)
         self._intelligence_report = None
         self._intelligence_tree = None
         self._intelligence_window = None
-        with self.performance_service.timer("database connection", "database"):
-            self.repository = PersonRepository(DB_NAME)
+        self._source_analysis_report = None
+        self._source_analysis_tree = None
+        self._source_analysis_window = None
+        self._beta_readiness_report = None
+        self._beta_remediation_report = None
+        self._beta_readiness_window = None
         self.task_manager = TaskManager(root)
         self.relationship_service = RelationshipService(self.repository)
         self.family_tree_view_service = FamilyTreeViewService(self.relationship_service)
@@ -480,10 +490,6 @@ class GenealogyViewer:
         self.workspace_integration_service = WorkspaceIntegrationService()
         self._error_dialog_active = False
         self.source_service = SourceService(self.repository)
-        self.source_analysis_service = SourceAnalysisService(self.repository)
-        self._source_analysis_report = None
-        self._source_analysis_tree = None
-        self._source_analysis_window = None
         self.life_map_service = PersonLifeMapService(self.repository, timeline_service=self.timeline_service)
         self.current_person_id = None
         self.current_person_gedcom_id = None
@@ -5019,6 +5025,7 @@ class GenealogyViewer:
         self._plugin_menu_bar.add_cascade(label="Help", menu=help_menu)
         help_menu.add_command(label="User Manual", command=self._show_user_manual)
         help_menu.add_command(label="Release Center", command=self.open_release_center)
+        help_menu.add_command(label="Beta Readiness", command=self.open_beta_readiness)
         help_menu.add_command(label="Diagnostics", command=self._show_diagnostics)
         help_menu.add_command(label="About", command=self._show_about)
         diagnostics_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
@@ -5496,6 +5503,144 @@ class GenealogyViewer:
             except Exception: pass
         self._source_analysis_window = self._source_analysis_tree = self._source_analysis_report = None
         self._source_analysis_status = None
+
+    def open_beta_readiness(self):
+        if self._beta_readiness_window is not None:
+            try:
+                self._beta_readiness_window.lift(); self._beta_readiness_window.focus_force(); return
+            except Exception:
+                self._beta_readiness_window = None
+        dialog = self._create_dialog(); self._beta_readiness_window = dialog
+        dialog.title("Beta Readiness"); dialog.geometry("1180x760"); dialog.minsize(820, 540)
+        dialog.protocol("WM_DELETE_WINDOW", self._close_beta_readiness)
+        body = tk.Text(dialog, wrap="word"); body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
+        self._beta_readiness_body = body
+        tk.Label(dialog, text="Действия проверки читают БД; выбор базы меняет конфигурацию; архив, baseline и checklist меняют только sidecar; синхронизация меняет source/version файлы.", anchor="w").pack(fill="x", padx=12, pady=(0, 6))
+        actions = tk.Frame(dialog); actions.pack(fill="x", padx=12, pady=(0, 6))
+        tk.Button(actions, text="Обновить проверки", command=self._run_beta_readiness).pack(side="left")
+        tk.Button(actions, text="Выбрать рабочую базу", command=self._select_beta_database).pack(side="left", padx=(6, 0))
+        tk.Button(actions, text="Проверить целостность", command=self._verify_beta_integrity).pack(side="left", padx=(6, 0))
+        tk.Button(actions, text="Проверить временный backup", command=self._verify_beta_backup).pack(side="left", padx=(6, 0))
+        tk.Button(actions, text="Синхронизировать версию", command=self._synchronize_beta_version).pack(side="left", padx=(6, 0))
+        secondary = tk.Frame(dialog); secondary.pack(fill="x", padx=12, pady=(0, 6))
+        tk.Button(secondary, text="Архивировать старые логи", command=self._archive_beta_logs).pack(side="left")
+        tk.Button(secondary, text="Создать базовую линию", command=self._create_beta_baseline).pack(side="left", padx=(6, 0))
+        tk.Button(secondary, text="Записать scaling check", command=self._record_beta_scaling).pack(side="left", padx=(6, 0))
+        tk.Button(secondary, text="Экспорт remediation", command=lambda: self._export_beta_remediation("markdown")).pack(side="left", padx=(6, 0))
+        for report_format in ("markdown", "html", "json"):
+            tk.Button(secondary, text=report_format.upper(), command=lambda value=report_format: self._export_beta_readiness(value)).pack(side="left", padx=(6, 0))
+        tk.Button(secondary, text="Закрыть", command=self._close_beta_readiness).pack(side="right")
+        self._run_beta_readiness()
+
+    def _run_beta_readiness(self):
+        return self._submit_repository_task(
+            "Beta Readiness",
+            lambda repository, _context: BetaStabilizationService(repository).analyze(),
+            self._set_beta_readiness_report,
+            on_error=lambda error: self._show_unified_error("Beta Readiness", error),
+            cancellable=True,
+        )
+
+    def _submit_beta_remediation_task(self, name, operation, on_success):
+        manager = getattr(self, "task_manager", None)
+        if manager is None:
+            try: return on_success(operation(None))
+            except Exception as error: return self._show_unified_error(name, error)
+        return manager.submit(name, lambda context: operation(context), on_success=on_success, on_error=lambda error: self._show_unified_error(name, error), cancellable=True)
+
+    def _beta_remediation(self):
+        return BetaRemediationService(self.repository.db_name)
+
+    def _set_beta_remediation_report(self, report):
+        self._beta_remediation_report = report
+        body = getattr(self, "_beta_readiness_body", None)
+        if body is None: return
+        body.config(state="normal"); body.delete("1.0", "end")
+        body.insert("1.0", self.beta_remediation_service._markdown(report))
+        body.config(state="disabled")
+
+    def _select_beta_database(self):
+        selected = filedialog.askopenfilename(parent=self._beta_readiness_window, title="Выбрать рабочую базу", filetypes=[("SQLite database", "*.db *.sqlite *.sqlite3"), ("Все файлы", "*.*")])
+        if not selected: return
+        try:
+            diagnostic = self._beta_remediation().validate_working_database(selected)
+        except ValueError as error:
+            self._show_unified_error("Выбор рабочей базы", error); return
+        if messagebox.askyesno("Выбор рабочей базы", f"Сохранить путь к проверенной базе?\n{diagnostic.path}\n\nБудет изменена только конфигурация; база не изменяется.", parent=self._beta_readiness_window):
+            self._beta_remediation().select_working_database(selected, confirmed=True)
+            messagebox.showinfo("Выбор рабочей базы", "Путь сохранён. Перезапустите приложение для открытия выбранной базы.", parent=self._beta_readiness_window)
+
+    def _verify_beta_integrity(self):
+        return self._submit_beta_remediation_task("Проверка целостности", lambda _context: self._beta_remediation().analyze(), self._set_beta_remediation_report)
+
+    def _verify_beta_backup(self):
+        return self._submit_beta_remediation_task("Проверка временного backup", lambda _context: self._beta_remediation().verify_temporary_backup(), lambda _result: self._run_beta_readiness())
+
+    def _synchronize_beta_version(self):
+        if messagebox.askyesno("Синхронизация версии", "Синхронизировать source/version metadata до 2.0.0-beta1? Это изменит только version files.", parent=self._beta_readiness_window):
+            try:
+                self._beta_remediation().synchronize_version_metadata()
+                self._run_beta_readiness()
+            except Exception as error:
+                self._show_unified_error("Синхронизация версии", error)
+
+    def _archive_beta_logs(self):
+        if messagebox.askyesno("Архивирование логов", "Скопировать текущие логи в data/logs/archive/? Исходные логи не удаляются.", parent=self._beta_readiness_window):
+            try:
+                self._beta_remediation().archive_logs()
+                self._run_beta_readiness()
+            except Exception as error:
+                self._show_unified_error("Архивирование логов", error)
+
+    def _create_beta_baseline(self):
+        return self._submit_beta_remediation_task("Создание базовой линии", lambda _context: self._beta_remediation().create_performance_baseline(), lambda _path: self._run_beta_readiness())
+
+    def _record_beta_scaling(self):
+        dialog = self._create_dialog(self._beta_readiness_window); dialog.title("Scaling checklist")
+        scale = tk.StringVar(value="125"); toolbar = tk.BooleanVar(value=False); menus = tk.BooleanVar(value=False); dialogs = tk.BooleanVar(value=False); notes = tk.StringVar(value="")
+        for row, (label, variable) in enumerate((("Scale", scale), ("Главная панель помещается", toolbar), ("Меню читаемы", menus), ("Диалоги usable", dialogs), ("Заметки", notes))):
+            tk.Label(dialog, text=label).grid(row=row, column=0, sticky="w", padx=12, pady=4)
+            control = ttk.Combobox(dialog, textvariable=variable, values=("125", "150", "175"), state="readonly") if label == "Scale" else tk.Checkbutton(dialog, variable=variable) if isinstance(variable, tk.BooleanVar) else tk.Entry(dialog, textvariable=variable, width=50)
+            control.grid(row=row, column=1, sticky="ew", padx=(0, 12), pady=4)
+        def save():
+            self._beta_remediation().record_scaling_check(int(scale.get()), toolbar_fits=toolbar.get(), menus_readable=menus.get(), dialogs_usable=dialogs.get(), notes=notes.get()); dialog.destroy(); self._run_beta_readiness()
+        tk.Button(dialog, text="Сохранить", command=save).grid(row=5, column=1, sticky="e", padx=12, pady=12)
+
+    def _export_beta_remediation(self, report_format):
+        report = getattr(self, "_beta_remediation_report", None)
+        if report is None: return self._verify_beta_integrity()
+        try:
+            path = self._beta_remediation().export(report, report_format)
+            messagebox.showinfo("Beta Readiness", f"Remediation report сохранён: {path}", parent=self._beta_readiness_window)
+        except Exception as error:
+            self._show_unified_error("Экспорт remediation", error)
+
+    def _set_beta_readiness_report(self, report):
+        self._beta_readiness_report = report
+        body = getattr(self, "_beta_readiness_body", None)
+        if body is None:
+            return
+        body.config(state="normal"); body.delete("1.0", "end")
+        body.insert("1.0", self.beta_stabilization_service._markdown(report))
+        body.config(state="disabled")
+
+    def _export_beta_readiness(self, report_format):
+        report = getattr(self, "_beta_readiness_report", None)
+        if report is None:
+            return
+        return self._submit_repository_task(
+            "Экспорт Beta Readiness",
+            lambda repository, _context: BetaStabilizationService(repository).export(report, report_format),
+            lambda path: messagebox.showinfo("Beta Readiness", f"Отчёт сохранён: {path}", parent=self._beta_readiness_window),
+            on_error=lambda error: self._show_unified_error("Beta Readiness", error),
+        )
+
+    def _close_beta_readiness(self):
+        if self._beta_readiness_window is not None:
+            try: self._beta_readiness_window.destroy()
+            except Exception: pass
+        self._beta_readiness_window = self._beta_readiness_report = self._beta_readiness_body = None
+        self._beta_remediation_report = None
 
     def open_release_center(self):
         dialog = self._create_dialog()

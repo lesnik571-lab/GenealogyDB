@@ -37,6 +37,21 @@ CORE_REQUIRED_COLUMNS = {
 }
 
 
+def supported_schema_requirements():
+    """Return the application's mandatory and optional table requirements.
+
+    The core relationship and event tables are required for every supported
+    GenealogyDB database. Feature tables can be absent in legacy databases.
+    """
+    mandatory = {name: frozenset(columns) for name, columns in CORE_REQUIRED_COLUMNS.items()}
+    optional = {
+        name: frozenset(columns)
+        for name, columns in REQUIRED_COLUMNS.items()
+        if name not in CORE_REQUIRED_COLUMNS
+    }
+    return mandatory, optional
+
+
 def load_schema(schema_path=SCHEMA_PATH):
     """Load SQL schema text from disk."""
     path = Path(schema_path)
