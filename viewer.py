@@ -9,6 +9,7 @@ import tkinter as tk
 import unicodedata
 import os
 import webbrowser
+from contextlib import nullcontext
 from collections import Counter, defaultdict
 from dataclasses import asdict
 from pathlib import Path
@@ -61,6 +62,7 @@ from logging_service import (
 )
 from merge_service import MergeService
 from plugin_manager import PluginApp, PluginManager, ReadOnlyPluginData
+from performance_service import PerformanceService
 from recovery_wizard_service import RecoveryRecord, RecoveryWizardService
 from research_workspace_service import HYPOTHESIS_STATES, TASK_PRIORITIES, TASK_STATUSES, ResearchWorkspaceService
 from relationship_path_service import RelationshipPath, RelationshipPathService
@@ -450,9 +452,12 @@ class GenealogyViewer:
     """Coordinate GenealogyDB services and the Tkinter user interface."""
 
     def __init__(self, root):
+        startup_started = time.perf_counter()
         self.root = root
         self._configure_ui_defaults()
-        self.repository = PersonRepository(DB_NAME)
+        self.performance_service = PerformanceService()
+        with self.performance_service.timer("database connection", "database"):
+            self.repository = PersonRepository(DB_NAME)
         self.task_manager = TaskManager(root)
         self.relationship_service = RelationshipService(self.repository)
         self.family_tree_view_service = FamilyTreeViewService(self.relationship_service)
@@ -704,6 +709,8 @@ class GenealogyViewer:
         )
         self.loaded_plugins = self.plugin_manager.load_plugins(plugin_app)
         self.search_people()
+        self.performance_service.record("application startup", "viewer", time.perf_counter() - startup_started)
+        get_logger("performance").info("Application startup completed in %.4fs", time.perf_counter() - startup_started)
 
     def _configure_ui_defaults(self):
         """Apply shared typography and control sizing through Tk's option database."""
@@ -735,7 +742,8 @@ class GenealogyViewer:
         def worker(context):
             worker_repository = PersonRepository(db_path)
             try:
-                return operation(worker_repository, context)
+                with self.performance_service.timer(name, "task_manager"):
+                    return operation(worker_repository, context)
             finally:
                 worker_repository.close()
 
@@ -747,6 +755,10 @@ class GenealogyViewer:
             cancellable=cancellable,
         )
         option_add("*Button.padY", UI_BUTTON_PAD_Y)
+
+    def _performance_timer(self, operation, module, *, records_processed=0):
+        service = getattr(self, "performance_service", None)
+        return service.timer(operation, module, records_processed=records_processed) if service else nullcontext()
 
     def _show_unified_error(self, context, error):
         """Log detailed failures and keep the UI alive behind one concise dialog."""
@@ -4996,6 +5008,9 @@ class GenealogyViewer:
         help_menu.add_command(label="User Manual", command=self._show_user_manual)
         help_menu.add_command(label="Diagnostics", command=self._show_diagnostics)
         help_menu.add_command(label="About", command=self._show_about)
+        diagnostics_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
+        self._plugin_menu_bar.add_cascade(label="Диагностика", menu=diagnostics_menu)
+        diagnostics_menu.add_command(label="Производительность", command=self.open_performance_center)
 
         search_frame = tk.LabelFrame(self.root, text="Расширенный поиск")
         search_frame.pack(fill="x", padx=10, pady=(10, 4))
@@ -5295,6 +5310,43 @@ class GenealogyViewer:
             services=service_names,
         )
 
+    def open_performance_center(self):
+        """Open read-only sidecar diagnostics; benchmarks never use the active database."""
+        dialog = self._create_dialog()
+        dialog.title("Производительность")
+        dialog.geometry("1280x640")
+        columns = ("operation", "module", "count", "latest", "average", "min", "max", "p50", "p95", "p99", "records", "throughput", "cancelled", "failed", "last")
+        tree = ttk.Treeview(dialog, columns=columns, show="headings")
+        labels = ("Операция", "Модуль", "Вызовы", "Последнее", "Среднее", "Мин", "Макс", "P50", "P95", "P99", "Записей", "Скорость", "Отмена", "Ошибки", "Последний запуск")
+        for column, label in zip(columns, labels):
+            tree.heading(column, text=label); tree.column(column, width=88 if column not in {"operation", "last"} else 170, anchor="w")
+        tree.pack(fill="both", expand=True, padx=12, pady=(12, 6))
+
+        def refresh():
+            for item in tree.get_children(): tree.delete(item)
+            for row in self.performance_service.summaries():
+                tree.insert("", "end", values=(row["operation"], row["module"], row["invocation_count"], f"{row['latest_duration']:.4f}", f"{row['average_duration']:.4f}", f"{row['minimum_duration']:.4f}", f"{row['maximum_duration']:.4f}", f"{row['p50']:.4f}", f"{row['p95']:.4f}", f"{row['p99']:.4f}", row["records_processed"], f"{row['throughput']:.1f}", row["cancellation_count"], row["failure_count"], row["last_run"]))
+            self.performance_service.persist()
+
+        controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12))
+        benchmark_name = tk.StringVar(value="person_search")
+        tk.Button(controls, text="Обновить", command=refresh).pack(side="left")
+        ttk.Combobox(controls, textvariable=benchmark_name, values=("person_search", "surname_filter", "pagination", "timeline_ordering", "map_clustering", "sidecar_json"), state="readonly", width=18).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Запустить benchmark", command=lambda: self._submit_repository_task("Performance benchmark", lambda _repo, context: self.performance_service.run_benchmark(benchmark_name.get(), 1000, context.raise_if_cancelled if context else None), lambda _result: refresh(), on_error=lambda error: self._show_unified_error("Производительность", error), cancellable=True)).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Быстрый benchmark", command=lambda: self._submit_repository_task("Performance quick benchmark", lambda _repo, context: self.performance_service.run_quick_benchmarks(context.raise_if_cancelled if context else None), lambda _result: refresh(), on_error=lambda error: self._show_unified_error("Производительность", error), cancellable=True)).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Сохранить baseline", command=lambda: self.performance_service.save_baseline()).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Сравнить baseline", command=lambda: messagebox.showinfo("Производительность", "Регрессий: " + str(len(self.performance_service.compare_baseline())), parent=dialog)).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="CSV", command=lambda: self._export_performance("csv", dialog)).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="JSON", command=lambda: self._export_performance("json", dialog)).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Очистить", command=lambda: (self.performance_service.clear_metrics(), refresh())).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Закрыть", command=dialog.destroy).pack(side="right")
+        refresh()
+
+    def _export_performance(self, extension, parent):
+        destination = filedialog.asksaveasfilename(parent=parent, defaultextension=f".{extension}", filetypes=[(extension.upper(), f"*.{extension}")])
+        if destination:
+            getattr(self.performance_service, f"export_{extension}")(destination)
+
     def _show_diagnostics(self):
         """Show runtime diagnostics and offer a privacy-safe ZIP export."""
         snapshot = self._diagnostics_snapshot()
@@ -5402,16 +5454,17 @@ class GenealogyViewer:
             self.tree.delete(item)
 
     def _query_people(self, query):
-        if hasattr(self.repository, "find_people"):
-            try:
-                return self.repository.find_people(query)
-            except TypeError:
-                pass
+        with self._performance_timer("person search", "viewer"):
+            if hasattr(self.repository, "find_people"):
+                try:
+                    return self.repository.find_people(query)
+                except TypeError:
+                    pass
 
-        if not query:
-            return self.repository.list_people()
+            if not query:
+                return self.repository.list_people()
 
-        return self.repository.list_people(surname=query, first_name=query, last_name=query)
+            return self.repository.list_people(surname=query, first_name=query, last_name=query)
 
     @staticmethod
     def _optional_search_integer(value, label):
@@ -8792,7 +8845,8 @@ class GenealogyViewer:
             self._person_history = []
             self._person_history_index = -1
 
-        person = self.repository.get_person(person_id)
+        with self._performance_timer("person card loading", "viewer", records_processed=1):
+            person = self.repository.get_person(person_id)
         if not person:
             messagebox.showerror("Ошибка", "Человек не найден.")
             return
@@ -9538,7 +9592,8 @@ class GenealogyViewer:
             )
             if not backup_path:
                 return
-            destination = backup_database(DB_NAME, backup_path)
+            with self._performance_timer("backup creation", "database"):
+                destination = backup_database(DB_NAME, backup_path)
             messagebox.showinfo("Резервная копия", f"База сохранена в:\n{destination}")
         except (FileNotFoundError, ValueError, OSError) as error:
             messagebox.showerror("Ошибка резервного копирования", str(error))

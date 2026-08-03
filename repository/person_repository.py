@@ -199,6 +199,18 @@ class PersonRepository:
 
         return filtered_rows
 
+    def list_people_page(self, surname=None, first_name=None, last_name=None, birth_year=None, death_year=None, sex=None, limit=500, offset=0, include_total=False):
+        """Return a stable page while preserving ``list_people`` filter semantics."""
+        page_size = max(1, int(limit))
+        start = max(0, int(offset))
+        rows = self.list_people(
+            surname=surname, first_name=first_name, last_name=last_name,
+            birth_year=birth_year, death_year=death_year, sex=sex,
+            limit=10 ** 9,
+        )
+        page = rows[start:start + page_size]
+        return (page, len(rows)) if include_total else page
+
     def list_people_full(self):
         self.cur.execute(
             """
