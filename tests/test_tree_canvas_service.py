@@ -13,7 +13,7 @@ from tree_canvas_service import (
     CARD_HEIGHT, CARD_WIDTH, MAX_ZOOM, MIN_ZOOM, TreeCanvasChange,
     TreeAutoLayoutEngine, TreeCanvasLayoutCommand, TreeCanvasNavigation,
     TreeCanvasConnector, TreeCanvasNode, TreeCanvasSafetyError, TreeCanvasService,
-    TreeLayoutOptions,
+    TreeCanvasPrintOptions, TreeLayoutOptions,
 )
 from undo_manager import UndoManager
 from viewer import GenealogyViewer
@@ -323,3 +323,51 @@ def test_auto_layout_benchmark_is_deterministic_for_500_and_1000_nodes():
         assert TreeCanvasService._overlap_count(first, CARD_WIDTH, CARD_HEIGHT) == 0
     assert timings[500] < 2.0
     assert timings[1000] < 2.0
+
+
+def test_print_export_preview_supports_metadata_branch_scope_poster_and_all_formats(tmp_path):
+    repo = repository(tmp_path)
+    try:
+        for index in range(1, 6):
+            add_person(repo, index)
+        family(repo, 1, 1, 2, [3])
+        family(repo, 2, 3, 4, [5], "civil_partner")
+        service = TreeCanvasService(repo, layout_dir=tmp_path / "layouts")
+        model = service.build(3, ancestor_depth=3, descendant_depth=3)
+        before = repo.capture_command_state()
+        options = TreeCanvasPrintOptions(
+            scope="selected_branch", orientation="portrait", fit_mode="manual",
+            scale=8.0, poster=True, overlap=12, title="Branch print", dpi=144,
+        )
+        preview = service.prepare_print_preview(model, options)
+
+        assert {node.person_id for node in preview.model.nodes} == {3, 4, 5}
+        assert preview.page_count > 1
+        assert preview.metadata["root_person_id"] == 3
+        assert preview.metadata["number_of_people"] == 3
+        svg = service.export_canvas(preview, tmp_path / "tree.svg", "svg")
+        png = service.export_canvas(preview, tmp_path / "tree.png", "png")
+        jpeg = service.export_canvas(preview, tmp_path / "tree.jpg", "jpeg")
+        pdf = service.export_canvas(preview, tmp_path / "tree.pdf", "pdf")
+
+        assert '"root_person_id": 3' in svg.read_text(encoding="utf-8")
+        assert png.read_bytes().startswith(b"\x89PNG")
+        assert jpeg.read_bytes().startswith(b"\xff\xd8")
+        assert pdf.read_bytes().startswith(b"%PDF")
+        assert repo.capture_command_state() == before
+    finally:
+        repo.close()
+
+
+def test_viewer_print_export_center_is_worker_backed_and_sql_free():
+    opening = inspect.getsource(GenealogyViewer.open_tree_canvas)
+    dialog = inspect.getsource(GenealogyViewer.open_tree_canvas_print_export)
+    preview = inspect.getsource(GenealogyViewer._preview_tree_canvas_print_export)
+    submission = inspect.getsource(GenealogyViewer._submit_tree_canvas_export)
+
+    assert 'text="Печать / Экспорт"' in opening
+    for value in ("current_view", "selected_branch", "complete_tree", "portrait", "landscape", "fit_width", "fit_page", "jpeg"):
+        assert f'"{value}"' in dialog
+    assert "prepare_print_preview" in preview
+    assert "_submit_repository_task" in preview + submission
+    assert "repository.conn" not in opening + dialog + preview + submission

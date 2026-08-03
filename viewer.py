@@ -72,6 +72,7 @@ from tree_canvas_service import (
     TreeCanvasChange,
     TreeCanvasLayoutCommand,
     TreeCanvasNavigation,
+    TreeCanvasPrintOptions,
     TreeCanvasSafetyError,
     TreeCanvasService,
     TreeLayoutOptions,
@@ -619,6 +620,9 @@ class GenealogyViewer:
         self._tree_canvas_card_height_var = None
         self._tree_canvas_compact_var = None
         self._tree_canvas_routing_var = None
+        self._tree_canvas_print_window = None
+        self._tree_canvas_print_preview = None
+        self._tree_canvas_print_vars = {}
         self.audit_service = AuditService.for_database(self.repository.db_name)
         self._audit_window = None
         self._audit_records = []
@@ -5343,6 +5347,7 @@ class GenealogyViewer:
         tk.Button(toolbar, text="SVG", command=lambda: self._export_tree_canvas("svg")).pack(side="left", padx=(12, 0))
         tk.Button(toolbar, text="PNG", command=lambda: self._export_tree_canvas("png")).pack(side="left", padx=(4, 0))
         tk.Button(toolbar, text="PDF", command=lambda: self._export_tree_canvas("pdf")).pack(side="left", padx=(4, 0))
+        tk.Button(toolbar, text="Печать / Экспорт", command=self.open_tree_canvas_print_export).pack(side="left", padx=(8, 0))
         tk.Button(toolbar, text="JSON", command=self._export_tree_canvas_preview).pack(side="left", padx=(4, 0))
         self._tree_canvas_status = tk.Label(toolbar, text="")
         self._tree_canvas_status.pack(side="right")
@@ -5860,6 +5865,118 @@ class GenealogyViewer:
             return
         model = self._tree_canvas_model.__class__(**{**self._tree_canvas_model.__dict__, "positions": dict(self._tree_canvas_positions)})
         return self._submit_repository_task("Экспорт полотна дерева", lambda repository, _context: getattr(TreeCanvasService(repository), f"export_{export_format}")(model, destination, scale=self._tree_canvas_zoom), lambda _path: None, on_error=lambda error: messagebox.showerror("Экспорт полотна", str(error), parent=self._tree_canvas_window))
+
+    def open_tree_canvas_print_export(self) -> None:
+        if self._tree_canvas_model is None:
+            return
+        if self._tree_canvas_print_window is not None:
+            try:
+                self._tree_canvas_print_window.lift()
+                return
+            except Exception:
+                self._tree_canvas_print_window = None
+        window = self._create_dialog(self._tree_canvas_window)
+        self._tree_canvas_print_window = window
+        window.title("Печать / Экспорт")
+        window.geometry("620x440")
+        window.protocol("WM_DELETE_WINDOW", self._close_tree_canvas_print_export)
+        self._tree_canvas_print_vars = {
+            "scope": tk.StringVar(value="current_view"), "format": tk.StringVar(value="pdf"),
+            "orientation": tk.StringVar(value="landscape"), "fit": tk.StringVar(value="fit_page"),
+            "margin": tk.StringVar(value="24"), "scale": tk.StringVar(value="1.0"),
+            "overlap": tk.StringVar(value="18"), "title": tk.StringVar(value="GenealogyDB Tree"),
+            "poster": tk.BooleanVar(value=False), "legend": tk.BooleanVar(value=True),
+            "generations": tk.BooleanVar(value=True), "dpi": tk.StringVar(value="300"),
+        }
+        fields = tk.Frame(window)
+        fields.pack(fill="x", padx=12, pady=12)
+        for row, (label, key, values) in enumerate((
+            ("Область", "scope", ("current_view", "selected_branch", "complete_tree")),
+            ("Формат", "format", ("pdf", "svg", "png", "jpeg")),
+            ("Ориентация", "orientation", ("portrait", "landscape")),
+            ("Масштаб", "fit", ("manual", "fit_width", "fit_page")),
+        )):
+            tk.Label(fields, text=label).grid(row=row, column=0, sticky="w", pady=3)
+            ttk.Combobox(fields, textvariable=self._tree_canvas_print_vars[key], values=values, state="readonly", width=20).grid(row=row, column=1, sticky="w", pady=3)
+        for row, (label, key) in enumerate((("Поля", "margin"), ("Коэффициент", "scale"), ("Перекрытие", "overlap"), ("DPI", "dpi")), start=0):
+            tk.Label(fields, text=label).grid(row=row, column=2, sticky="w", padx=(24, 3), pady=3)
+            ttk.Entry(fields, textvariable=self._tree_canvas_print_vars[key], width=8).grid(row=row, column=3, sticky="w", pady=3)
+        tk.Label(fields, text="Заголовок").grid(row=4, column=0, sticky="w", pady=3)
+        ttk.Entry(fields, textvariable=self._tree_canvas_print_vars["title"], width=44).grid(row=4, column=1, columnspan=3, sticky="ew", pady=3)
+        for index, (label, key) in enumerate((("Постер", "poster"), ("Легенда", "legend"), ("Подписи поколений", "generations"))):
+            tk.Checkbutton(fields, text=label, variable=self._tree_canvas_print_vars[key]).grid(row=5, column=index, sticky="w", pady=8)
+        self._tree_canvas_print_summary = tk.Label(window, text="Настройте параметры и создайте предпросмотр.", justify="left", anchor="w")
+        self._tree_canvas_print_summary.pack(fill="x", padx=12, pady=(4, 12))
+        actions = tk.Frame(window)
+        actions.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Button(actions, text="Предпросмотр", command=self._preview_tree_canvas_print_export).pack(side="left")
+        tk.Button(actions, text="Экспорт", command=self._export_tree_canvas_from_center).pack(side="right")
+        tk.Button(actions, text="Печать PDF", command=self._print_tree_canvas_from_center).pack(side="right", padx=(0, 6))
+
+    def _tree_canvas_print_options(self):
+        values = self._tree_canvas_print_vars
+        return TreeCanvasPrintOptions(
+            scope=values["scope"].get(), orientation=values["orientation"].get(),
+            margin=float(values["margin"].get()), scale=float(values["scale"].get()),
+            fit_mode=values["fit"].get(), poster=bool(values["poster"].get()),
+            overlap=float(values["overlap"].get()), title=values["title"].get().strip() or "GenealogyDB Tree",
+            include_legend=bool(values["legend"].get()), include_generation_labels=bool(values["generations"].get()),
+            dpi=max(72, int(values["dpi"].get())),
+        )
+
+    def _preview_tree_canvas_print_export(self) -> None:
+        try:
+            options = self._tree_canvas_print_options()
+        except ValueError:
+            messagebox.showwarning("Печать / Экспорт", "Поля, масштаб, перекрытие и DPI должны быть числами.", parent=self._tree_canvas_print_window)
+            return
+        model = self._tree_canvas_model.__class__(**{**self._tree_canvas_model.__dict__, "positions": dict(self._tree_canvas_positions)})
+        return self._submit_repository_task(
+            "Предпросмотр печати", lambda repository, _context: TreeCanvasService(repository).prepare_print_preview(model, options),
+            self._show_tree_canvas_print_preview,
+            on_error=lambda error: messagebox.showerror("Печать / Экспорт", str(error), parent=self._tree_canvas_print_window),
+        )
+
+    def _show_tree_canvas_print_preview(self, preview) -> None:
+        self._tree_canvas_print_preview = preview
+        self._tree_canvas_print_summary.config(text=(
+            f"Страниц: {preview.page_count} ({preview.page_columns} x {preview.page_rows})\n"
+            f"Людей: {preview.metadata['number_of_people']} | Семей: {preview.metadata['number_of_families']}\n"
+            f"Корень: {preview.metadata['root_person']} | Глубина: {preview.metadata['generation_depth']}"
+        ))
+
+    def _export_tree_canvas_from_center(self) -> None:
+        if self._tree_canvas_print_preview is None:
+            self._preview_tree_canvas_print_export()
+            return
+        export_format = self._tree_canvas_print_vars["format"].get()
+        destination = filedialog.asksaveasfilename(parent=self._tree_canvas_print_window, title="Экспорт полотна", initialdir=str(EXPORT_DIR), initialfile=f"tree_canvas.{export_format}", defaultextension=f".{export_format}", filetypes=[(export_format.upper(), f"*.{export_format}")])
+        if destination:
+            self._submit_tree_canvas_export(self._tree_canvas_print_preview, destination, export_format)
+
+    def _print_tree_canvas_from_center(self) -> None:
+        if self._tree_canvas_print_preview is None:
+            self._preview_tree_canvas_print_export()
+            return
+        destination = filedialog.asksaveasfilename(parent=self._tree_canvas_print_window, title="Печать полотна", initialdir=str(EXPORT_DIR), initialfile="tree_canvas_print.pdf", defaultextension=".pdf", filetypes=[("PDF", "*.pdf")])
+        if destination:
+            self._submit_tree_canvas_export(self._tree_canvas_print_preview, destination, "pdf")
+
+    def _submit_tree_canvas_export(self, preview, destination, export_format) -> None:
+        return self._submit_repository_task(
+            "Печать / Экспорт полотна", lambda repository, _context: TreeCanvasService(repository).export_canvas(preview, destination, export_format),
+            lambda _path: None,
+            on_error=lambda error: messagebox.showerror("Печать / Экспорт", str(error), parent=self._tree_canvas_print_window),
+        )
+
+    def _close_tree_canvas_print_export(self) -> None:
+        if self._tree_canvas_print_window is not None:
+            try:
+                self._tree_canvas_print_window.destroy()
+            except Exception:
+                pass
+        self._tree_canvas_print_window = None
+        self._tree_canvas_print_preview = None
 
     def _close_tree_canvas(self) -> None:
         if self._tree_canvas_pending_changes and not messagebox.askyesno(

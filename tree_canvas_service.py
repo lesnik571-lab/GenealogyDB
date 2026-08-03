@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import struct
 import zlib
@@ -162,6 +163,33 @@ class TreeCanvasLayoutCommand:
 
     def redo(self):
         TreeCanvasService._write_layout_payload(self.result.path, self.result.after_payload)
+
+
+@dataclass(frozen=True)
+class TreeCanvasPrintOptions:
+    scope: str = "current_view"
+    orientation: str = "landscape"
+    margin: float = 24.0
+    scale: float = 1.0
+    fit_mode: str = "fit_page"
+    poster: bool = False
+    overlap: float = 18.0
+    title: str = "GenealogyDB Tree"
+    include_legend: bool = True
+    include_generation_labels: bool = True
+    dpi: int = 300
+
+
+@dataclass(frozen=True)
+class TreeCanvasPrintPreview:
+    model: TreeCanvasModel
+    metadata: dict[str, object]
+    page_count: int
+    page_columns: int
+    page_rows: int
+    page_size: tuple[float, float]
+    content_scale: float
+    options: TreeCanvasPrintOptions
 
 
 class TreeAutoLayoutEngine:
@@ -627,10 +655,64 @@ class TreeCanvasService:
             return {}
         return self._payload_positions(payload, visible_ids)
 
-    def export_svg(self, model: TreeCanvasModel, destination_path, *, scale=1.0, title="GenealogyDB Tree Canvas") -> Path:
+    def prepare_print_preview(self, model: TreeCanvasModel, options: TreeCanvasPrintOptions | None = None) -> TreeCanvasPrintPreview:
+        options = options or TreeCanvasPrintOptions()
+        if options.scope not in {"current_view", "selected_branch", "complete_tree"}:
+            raise ValueError("Неизвестная область печати")
+        if options.orientation not in {"portrait", "landscape"}:
+            raise ValueError("Ориентация должна быть portrait или landscape")
+        if options.fit_mode not in {"manual", "fit_width", "fit_page"}:
+            raise ValueError("Неизвестный режим масштабирования")
+        scoped = self._print_scope(model, options.scope)
+        width, height, _offset_x, _offset_y = self._bounds(scoped, 1.0)
+        page_size = (842.0, 595.0) if options.orientation == "landscape" else (595.0, 842.0)
+        usable_width = max(1.0, page_size[0] - options.margin * 2)
+        usable_height = max(1.0, page_size[1] - options.margin * 2 - 28)
+        if options.fit_mode == "fit_page":
+            content_scale = min(usable_width / width, usable_height / height)
+        elif options.fit_mode == "fit_width":
+            content_scale = usable_width / width
+        else:
+            content_scale = max(0.05, float(options.scale))
+        content_width, content_height = width * content_scale, height * content_scale
+        if options.poster:
+            step_width = max(1.0, usable_width - options.overlap)
+            step_height = max(1.0, usable_height - options.overlap)
+            page_columns = max(1, math.ceil((content_width - options.overlap) / step_width))
+            page_rows = max(1, math.ceil((content_height - options.overlap) / step_height))
+        else:
+            page_columns = page_rows = 1
+        root = next((node for node in scoped.nodes if node.person_id == scoped.center_id), None)
+        metadata = {
+            "date": self._timestamp(),
+            "root_person": root.full_name if root else str(scoped.center_id),
+            "root_person_id": scoped.center_id,
+            "number_of_people": len(scoped.nodes),
+            "number_of_families": len({connector.family_id for connector in scoped.connectors}),
+            "generation_depth": max((abs(node.generation) for node in scoped.nodes), default=0),
+            "scope": options.scope,
+        }
+        return TreeCanvasPrintPreview(
+            scoped, metadata, page_columns * page_rows, page_columns, page_rows,
+            page_size, content_scale, options,
+        )
+
+    def export_canvas(self, preview: TreeCanvasPrintPreview, destination_path, export_format: str) -> Path:
+        export_format = str(export_format).lower()
+        if export_format == "svg":
+            return self.export_svg(preview.model, destination_path, scale=preview.content_scale, title=preview.options.title, metadata=preview.metadata, include_legend=preview.options.include_legend, include_generation_labels=preview.options.include_generation_labels)
+        if export_format == "png":
+            return self.export_png(preview.model, destination_path, scale=preview.content_scale, title=preview.options.title, dpi=preview.options.dpi, metadata=preview.metadata, include_legend=preview.options.include_legend, include_generation_labels=preview.options.include_generation_labels)
+        if export_format in {"jpg", "jpeg"}:
+            return self.export_jpeg(preview.model, destination_path, scale=preview.content_scale, title=preview.options.title, dpi=preview.options.dpi, metadata=preview.metadata, include_legend=preview.options.include_legend, include_generation_labels=preview.options.include_generation_labels)
+        if export_format == "pdf":
+            return self.export_print_pdf(preview, destination_path)
+        raise ValueError("Неподдерживаемый формат экспорта")
+
+    def export_svg(self, model: TreeCanvasModel, destination_path, *, scale=1.0, title="GenealogyDB Tree Canvas", metadata=None, include_legend=True, include_generation_labels=True) -> Path:
         destination = Path(destination_path)
         width, height, offset_x, offset_y = self._bounds(model, scale)
-        lines = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">', '<rect width="100%" height="100%" fill="#f4f7f8"/>', f'<text x="24" y="30" font-family="Segoe UI" font-size="18">{escape(title)}</text>']
+        lines = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">', f'<metadata>{escape(json.dumps(metadata or {}, ensure_ascii=False))}</metadata>', '<rect width="100%" height="100%" fill="#f4f7f8"/>', f'<text x="24" y="30" font-family="Segoe UI" font-size="18">{escape(title)}</text>']
         for connector in model.connectors:
             points = self._connector_points(model, connector, scale, offset_x, offset_y)
             stroke = "#8c4b19" if connector.special else ("#376b85" if connector.kind == "parent" else "#75808a")
@@ -646,22 +728,34 @@ class TreeCanvasService:
                 f'<text x="{x + 10 * scale}" y="{y + 62 * scale}" font-family="Segoe UI" font-size="{8 * scale}">{escape(f"ID {node.person_id} | {node.gedcom_id or '-'}")}</text>',
                 f'<text x="{x + 10 * scale}" y="{y + 79 * scale}" font-family="Segoe UI" font-size="{8 * scale}">{escape(node.role)}</text>',
             ))
-        lines.append(f'<text x="24" y="{height - 22}" font-family="Segoe UI" font-size="10">Legend: selected / unnamed / duplicate / warning / collapsed | Scale {scale:.2f}</text>')
+        if include_generation_labels:
+            for generation in sorted({node.generation for node in model.nodes}):
+                lines.append(f'<text x="8" y="{56 + (generation - min((node.generation for node in model.nodes), default=0)) * (CARD_HEIGHT + V_GAP) * scale}" font-family="Segoe UI" font-size="9">Generation {generation}</text>')
+        if include_legend:
+            lines.append(f'<text x="24" y="{height - 22}" font-family="Segoe UI" font-size="10">Legend: selected / unnamed / duplicate / warning / collapsed | Scale {scale:.2f}</text>')
         lines.append("</svg>")
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text("\n".join(lines), encoding="utf-8")
         return destination
 
-    def export_png(self, model, destination_path, *, scale=1.0, title="GenealogyDB Tree Canvas") -> Path:
+    def export_png(self, model, destination_path, *, scale=1.0, title="GenealogyDB Tree Canvas", dpi=96, metadata=None, include_legend=True, include_generation_labels=True) -> Path:
+        try:
+            from PIL.PngImagePlugin import PngInfo
+        except ImportError as error:
+            raise RuntimeError("Для растрового экспорта требуется Pillow") from error
         destination = Path(destination_path)
-        width, height, _offset_x, _offset_y = self._bounds(model, scale)
-        # A valid white PNG canvas preserves a dependency-free export contract; SVG carries rich vector detail.
-        raw = b"".join(b"\x00" + b"\xf4\xf7\xf8" * width for _ in range(height))
-        def chunk(kind, data):
-            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
-        content = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b"")
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(content)
+        image = self._render_raster(model, scale, title, dpi, include_legend, include_generation_labels)
+        png_info = PngInfo()
+        png_info.add_text("GenealogyDB", json.dumps(metadata or {}, ensure_ascii=False))
+        image.save(destination, format="PNG", dpi=(dpi, dpi), pnginfo=png_info)
+        return destination
+
+    def export_jpeg(self, model, destination_path, *, scale=1.0, title="GenealogyDB Tree Canvas", dpi=300, metadata=None, include_legend=True, include_generation_labels=True) -> Path:
+        destination = Path(destination_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        image = self._render_raster(model, scale, title, dpi, include_legend, include_generation_labels).convert("RGB")
+        image.save(destination, format="JPEG", quality=95, dpi=(dpi, dpi), optimize=True, comment=json.dumps(metadata or {}, ensure_ascii=False).encode("utf-8"))
         return destination
 
     def export_pdf(self, model, destination_path, *, scale=1.0, title="GenealogyDB Tree Canvas") -> Path:
@@ -681,6 +775,107 @@ class TreeCanvasService:
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(body)
         return destination
+
+    def export_print_pdf(self, preview: TreeCanvasPrintPreview, destination_path) -> Path:
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError as error:
+            raise RuntimeError("Для печати PDF требуется Pillow") from error
+        destination = Path(destination_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        preview_image = self._render_raster(
+            preview.model, preview.content_scale, preview.options.title, 96,
+            preview.options.include_legend, preview.options.include_generation_labels,
+        ).convert("RGB")
+        page_width, page_height = (int(value) for value in preview.page_size)
+        margin = int(preview.options.margin)
+        usable_width, usable_height = page_width - margin * 2, page_height - margin * 2 - 22
+        overlap = int(preview.options.overlap if preview.options.poster else 0)
+        step_width, step_height = max(1, usable_width - overlap), max(1, usable_height - overlap)
+        pages = []
+        for row in range(preview.page_rows):
+            for column in range(preview.page_columns):
+                page = Image.new("RGB", (page_width, page_height), "white")
+                crop = preview_image.crop((column * step_width, row * step_height, column * step_width + usable_width, row * step_height + usable_height))
+                page.paste(crop, (margin, margin))
+                draw = ImageDraw.Draw(page)
+                page_number = row * preview.page_columns + column + 1
+                draw.text((margin, page_height - 18), f"{preview.options.title} | {page_number}/{preview.page_count}", fill="#222222")
+                if preview.options.poster:
+                    draw.rectangle((margin, margin, margin + usable_width - 1, margin + usable_height - 1), outline="#888888", width=1)
+                    mark = 8
+                    for x in (margin, margin + usable_width):
+                        draw.line((x, margin - mark, x, margin + mark), fill="#555555")
+                        draw.line((x, margin + usable_height - mark, x, margin + usable_height + mark), fill="#555555")
+                    for y in (margin, margin + usable_height):
+                        draw.line((margin - mark, y, margin + mark, y), fill="#555555")
+                        draw.line((margin + usable_width - mark, y, margin + usable_width + mark, y), fill="#555555")
+                pages.append(page)
+        pages[0].save(destination, format="PDF", save_all=True, append_images=pages[1:], resolution=96.0, title=preview.options.title, subject=json.dumps(preview.metadata, ensure_ascii=False))
+        return destination
+
+    def _print_scope(self, model, scope):
+        if scope != "selected_branch":
+            return model
+        children = defaultdict(set)
+        spouses = defaultdict(set)
+        for connector in model.connectors:
+            if connector.kind == "parent":
+                children[connector.source_id].add(connector.target_id)
+            elif connector.kind == "spouse":
+                spouses[connector.source_id].add(connector.target_id)
+                spouses[connector.target_id].add(connector.source_id)
+        visible, queue = {model.center_id}, deque([model.center_id])
+        while queue:
+            person_id = queue.popleft()
+            for related in sorted(children[person_id] | spouses[person_id]):
+                if related not in visible:
+                    visible.add(related)
+                    queue.append(related)
+        return TreeCanvasModel(
+            model.center_id,
+            tuple(node for node in model.nodes if node.person_id in visible),
+            tuple(connector for connector in model.connectors if connector.source_id in visible and connector.target_id in visible),
+            {person_id: point for person_id, point in model.positions.items() if person_id in visible},
+            model.mode, model.ancestor_depth, model.descendant_depth, model.collapsed_ids,
+        )
+
+    def _render_raster(self, model, scale, title, dpi, include_legend, include_generation_labels):
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError as error:
+            raise RuntimeError("Для растрового экспорта требуется Pillow") from error
+        factor = max(0.1, float(dpi) / 96.0)
+        render_scale = max(0.05, float(scale)) * factor
+        width, height, offset_x, offset_y = self._bounds(model, render_scale)
+        image = Image.new("RGB", (max(1, width), max(1, height)), "#f4f7f8")
+        draw = ImageDraw.Draw(image)
+        draw.text((24 * factor, 14 * factor), title, fill="#1f2933")
+        for connector in model.connectors:
+            if connector.source_id not in model.positions or connector.target_id not in model.positions:
+                continue
+            source = model.positions[connector.source_id]
+            target = model.positions[connector.target_id]
+            sx, sy = self._point((source[0] + CARD_WIDTH / 2, source[1] + (CARD_HEIGHT if connector.kind == "parent" else CARD_HEIGHT / 2)), render_scale, offset_x, offset_y)
+            tx, ty = self._point((target[0] + CARD_WIDTH / 2, target[1] if connector.kind == "parent" else target[1] + CARD_HEIGHT / 2), render_scale, offset_x, offset_y)
+            stroke = "#8c4b19" if connector.special else ("#376b85" if connector.kind == "parent" else "#75808a")
+            points = [(sx, sy), (sx, (sy + ty) / 2), (tx, (sy + ty) / 2), (tx, ty)] if connector.kind == "parent" else [(sx, sy), (tx, ty)]
+            draw.line(points, fill=stroke, width=max(1, round(2 * factor)))
+        for node in model.nodes:
+            x, y = self._point(model.positions[node.person_id], render_scale, offset_x, offset_y)
+            fill, outline = self._colors(node)
+            box = (x, y, x + CARD_WIDTH * render_scale, y + CARD_HEIGHT * render_scale)
+            draw.rounded_rectangle(box, radius=max(1, round(4 * factor)), fill=fill, outline=outline, width=max(1, round(2 * factor)))
+            text_x = x + 10 * render_scale
+            for index, value in enumerate((node.full_name, f"{node.birth_year or '-'} - {node.death_year or '-'}", f"ID {node.person_id} | {node.gedcom_id or '-'}", node.role)):
+                draw.text((text_x, y + (13 + index * 20) * render_scale), value, fill="#1f2933")
+        if include_generation_labels:
+            minimum = min((node.generation for node in model.nodes), default=0)
+            for generation in sorted({node.generation for node in model.nodes}):
+                draw.text((8 * factor, (56 + (generation - minimum) * (CARD_HEIGHT + V_GAP)) * render_scale), f"Generation {generation}", fill="#52606d")
+        if include_legend:
+            draw.text((24 * factor, max(0, height - 20 * factor)), "Legend: selected / unnamed / duplicate / warning / collapsed", fill="#52606d")
+        return image
 
     @staticmethod
     def _depth(value):
