@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import re
 import struct
 import zlib
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable
 from xml.sax.saxutils import escape
@@ -20,7 +22,10 @@ from repository.relationship_service import RelationshipService
 from undo_manager import RepositoryDeltaCommand, TableDelta
 
 
-LAYOUT_MODES = ("top_to_bottom", "left_to_right", "ancestors_only", "descendants_only", "hourglass")
+LAYOUT_MODES = (
+    "top_to_bottom", "bottom_to_top", "left_to_right", "right_to_left",
+    "ancestors_only", "descendants_only", "hourglass", "fan", "compact_family_groups",
+)
 CARD_WIDTH = 210
 CARD_HEIGHT = 94
 H_GAP = 48
@@ -106,6 +111,193 @@ class TreeCanvasExecutionResult:
 
 class TreeCanvasSafetyError(ValueError):
     """Raised when a pending canvas relationship change is unsafe."""
+
+
+@dataclass(frozen=True)
+class TreeLayoutOptions:
+    layout_type: str = "hourglass"
+    horizontal_spacing: float = H_GAP
+    vertical_spacing: float = V_GAP
+    card_width: float = CARD_WIDTH
+    card_height: float = CARD_HEIGHT
+    compact: bool = False
+    line_routing: str = "orthogonal"
+
+
+@dataclass(frozen=True)
+class TreeLayoutPreview:
+    positions: dict[int, tuple[float, float]]
+    moved_node_count: int
+    overlap_count: int
+    edge_crossing_count: int
+    pinned_nodes: frozenset[int]
+    options: TreeLayoutOptions
+
+
+@dataclass(frozen=True)
+class TreeLayoutResult:
+    path: Path
+    before_payload: dict
+    after_payload: dict
+    preview: TreeLayoutPreview
+
+
+class TreeCanvasLayoutCommand:
+    """Undo/redo one layout-file update without touching genealogy tables."""
+
+    name = "Автораскладка дерева"
+
+    def __init__(self, result: TreeLayoutResult) -> None:
+        self.result = result
+
+    @property
+    def has_effect(self):
+        return self.result.before_payload != self.result.after_payload
+
+    def undo(self):
+        if self.result.before_payload:
+            TreeCanvasService._write_layout_payload(self.result.path, self.result.before_payload)
+        elif self.result.path.exists():
+            self.result.path.unlink()
+
+    def redo(self):
+        TreeCanvasService._write_layout_payload(self.result.path, self.result.after_payload)
+
+
+class TreeAutoLayoutEngine:
+    """Pure, deterministic, generation-aware geometry for visible canvas nodes."""
+
+    def layout(
+        self,
+        nodes: Iterable[TreeCanvasNode],
+        connectors: Iterable[TreeCanvasConnector],
+        options: TreeLayoutOptions | None = None,
+        *,
+        pinned_positions=None,
+        previous_positions=None,
+        progress_callback=None,
+        cancel_callback=None,
+    ) -> dict[int, tuple[float, float]]:
+        options = options or TreeLayoutOptions()
+        if options.layout_type not in LAYOUT_MODES:
+            raise ValueError("Неизвестный режим автораскладки")
+        node_list = tuple(sorted(nodes, key=lambda node: (node.generation, node.person_id)))
+        connector_list = tuple(connectors)
+        pinned = {int(key): (float(value[0]), float(value[1])) for key, value in (pinned_positions or {}).items()}
+        node_ids = {node.person_id for node in node_list}
+        pinned = {key: value for key, value in pinned.items() if key in node_ids}
+        layers = defaultdict(list)
+        for node in node_list:
+            layers[node.generation].append(node.person_id)
+        spouse_map, parent_map = defaultdict(set), defaultdict(set)
+        for connector in connector_list:
+            if connector.kind == "spouse":
+                spouse_map[connector.source_id].add(connector.target_id)
+                spouse_map[connector.target_id].add(connector.source_id)
+            elif connector.kind == "parent":
+                parent_map[connector.target_id].add(connector.source_id)
+        sibling_groups = defaultdict(list)
+        for person_id, parents in parent_map.items():
+            sibling_groups[tuple(sorted(parents))].append(person_id)
+        sibling_index = {
+            person_id: (tuple(sorted(parents)), index)
+            for parents, people in sibling_groups.items()
+            for index, person_id in enumerate(sorted(people))
+        }
+        gap_x = max(8.0, float(options.horizontal_spacing) * (0.7 if options.compact else 1.0))
+        gap_y = max(8.0, float(options.vertical_spacing) * (0.7 if options.compact else 1.0))
+        width, height = max(40.0, float(options.card_width)), max(30.0, float(options.card_height))
+        positions = dict(pinned)
+        occupied = [(person_id, x, y, x + width, y + height) for person_id, (x, y) in pinned.items()]
+        previous_positions = previous_positions or {}
+        generations = sorted(layers)
+        for layer_index, generation in enumerate(generations):
+            if cancel_callback:
+                cancel_callback()
+            ordered = self._order_layer(layers[generation], spouse_map, parent_map, positions, previous_positions)
+            cursor = 90.0
+            y = 90.0 + layer_index * (height + gap_y)
+            for person_id in ordered:
+                if person_id in positions:
+                    continue
+                preferred = cursor
+                parent_key, index = sibling_index.get(person_id, ((), 0))
+                parent_centers = [positions[parent][0] + width / 2 for parent in parent_key if parent in positions]
+                siblings = sibling_groups.get(parent_key, ())
+                if parent_centers and siblings:
+                    group_width = len(siblings) * width + max(0, len(siblings) - 1) * gap_x
+                    preferred = sum(parent_centers) / len(parent_centers) - group_width / 2 + index * (width + gap_x)
+                x = self._next_available(max(cursor, preferred), y, width, height, gap_x, occupied)
+                positions[person_id] = (x, y)
+                occupied.append((person_id, x, y, x + width, y + height))
+                cursor = x + width + gap_x
+            if progress_callback:
+                progress_callback("Автораскладка дерева", layer_index + 1, len(generations))
+        if not pinned:
+            positions = self._orient(positions, options, width, height)
+        positions.update(pinned)
+        return {person_id: (round(x, 2), round(y, 2)) for person_id, (x, y) in positions.items()}
+
+    @staticmethod
+    def _order_layer(person_ids, spouse_map, parent_map, positions, previous_positions):
+        remaining, groups = set(person_ids), []
+        while remaining:
+            start = min(remaining)
+            group, queue = set(), deque([start])
+            while queue:
+                person_id = queue.popleft()
+                if person_id in group or person_id not in remaining:
+                    continue
+                group.add(person_id)
+                queue.extend(spouse for spouse in spouse_map[person_id] if spouse in remaining)
+            remaining -= group
+            groups.append(tuple(sorted(group)))
+        def group_key(group):
+            parent_centers = [positions[parent][0] for person in group for parent in parent_map[person] if parent in positions]
+            prior = [previous_positions[person][0] for person in group if person in previous_positions]
+            return (sum(parent_centers) / len(parent_centers) if parent_centers else sum(prior) / len(prior) if prior else min(group), min(group))
+        return tuple(person_id for group in sorted(groups, key=group_key) for person_id in group)
+
+    @staticmethod
+    def _next_available(cursor, y, width, height, gap, occupied):
+        x = cursor
+        while True:
+            conflicts = [item for item in occupied if x < item[3] and x + width > item[1] and y < item[4] and y + height > item[2]]
+            if not conflicts:
+                return x
+            x = max(item[3] for item in conflicts) + gap
+
+    @staticmethod
+    def _orient(positions, options, width, height):
+        if not positions or options.layout_type in {"top_to_bottom", "ancestors_only", "descendants_only", "hourglass", "compact_family_groups"}:
+            return positions
+        minimum_x, maximum_x = min(x for x, _y in positions.values()), max(x for x, _y in positions.values())
+        minimum_y, maximum_y = min(y for _x, y in positions.values()), max(y for _x, y in positions.values())
+        gap_x = max(8.0, float(options.horizontal_spacing) * (0.7 if options.compact else 1.0))
+        gap_y = max(8.0, float(options.vertical_spacing) * (0.7 if options.compact else 1.0))
+        if options.layout_type == "bottom_to_top":
+            return {person_id: (x, maximum_y - (y - minimum_y)) for person_id, (x, y) in positions.items()}
+        if options.layout_type == "left_to_right":
+            return {
+                person_id: (
+                    90 + (y - minimum_y) * (width + gap_x) / (height + gap_y),
+                    90 + (x - minimum_x) * (height + gap_y) / (width + gap_x),
+                ) for person_id, (x, y) in positions.items()
+            }
+        if options.layout_type == "right_to_left":
+            return {
+                person_id: (
+                    90 + (maximum_y - y) * (width + gap_x) / (height + gap_y),
+                    90 + (x - minimum_x) * (height + gap_y) / (width + gap_x),
+                ) for person_id, (x, y) in positions.items()
+            }
+        if options.layout_type == "fan":
+            ordered = sorted(positions)
+            return {
+                person_id: (90 + index * (width + 24), 90 + abs(index - len(ordered) / 2) * (height * 0.45))
+                for index, person_id in enumerate(ordered)
+            }
+        return positions
 
 
 class TreeCanvasNavigation:
@@ -231,6 +423,116 @@ class TreeCanvasService:
         destination.write_text(json.dumps(self.dry_run(preview), ensure_ascii=False, indent=2), encoding="utf-8")
         return destination
 
+    def preview_auto_layout(
+        self,
+        model: TreeCanvasModel,
+        *,
+        positions=None,
+        pinned_nodes=(),
+        options: TreeLayoutOptions | None = None,
+        progress_callback=None,
+        cancel_callback=None,
+    ) -> TreeLayoutPreview:
+        options = options or TreeLayoutOptions(layout_type=model.mode)
+        current = {int(key): (float(value[0]), float(value[1])) for key, value in (positions or model.positions).items()}
+        pinned_ids = frozenset(int(value) for value in pinned_nodes)
+        pinned = {person_id: current[person_id] for person_id in pinned_ids if person_id in current}
+        calculated = TreeAutoLayoutEngine().layout(
+            model.nodes, model.connectors, options, pinned_positions=pinned,
+            previous_positions=current, progress_callback=progress_callback, cancel_callback=cancel_callback,
+        )
+        return TreeLayoutPreview(
+            calculated,
+            sum(1 for person_id, point in calculated.items() if current.get(person_id) != point),
+            self._overlap_count(calculated, options.card_width, options.card_height),
+            self._edge_crossing_count(model.connectors, calculated, options.card_width, options.card_height),
+            pinned_ids, options,
+        )
+
+    def apply_auto_layout(self, model: TreeCanvasModel, preview: TreeLayoutPreview, *, name="default", scale=1.0) -> TreeLayoutResult:
+        path = self._named_layout_path(model.center_id, name)
+        before = self._read_layout_payload(path)
+        created = before.get("metadata", {}).get("created_time") or self._timestamp()
+        payload = self._layout_payload(
+            preview.positions, model.center_id, name, preview.options, model.ancestor_depth,
+            model.descendant_depth, scale, preview.pinned_nodes, created,
+        )
+        self._write_layout_payload(path, payload)
+        return TreeLayoutResult(path, before, payload, preview)
+
+    def save_named_layout(self, name, model: TreeCanvasModel, positions, *, pinned_nodes=(), options=None, scale=1.0) -> Path:
+        options = options or TreeLayoutOptions(layout_type=model.mode)
+        path = self._named_layout_path(model.center_id, name)
+        before = self._read_layout_payload(path)
+        created = before.get("metadata", {}).get("created_time") or self._timestamp()
+        self._write_layout_payload(path, self._layout_payload(
+            positions, model.center_id, name, options, model.ancestor_depth,
+            model.descendant_depth, scale, pinned_nodes, created,
+        ))
+        return path
+
+    def list_named_layouts(self, center_id):
+        prefix = f"tree_{int(center_id)}"
+        records = []
+        for path in sorted(self.layout_dir.glob(f"{prefix}*.json")):
+            payload = self._read_layout_payload(path)
+            metadata = payload.get("metadata", {})
+            records.append({"path": path, "name": metadata.get("name", "default"), **metadata})
+        return records
+
+    def load_named_layout(self, center_id, name="default", visible_ids=None):
+        payload = self._read_layout_payload(self._named_layout_path(center_id, name))
+        positions = self._payload_positions(payload, visible_ids)
+        return positions, frozenset(int(value) for value in payload.get("metadata", {}).get("pinned_nodes", ())), payload.get("metadata", {})
+
+    def delete_named_layout(self, center_id, name):
+        path = self._named_layout_path(center_id, name)
+        if path.exists():
+            path.unlink()
+
+    def rename_named_layout(self, center_id, old_name, new_name):
+        old_path, new_path = self._named_layout_path(center_id, old_name), self._named_layout_path(center_id, new_name)
+        payload = self._read_layout_payload(old_path)
+        if not payload:
+            raise ValueError("Раскладка не найдена")
+        payload.setdefault("metadata", {})["name"] = self._layout_name(new_name)
+        payload["metadata"]["modified_time"] = self._timestamp()
+        self._write_layout_payload(new_path, payload)
+        if old_path != new_path and old_path.exists():
+            old_path.unlink()
+        return new_path
+
+    def duplicate_named_layout(self, center_id, source_name, target_name):
+        source = self._read_layout_payload(self._named_layout_path(center_id, source_name))
+        if not source:
+            raise ValueError("Раскладка не найдена")
+        source.setdefault("metadata", {})["name"] = self._layout_name(target_name)
+        source["metadata"]["created_time"] = self._timestamp()
+        source["metadata"]["modified_time"] = self._timestamp()
+        target = self._named_layout_path(center_id, target_name)
+        self._write_layout_payload(target, source)
+        return target
+
+    def export_layout_configuration(self, center_id, name, destination_path):
+        payload = self._read_layout_payload(self._named_layout_path(center_id, name))
+        if not payload:
+            raise ValueError("Раскладка не найдена")
+        destination = Path(destination_path).expanduser()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return destination
+
+    def import_layout_configuration(self, destination_name, source_path, *, center_id=None):
+        payload = json.loads(Path(source_path).expanduser().read_text(encoding="utf-8"))
+        metadata = payload.setdefault("metadata", {})
+        resolved_center = int(center_id if center_id is not None else metadata.get("centered_person"))
+        metadata["name"] = self._layout_name(destination_name)
+        metadata["centered_person"] = resolved_center
+        metadata["modified_time"] = self._timestamp()
+        destination = self._named_layout_path(resolved_center, destination_name)
+        self._write_layout_payload(destination, payload)
+        return destination
+
     def build(
         self,
         center_id: int,
@@ -298,30 +600,32 @@ class TreeCanvasService:
         connectors = tuple(
             self._connectors(graph, visible, parent_map, center_id)
         )
-        positions = self._layout(nodes, connectors, mode)
+        positions = TreeAutoLayoutEngine().layout(nodes, connectors, TreeLayoutOptions(layout_type=mode), cancel_callback=cancel_callback)
         positions.update(self.load_positions(center_id, set(visible)))
         if progress_callback:
             progress_callback("Разметка дерева", len(nodes), len(nodes))
         return TreeCanvasModel(center_id, nodes, connectors, positions, mode, ancestor_depth, descendant_depth, collapsed)
 
     def save_positions(self, center_id, positions) -> Path:
-        self.layout_dir.mkdir(parents=True, exist_ok=True)
-        destination = self._layout_path(center_id)
-        payload = {str(int(person_id)): [round(float(x), 2), round(float(y), 2)] for person_id, (x, y) in positions.items()}
-        destination.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        return destination
+        path = self._layout_path(center_id)
+        existing = self._read_layout_payload(path)
+        metadata = existing.get("metadata", {})
+        payload = self._layout_payload(
+            positions, center_id, metadata.get("name", "default"),
+            TreeLayoutOptions(layout_type=metadata.get("layout_type", "hourglass")),
+            metadata.get("ancestor_depth", 3), metadata.get("descendant_depth", 3),
+            metadata.get("scale", 1.0), metadata.get("pinned_nodes", ()),
+            metadata.get("created_time") or self._timestamp(),
+        )
+        self._write_layout_payload(path, payload)
+        return path
 
     def load_positions(self, center_id, visible_ids=None):
         try:
-            payload = json.loads(self._layout_path(center_id).read_text(encoding="utf-8"))
+            payload = self._read_layout_payload(self._layout_path(center_id))
         except (OSError, ValueError):
             return {}
-        allowed = set(visible_ids) if visible_ids is not None else None
-        return {
-            int(person_id): (float(value[0]), float(value[1]))
-            for person_id, value in payload.items()
-            if isinstance(value, list) and len(value) == 2 and (allowed is None or int(person_id) in allowed)
-        }
+        return self._payload_positions(payload, visible_ids)
 
     def export_svg(self, model: TreeCanvasModel, destination_path, *, scale=1.0, title="GenealogyDB Tree Canvas") -> Path:
         destination = Path(destination_path)
@@ -597,6 +901,105 @@ class TreeCanvasService:
 
     def _layout_path(self, center_id):
         return self.layout_dir / f"tree_{int(center_id)}.json"
+
+    def _named_layout_path(self, center_id, name="default"):
+        name = self._layout_name(name)
+        return self._layout_path(center_id) if name == "default" else self.layout_dir / f"tree_{int(center_id)}_{name}.json"
+
+    @staticmethod
+    def _layout_name(name):
+        normalized = re.sub(r"[^A-Za-z0-9_-]+", "_", str(name or "default").strip()).strip("_")
+        if not normalized:
+            raise ValueError("Укажите имя раскладки")
+        return normalized[:80]
+
+    @staticmethod
+    def _timestamp():
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    @staticmethod
+    def _read_layout_payload(path):
+        try:
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        if "positions" not in payload:
+            return {"positions": payload, "metadata": {"name": "default", "pinned_nodes": []}}
+        return payload
+
+    @staticmethod
+    def _write_layout_payload(path, payload):
+        destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_suffix(destination.suffix + ".tmp")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(destination)
+
+    @staticmethod
+    def _payload_positions(payload, visible_ids=None):
+        allowed = set(visible_ids) if visible_ids is not None else None
+        values = payload.get("positions", payload)
+        return {
+            int(person_id): (float(value[0]), float(value[1]))
+            for person_id, value in values.items()
+            if isinstance(value, list) and len(value) == 2 and (allowed is None or int(person_id) in allowed)
+        }
+
+    def _layout_payload(self, positions, center_id, name, options, ancestor_depth, descendant_depth, scale, pinned_nodes, created_time):
+        now = self._timestamp()
+        return {
+            "metadata": {
+                "name": self._layout_name(name), "centered_person": int(center_id),
+                "layout_type": options.layout_type, "ancestor_depth": int(ancestor_depth),
+                "descendant_depth": int(descendant_depth), "scale": float(scale),
+                "created_time": created_time, "modified_time": now,
+                "pinned_nodes": sorted(int(value) for value in pinned_nodes),
+                "horizontal_spacing": options.horizontal_spacing, "vertical_spacing": options.vertical_spacing,
+                "card_width": options.card_width, "card_height": options.card_height,
+                "compact": options.compact, "line_routing": options.line_routing,
+            },
+            "positions": {
+                str(int(person_id)): [round(float(x), 2), round(float(y), 2)]
+                for person_id, (x, y) in positions.items()
+            },
+        }
+
+    @staticmethod
+    def _overlap_count(positions, width, height):
+        rectangles = [(person_id, x, y, x + width, y + height) for person_id, (x, y) in positions.items()]
+        return sum(
+            1 for index, left in enumerate(rectangles) for right in rectangles[index + 1:]
+            if left[1] < right[3] and left[3] > right[1] and left[2] < right[4] and left[4] > right[2]
+        )
+
+    @staticmethod
+    def _edge_crossing_count(connectors, positions, width, height):
+        segments = []
+        for connector in connectors:
+            if connector.source_id not in positions or connector.target_id not in positions:
+                continue
+            source, target = positions[connector.source_id], positions[connector.target_id]
+            segments.append((connector.source_id, connector.target_id, source[0] + width / 2, source[1] + height / 2, target[0] + width / 2, target[1] + height / 2))
+        crossings = 0
+        for index, first in enumerate(segments):
+            for second in segments[index + 1:]:
+                if {first[0], first[1]} & {second[0], second[1]}:
+                    continue
+                if TreeCanvasService._segments_cross(first[2:], second[2:]):
+                    crossings += 1
+        return crossings
+
+    @staticmethod
+    def _segments_cross(first, second):
+        ax, ay, bx, by = first
+        cx, cy, dx, dy = second
+        def orient(px, py, qx, qy, rx, ry):
+            return (qx - px) * (ry - py) - (qy - py) * (rx - px)
+        first_a, first_b = orient(ax, ay, bx, by, cx, cy), orient(ax, ay, bx, by, dx, dy)
+        second_a, second_b = orient(cx, cy, dx, dy, ax, ay), orient(cx, cy, dx, dy, bx, by)
+        return (first_a > 0) != (first_b > 0) and (second_a > 0) != (second_b > 0)
 
     @staticmethod
     def _point(position, scale, offset_x, offset_y):

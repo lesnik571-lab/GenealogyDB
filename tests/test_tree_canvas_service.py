@@ -1,5 +1,6 @@
 import sqlite3
 import inspect
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,8 +11,11 @@ from repository.person_repository import PersonRepository
 from audit_service import AuditService
 from tree_canvas_service import (
     CARD_HEIGHT, CARD_WIDTH, MAX_ZOOM, MIN_ZOOM, TreeCanvasChange,
-    TreeCanvasNavigation, TreeCanvasSafetyError, TreeCanvasService,
+    TreeAutoLayoutEngine, TreeCanvasLayoutCommand, TreeCanvasNavigation,
+    TreeCanvasConnector, TreeCanvasNode, TreeCanvasSafetyError, TreeCanvasService,
+    TreeLayoutOptions,
 )
+from undo_manager import UndoManager
 from viewer import GenealogyViewer
 
 
@@ -115,7 +119,7 @@ def test_viewer_tree_canvas_is_a_read_only_graph_editor_extension():
 
     assert 'text="Интерактивное полотно"' in graph_editor
     assert "tk.Canvas" in opening
-    for label in ("Назад", "Вперёд", "Предки", "Потомки", "Вписать", "Центр", "Сохранить позиции", "SVG", "PNG", "PDF"):
+    for label in ("Назад", "Вперёд", "Предки", "Потомки", "Подогнать к окну", "Центр", "Сохранить позиции", "SVG", "PNG", "PDF", "Автораскладка", "Отменить раскладку", "Повторить раскладку", "Сбросить расположение", "Закрепить карточку", "Открепить карточку", "Открепить все"):
         assert f'"{label}"' in opening
     assert "cancellable=True" in loading
     assert "TreeCanvasService(repository).build" in loading
@@ -219,3 +223,103 @@ def test_viewer_tree_canvas_editing_controls_are_preview_first_and_headless_safe
     assert "tree-canvas-connector" in drawing
     assert "Отменить неподтверждённые изменения?" in closing
     assert "repository.conn" not in opening + drawing + menu
+
+
+def test_auto_layout_is_deterministic_groups_spouses_and_preserves_pins(tmp_path):
+    repo = repository(tmp_path)
+    try:
+        for index in range(1, 8):
+            add_person(repo, index)
+        family(repo, 1, 1, 2, [3, 4])
+        family(repo, 2, 1, 5, [6])
+        family(repo, 3, 7, 2, [])
+        model = TreeCanvasService(repo).build(3, ancestor_depth=3, descendant_depth=3)
+        engine = TreeAutoLayoutEngine()
+        options = TreeLayoutOptions(layout_type="compact_family_groups", compact=True)
+        grouped = engine.layout(model.nodes, model.connectors, options)
+        first = engine.layout(model.nodes, model.connectors, options, pinned_positions={1: (777, 333)})
+        second = engine.layout(model.nodes, model.connectors, options, pinned_positions={1: (777, 333)})
+
+        assert first == second
+        assert first[1] == (777.0, 333.0)
+        assert abs(grouped[1][1] - grouped[2][1]) < CARD_HEIGHT + 1
+        assert TreeCanvasService._overlap_count(first, CARD_WIDTH, CARD_HEIGHT) == 0
+    finally:
+        repo.close()
+
+
+def test_auto_layout_preview_cancel_undo_named_and_json_config_do_not_change_genealogy(tmp_path):
+    repo = repository(tmp_path)
+    try:
+        for index in range(1, 5):
+            add_person(repo, index)
+        family(repo, 1, 1, 2, [3, 4])
+        service = TreeCanvasService(repo, layout_dir=tmp_path / "layouts")
+        model = service.build(3, ancestor_depth=3, descendant_depth=3)
+        before_database = repo.capture_command_state()
+        current = dict(model.positions)
+        preview = service.preview_auto_layout(model, positions=current, pinned_nodes=(3,))
+
+        assert current == model.positions
+        assert preview.positions[3] == current[3]
+        with pytest.raises(RuntimeError):
+            service.preview_auto_layout(model, cancel_callback=lambda: (_ for _ in ()).throw(RuntimeError("cancelled")))
+        assert current == model.positions
+
+        result = service.apply_auto_layout(model, preview, name="plan-a")
+        command = TreeCanvasLayoutCommand(result)
+        manager = UndoManager()
+        manager.record_applied(command)
+        assert result.path.exists()
+        manager.undo()
+        assert not result.path.exists()
+        manager.redo()
+        positions, pinned, metadata = service.load_named_layout(model.center_id, "plan-a")
+        assert positions == preview.positions and pinned == frozenset({3})
+        assert metadata["name"] == "plan-a"
+        duplicate = service.duplicate_named_layout(model.center_id, "plan-a", "copy")
+        exported = service.export_layout_configuration(model.center_id, "copy", tmp_path / "layout.json")
+        imported = service.import_layout_configuration("imported", exported, center_id=model.center_id)
+        assert duplicate.exists() and imported.exists()
+        service.rename_named_layout(model.center_id, "imported", "renamed")
+        assert {record["name"] for record in service.list_named_layouts(model.center_id)} >= {"plan-a", "copy", "renamed"}
+        service.delete_named_layout(model.center_id, "copy")
+        assert repo.capture_command_state() == before_database
+    finally:
+        repo.close()
+
+
+def test_auto_layout_handles_disconnected_components_reused_ancestors_and_all_directions():
+    nodes = tuple(
+        TreeCanvasNode(index, f"P{index}", "", "", f"I{index}", "", generation, ())
+        for index, generation in ((1, -2), (2, -1), (3, -1), (4, 0), (5, 0), (6, 1), (7, 4), (8, 4))
+    )
+    connectors = (
+        TreeCanvasConnector("p1", "parent", 1, 2, 1, "marriage"),
+        TreeCanvasConnector("p2", "parent", 1, 3, 2, "marriage"),
+        TreeCanvasConnector("p3", "parent", 2, 4, 3, "marriage"),
+        TreeCanvasConnector("p4", "parent", 3, 5, 4, "marriage"),
+        TreeCanvasConnector("s1", "spouse", 4, 5, 5, "civil_partner", True),
+        TreeCanvasConnector("p5", "parent", 4, 6, 5, "marriage"),
+    )
+    engine = TreeAutoLayoutEngine()
+
+    for mode in ("top_to_bottom", "bottom_to_top", "left_to_right", "right_to_left", "ancestors_only", "descendants_only", "hourglass", "fan", "compact_family_groups"):
+        positions = engine.layout(nodes, connectors, TreeLayoutOptions(layout_type=mode, compact=mode == "compact_family_groups"))
+        assert set(positions) == {node.person_id for node in nodes}
+        assert TreeCanvasService._overlap_count(positions, CARD_WIDTH, CARD_HEIGHT) == 0
+
+
+def test_auto_layout_benchmark_is_deterministic_for_500_and_1000_nodes():
+    engine = TreeAutoLayoutEngine()
+    timings = {}
+    for count in (500, 1000):
+        nodes = tuple(TreeCanvasNode(index, f"P{index}", "", "", f"I{index}", "", 0, ()) for index in range(count))
+        started = time.perf_counter()
+        first = engine.layout(nodes, (), TreeLayoutOptions(layout_type="top_to_bottom"))
+        elapsed = time.perf_counter() - started
+        timings[count] = elapsed
+        assert first == engine.layout(nodes, (), TreeLayoutOptions(layout_type="top_to_bottom"))
+        assert TreeCanvasService._overlap_count(first, CARD_WIDTH, CARD_HEIGHT) == 0
+    assert timings[500] < 2.0
+    assert timings[1000] < 2.0
