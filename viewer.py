@@ -47,6 +47,7 @@ from evidence_service import (
     EvidenceService,
 )
 from gedcom_repair_service import GedcomRepairCommand, GedcomRepairService
+from geo_map_studio_service import GeoMapFilters, GeoMapStudioService, SCOPES as GEO_MAP_SCOPES
 from family_tree_view_service import FamilyTreeModel, FamilyTreePerson, FamilyTreeViewService
 from graph_editor_service import GraphEditorService, GraphModification
 from integrity_service import IntegrityCheckService
@@ -459,6 +460,7 @@ class GenealogyViewer:
         self.timeline_service = PersonTimelineService(self.repository)
         self.family_timeline_service = FamilyTimelineService(self.repository)
         self.timeline_studio_service = TimelineStudioService(self.repository)
+        self.geo_map_studio_service = GeoMapStudioService(self.repository)
         self.source_service = SourceService(self.repository)
         self.life_map_service = PersonLifeMapService(self.repository, timeline_service=self.timeline_service)
         self.current_person_id = None
@@ -547,6 +549,15 @@ class GenealogyViewer:
         self._timeline_studio_history = []
         self._timeline_studio_history_index = -1
         self._timeline_studio_status = None
+        self._geo_map_window = None
+        self._geo_map_model = None
+        self._geo_map_markers = ()
+        self._geo_map_marker_map = {}
+        self._geo_map_tree = None
+        self._geo_map_canvas = None
+        self._geo_map_vars = {}
+        self._geo_map_status = None
+        self._geo_map_playing = False
         self._source_window = None
         self._source_tree = None
         self._source_citation_tree = None
@@ -3723,6 +3734,173 @@ class GenealogyViewer:
         window.protocol("WM_DELETE_WINDOW", self._close_life_map_window)
         self._build_life_map_tab(window, int(person_id))
 
+    def open_geo_map_studio(self):
+        if self._geo_map_window is not None:
+            try: self._geo_map_window.lift(); self._geo_map_window.focus_force(); return
+            except Exception: self._geo_map_window = None
+        window = self._create_dialog(self.root)
+        self._geo_map_window = window; window.title("Карта"); window.geometry("1360x780"); window.minsize(900, 580); window.protocol("WM_DELETE_WINDOW", self._close_geo_map_studio)
+        self._geo_map_vars = {key: tk.StringVar(value=value) for key, value in {"scope": "current_person", "people": str(self.current_person_id or ""), "surname": "", "person": "", "family": "", "event_type": "", "year_from": "", "year_to": "", "country": "", "text": "", "year": ""}.items()}
+        for key, value in {"unresolved": False, "people_layer": True, "routes": True, "borders": False, "clusters": False, "heat": False}.items(): self._geo_map_vars[key] = tk.BooleanVar(value=value)
+        toolbar = tk.Frame(window); toolbar.pack(fill="x", padx=12, pady=(12, 4))
+        for label, command in (("Загрузить", self._load_geo_map), ("Геокодировать", self._geocode_geo_map), ("Координаты", self._correct_geo_map_coordinates), ("Подогнать", self._fit_geo_map), ("Play/Pause", self._toggle_geo_map_play), ("К событию", self._jump_geo_map_event), ("Сохранить вид", self._save_geo_map_view), ("Загрузить вид", self._load_geo_map_view), ("Импорт вида", self._import_geo_map_view), ("Экспорт вида", self._export_geo_map_view), ("Экспорт", self._export_geo_map)):
+            tk.Button(toolbar, text=label, command=command).pack(side="left", padx=(0, 4))
+        filters = tk.LabelFrame(window, text="Область, фильтры и слои"); filters.pack(fill="x", padx=12, pady=(0, 5))
+        specs = (("scope", "Область", GEO_MAP_SCOPES), ("people", "Люди ID", None), ("surname", "Фамилия", None), ("person", "Человек", None), ("family", "Семья", None), ("event_type", "Событие", ("", *SUPPORTED_EVENT_TYPES)), ("year_from", "Год от", None), ("year_to", "Год до", None), ("country", "Страна", None), ("text", "Текст", None), ("year", "Год анимации", None))
+        for index, (key, title, values) in enumerate(specs):
+            row, column = divmod(index, 6); tk.Label(filters, text=title).grid(row=row, column=column*2, sticky="e", padx=(5, 2), pady=3)
+            control = ttk.Combobox(filters, textvariable=self._geo_map_vars[key], values=values, state="readonly", width=15) if values else tk.Entry(filters, textvariable=self._geo_map_vars[key], width=15)
+            control.grid(row=row, column=column*2+1, sticky="ew", padx=(0, 4), pady=3)
+        for index, (key, title) in enumerate((("unresolved", "Неопределённые"), ("people_layer", "Люди"), ("routes", "Маршруты"), ("borders", "Исторические границы"), ("clusters", "Кластеры"), ("heat", "Тепловая карта"))):
+            tk.Checkbutton(filters, text=title, variable=self._geo_map_vars[key], command=self._apply_geo_map_filters).grid(row=2, column=index*2, columnspan=2, sticky="w", padx=5)
+        panes = ttk.Panedwindow(window, orient="horizontal"); panes.pack(fill="both", expand=True, padx=12, pady=6)
+        table_frame, canvas_frame = tk.Frame(panes), tk.Frame(panes); panes.add(table_frame, weight=3); panes.add(canvas_frame, weight=4)
+        columns = ("date", "person", "event", "place", "status")
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
+        for column, title, width in (("date", "Дата", 90), ("person", "Человек", 170), ("event", "Событие", 115), ("place", "Место", 230), ("status", "Статус", 90)):
+            tree.heading(column, text=title); tree.column(column, width=width, anchor="w")
+        tree.pack(fill="both", expand=True); tree.bind("<<TreeviewSelect>>", self._select_geo_map_marker); tree.bind("<Double-1>", self._open_geo_map_marker)
+        self._geo_map_tree = tree
+        canvas = tk.Canvas(canvas_frame, background="#f7f8fa", highlightthickness=0); canvas.pack(fill="both", expand=True); canvas.bind("<MouseWheel>", self._zoom_geo_map); canvas.bind("<ButtonPress-1>", lambda event: canvas.scan_mark(event.x, event.y)); canvas.bind("<B1-Motion>", lambda event: canvas.scan_dragto(event.x, event.y, gain=1)); self._geo_map_canvas = canvas
+        footer = tk.Frame(window); footer.pack(fill="x", padx=12, pady=(0, 12)); self._geo_map_status = tk.Label(footer, text=""); self._geo_map_status.pack(side="left")
+        self._load_geo_map()
+
+    def _geo_map_ids(self): return tuple(int(value) for value in re.findall(r"\d+", self._geo_map_vars["people"].get()))
+    def _load_geo_map(self):
+        return self._submit_repository_task("Карта", lambda repository, context: GeoMapStudioService(repository).build(scope=self._geo_map_vars["scope"].get(), selected_person_ids=self._geo_map_ids(), progress_callback=(lambda label, done, total: context.report(label, done, total)) if context else None, cancel_callback=context.raise_if_cancelled if context else None), self._apply_geo_map_model, on_error=lambda error: messagebox.showerror("Карта", str(error), parent=self._geo_map_window), cancellable=True)
+    def _apply_geo_map_model(self, model): self._geo_map_model = model; self._apply_geo_map_filters()
+    def _geo_map_filters(self):
+        values = self._geo_map_vars
+        def year(key):
+            text = values[key].get().strip(); return int(text) if text else None
+        return GeoMapFilters(surname=values["surname"].get(), person=values["person"].get(), family=values["family"].get(), event_type=values["event_type"].get(), year_from=year("year_from"), year_to=year("year_to"), country=values["country"].get(), text=values["text"].get(), unresolved_only=bool(values["unresolved"].get()))
+    def _apply_geo_map_filters(self):
+        if self._geo_map_model is None: return
+        try: self._geo_map_markers = self.geo_map_studio_service.filter(self._geo_map_model, self._geo_map_filters())
+        except ValueError as error: messagebox.showerror("Карта", str(error), parent=self._geo_map_window); return
+        year = self._geo_map_vars["year"].get().strip()
+        if year.isdigit(): self._geo_map_markers = self.geo_map_studio_service.markers_at_year(self._geo_map_markers, int(year))
+        self._render_geo_map()
+    def _render_geo_map(self):
+        tree = self._geo_map_tree
+        if tree:
+            for item in tree.get_children(): tree.delete(item)
+        self._geo_map_marker_map = {}
+        for marker in self._geo_map_markers:
+            if tree: tree.insert("", "end", iid=marker.marker_id, values=(marker.date_text, marker.person_name, marker.event_label, marker.place, marker.geocode_status))
+            self._geo_map_marker_map[marker.marker_id] = marker
+        self._draw_geo_map()
+        if self._geo_map_status: self._geo_map_status.config(text=f"Маркеров: {len(self._geo_map_markers)} | Расстояние: {self._geo_map_model.total_distance_km:.1f} км | Неопределённых: {sum(marker.latitude is None for marker in self._geo_map_markers)}")
+    def _draw_geo_map(self):
+        canvas = self._geo_map_canvas
+        if canvas is None: return
+        canvas.delete("all"); canvas.create_text(10, 10, anchor="nw", text="Geo Map Studio (offline)", fill="#445b74")
+        def point(marker): return ((marker.longitude + 180) * 3.1 + 20, (90 - marker.latitude) * 3.0 + 45)
+        if self._geo_map_vars["routes"].get():
+            by_person = defaultdict(list)
+            for marker in self._geo_map_markers:
+                if marker.latitude is not None: by_person[marker.person_id].append(marker)
+            for markers in by_person.values():
+                ordered = sorted(markers, key=lambda item: (item.year is None, item.year or 9999)); points = [point(marker) for marker in ordered]
+                for left, right in zip(points, points[1:]): canvas.create_line(*left, *right, arrow="last", fill="#2878b5", width=2)
+        if self._geo_map_vars["people_layer"].get():
+            for marker in self._geo_map_markers:
+                if marker.latitude is None: continue
+                x, y = point(marker); item = canvas.create_oval(x-5, y-5, x+5, y+5, fill=marker.color, outline="#5a1a1a" if marker.geocode_status == "manual" else ""); canvas.tag_bind(item, "<Button-1>", lambda _event, item=marker: self._highlight_geo_map_marker(item))
+        if self._geo_map_vars["clusters"].get():
+            for key, marker_ids in self._geo_map_model.clusters.items():
+                if key != "unresolved" and len(marker_ids) > 1: canvas.create_text(20, 35 + len(marker_ids)*14, anchor="nw", text=f"Кластер {key}: {len(marker_ids)}")
+        if self._geo_map_vars["heat"].get(): canvas.create_text(10, 70, anchor="nw", text="Heat map: интенсивность обозначена количеством маркеров", fill="#9a3535")
+        if self._geo_map_vars["borders"].get(): canvas.create_rectangle(20, 45, 1135, 565, outline="#b8a27c", dash=(4, 3))
+        canvas.configure(scrollregion=(0, 0, 1200, 620))
+    def _selected_geo_map_marker(self):
+        return self._geo_map_marker_map.get(self._geo_map_tree.selection()[0]) if self._geo_map_tree and self._geo_map_tree.selection() else None
+    def _select_geo_map_marker(self, _event=None):
+        marker = self._selected_geo_map_marker()
+        if marker: self._highlight_geo_map_marker(marker)
+    def _highlight_geo_map_marker(self, marker):
+        if self._geo_map_tree and marker.marker_id in self._geo_map_marker_map: self._geo_map_tree.selection_set(marker.marker_id); self._geo_map_tree.see(marker.marker_id)
+        self.current_person_id = marker.person_id
+        self.highlight_tree_canvas_person(marker.person_id)
+    def highlight_tree_canvas_person(self, person_id):
+        """Map integration point: highlight an open Tree Canvas node for a map marker."""
+        canvas = getattr(self, "_tree_canvas_canvas", None)
+        if canvas is not None:
+            try: canvas.itemconfigure(f"tree-canvas-person:{person_id}", outline="#c63d2f", width=4)
+            except Exception: pass
+    def _open_geo_map_marker(self, _event=None):
+        marker = self._selected_geo_map_marker()
+        if marker: self.show_person(marker.person_id)
+    def highlight_geo_map_person(self, person_id):
+        """Tree Canvas integration point: select a person's first visible map marker."""
+        if self._geo_map_model:
+            markers = self.geo_map_studio_service.markers_for_tree_person(self._geo_map_model, person_id)
+            if markers: self._highlight_geo_map_marker(markers[0])
+    def center_geo_map_timeline_event(self, event_id):
+        """Timeline Studio integration point: center/select its matching location."""
+        if self._geo_map_model:
+            marker = self.geo_map_studio_service.marker_for_timeline_event(self._geo_map_model, event_id)
+            if marker: self._highlight_geo_map_marker(marker)
+    def _zoom_geo_map(self, event):
+        if self._geo_map_canvas: self._geo_map_canvas.scale("all", event.x, event.y, 1.12 if event.delta > 0 else 0.89, 1.12 if event.delta > 0 else 0.89)
+    def _fit_geo_map(self):
+        if self._geo_map_canvas: self._geo_map_canvas.xview_moveto(0); self._geo_map_canvas.yview_moveto(0)
+    def _toggle_geo_map_play(self):
+        self._geo_map_playing = not self._geo_map_playing
+        if self._geo_map_playing: self._play_geo_map_step()
+    def _play_geo_map_step(self):
+        if not self._geo_map_playing or self._geo_map_window is None: return
+        years = sorted({marker.year for marker in self._geo_map_model.markers if marker.year is not None}) if self._geo_map_model else []
+        if years:
+            current = int(self._geo_map_vars["year"].get()) if self._geo_map_vars["year"].get().isdigit() else years[0]; self._geo_map_vars["year"].set(str(next((year for year in years if year > current), years[0]))); self._apply_geo_map_filters()
+        self._geo_map_window.after(800, self._play_geo_map_step)
+    def _jump_geo_map_event(self):
+        marker = self._selected_geo_map_marker()
+        if marker and marker.year is not None: self._geo_map_vars["year"].set(str(marker.year)); self._apply_geo_map_filters()
+    def _geocode_geo_map(self):
+        if self._geo_map_model is None: return
+        return self._submit_repository_task("Геокодирование", lambda repository, context: GeoMapStudioService(repository).update_missing_coordinates(self._geo_map_model, progress_callback=(lambda label, done, total: context.report(label, done, total)) if context else None, cancel_callback=context.raise_if_cancelled if context else None), lambda _result: self._load_geo_map(), on_error=lambda error: messagebox.showerror("Геокодирование", str(error), parent=self._geo_map_window), cancellable=True)
+    def _correct_geo_map_coordinates(self):
+        marker = self._selected_geo_map_marker()
+        if not marker: return
+        latitude = simpledialog.askfloat("Координаты", "Широта:", initialvalue=marker.latitude, parent=self._geo_map_window); longitude = simpledialog.askfloat("Координаты", "Долгота:", initialvalue=marker.longitude, parent=self._geo_map_window)
+        if latitude is not None and longitude is not None: self.geo_map_studio_service.set_manual_coordinates(marker.place, latitude, longitude); self._load_geo_map()
+    def _save_geo_map_view(self):
+        name = simpledialog.askstring("Сохранить вид", "Название:", parent=self._geo_map_window)
+        if name: self.geo_map_studio_service.save_view(name, {"scope": self._geo_map_vars["scope"].get(), "people": self._geo_map_vars["people"].get(), "filters": asdict(self._geo_map_filters()), "layers": {key: value.get() for key, value in self._geo_map_vars.items() if isinstance(value, tk.BooleanVar)}, "zoom": 1, "center": [0, 0]})
+    def _load_geo_map_view(self):
+        names = ", ".join(view["name"] for view in self.geo_map_studio_service.list_views()); name = simpledialog.askstring("Загрузить вид", "Название: " + names, parent=self._geo_map_window)
+        if name:
+            try:
+                config = self.geo_map_studio_service.load_view(name)["configuration"]
+                for key, value in config.get("filters", {}).items():
+                    if key in self._geo_map_vars and not isinstance(self._geo_map_vars[key], tk.BooleanVar): self._geo_map_vars[key].set(str(value or ""))
+                for key, value in config.get("layers", {}).items():
+                    if key in self._geo_map_vars: self._geo_map_vars[key].set(bool(value))
+                for key in ("scope", "people"):
+                    if key in config: self._geo_map_vars[key].set(config[key])
+                self._load_geo_map()
+            except (OSError, ValueError) as error: messagebox.showerror("Карта", str(error), parent=self._geo_map_window)
+    def _import_geo_map_view(self):
+        source = filedialog.askopenfilename(parent=self._geo_map_window, title="Импорт вида", filetypes=[("JSON", "*.json")])
+        if source: self.geo_map_studio_service.import_view(source)
+    def _export_geo_map_view(self):
+        names = ", ".join(view["name"] for view in self.geo_map_studio_service.list_views()); name = simpledialog.askstring("Экспорт вида", "Название: " + names, parent=self._geo_map_window)
+        destination = filedialog.asksaveasfilename(parent=self._geo_map_window, defaultextension=".json", filetypes=[("JSON", "*.json")]) if name else ""
+        if destination: self.geo_map_studio_service.export_view(name, destination)
+    def _export_geo_map(self):
+        if self._geo_map_model is None: return
+        destination = filedialog.asksaveasfilename(parent=self._geo_map_window, title="Экспорт карты", initialdir=str(EXPORT_DIR), defaultextension=".png", filetypes=[("PNG", "*.png"), ("SVG", "*.svg"), ("PDF", "*.pdf"), ("HTML", "*.html")])
+        if destination:
+            export_format = Path(destination).suffix.lower().lstrip("."); layers = tuple(key for key in ("people_layer", "routes", "borders", "clusters", "heat") if self._geo_map_vars[key].get())
+            return self._submit_repository_task("Экспорт карты", lambda repository, _context: GeoMapStudioService(repository).export(self._geo_map_model, self._geo_map_markers, destination, export_format, filters=self._geo_map_filters(), layers=layers), lambda _path: None, on_error=lambda error: messagebox.showerror("Экспорт", str(error), parent=self._geo_map_window))
+    def _close_geo_map_studio(self):
+        self._geo_map_playing = False
+        if self._geo_map_window is not None:
+            try: self._geo_map_window.destroy()
+            except Exception: pass
+        self._geo_map_window = self._geo_map_model = self._geo_map_tree = self._geo_map_canvas = self._geo_map_status = None; self._geo_map_markers = (); self._geo_map_marker_map = {}; self._geo_map_vars = {}
+
     def _close_life_map_window(self):
         if self._life_map_window is not None:
             try:
@@ -4618,6 +4796,8 @@ class GenealogyViewer:
         self.family_timeline_button.pack(side="left", padx=(10, 0))
         self.timeline_studio_button = tk.Button(top, text="Хронология 2.0", command=self.open_timeline_studio)
         self.timeline_studio_button.pack(side="left", padx=(10, 0))
+        self.geo_map_button = tk.Button(top, text="Карта", command=self.open_geo_map_studio)
+        self.geo_map_button.pack(side="left", padx=(10, 0))
         self.source_manager_button = tk.Button(top, text="Источники", command=self.open_source_manager)
         self.source_manager_button.pack(side="left", padx=(10, 0))
         self.evidence_manager_button = tk.Button(
