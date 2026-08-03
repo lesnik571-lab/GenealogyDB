@@ -69,6 +69,7 @@ from split_service import SPLIT_FIELDS, SplitService
 from task_manager import TaskManager
 from timeline_service import FamilyTimelineService, SUPPORTED_EVENT_TYPES, TimelineFilters
 from timeline_studio_service import SCOPES, TimelineStudioFilters, TimelineStudioService
+from workspace_integration_service import MODULES, WorkspaceContext, WorkspaceIntegrationService
 from tree_canvas_service import (
     CARD_HEIGHT,
     CARD_WIDTH,
@@ -463,6 +464,8 @@ class GenealogyViewer:
         self.timeline_studio_service = TimelineStudioService(self.repository)
         self.geo_map_studio_service = GeoMapStudioService(self.repository)
         self.research_workspace_service = ResearchWorkspaceService(self.repository)
+        self.workspace_integration_service = WorkspaceIntegrationService()
+        self._error_dialog_active = False
         self.source_service = SourceService(self.repository)
         self.life_map_service = PersonLifeMapService(self.repository, timeline_service=self.timeline_service)
         self.current_person_id = None
@@ -690,6 +693,8 @@ class GenealogyViewer:
         self.root.title(f"GenealogyDB {APP_VERSION}")
         self.root.geometry("1000x700")
         self._create_widgets()
+        self._register_workspace_modules()
+        self._restore_workspace_ui_state()
         plugin_app = PluginApp(
             ReadOnlyPluginData(self.repository),
             self._register_plugin_button,
@@ -738,10 +743,120 @@ class GenealogyViewer:
             name,
             worker,
             on_success=on_success,
-            on_error=on_error or (lambda error: messagebox.showerror(name, str(error))),
+            on_error=on_error or (lambda error: self._show_unified_error(name, error)),
             cancellable=cancellable,
         )
         option_add("*Button.padY", UI_BUTTON_PAD_Y)
+
+    def _show_unified_error(self, context, error):
+        """Log detailed failures and keep the UI alive behind one concise dialog."""
+        get_logger("viewer").exception("%s failed", context, exc_info=error)
+        if self._error_dialog_active:
+            return
+        self._error_dialog_active = True
+        try:
+            messagebox.showerror("Ошибка", f"Не удалось выполнить действие: {context}.", parent=getattr(self, "root", None))
+        finally:
+            self._error_dialog_active = False
+
+    def _register_workspace_modules(self):
+        service = self.workspace_integration_service
+        for module in MODULES:
+            service.register_module(module, lambda context, origin, module=module: self._apply_workspace_context(module, context, origin))
+
+    def _apply_workspace_context(self, module, context: WorkspaceContext, _origin):
+        """Highlight matching records in open modules without opening any window."""
+        person_id = context.selected_person_id
+        if person_id is None:
+            self._update_workspace_status()
+            return
+        if module == "tree" and getattr(self, "_tree_canvas_window", None) is not None:
+            self.highlight_tree_canvas_person(person_id)
+        elif module == "map" and getattr(self, "_geo_map_window", None) is not None:
+            self.highlight_geo_map_person(person_id)
+        elif module == "timeline" and getattr(self, "_timeline_studio_window", None) is not None:
+            variables = getattr(self, "_timeline_studio_vars", {})
+            if "people" in variables:
+                variables["people"].set(str(person_id))
+        elif module == "main" and getattr(self, "_person_dialog", None) is not None and person_id != self.current_person_id:
+            self.show_person(person_id, add_to_history=False)
+        self._update_workspace_status()
+
+    def _set_workspace_person(self, person_id, origin="main"):
+        if self.workspace_integration_service.select_person(person_id, origin):
+            self._update_workspace_status()
+
+    def _workspace_back(self, _event=None):
+        context = self.workspace_integration_service.navigate_back()
+        if context is not None:
+            self._apply_workspace_context("main", context, "navigation")
+        return "break"
+
+    def _workspace_forward(self, _event=None):
+        context = self.workspace_integration_service.navigate_forward()
+        if context is not None:
+            self._apply_workspace_context("main", context, "navigation")
+        return "break"
+
+    def _workspace_open_main(self, _event=None):
+        if self.current_person_id is not None:
+            self.show_person(self.current_person_id)
+        return "break"
+
+    def _workspace_open(self, opener, _event=None):
+        opener()
+        return "break"
+
+    def _workspace_open_modules(self):
+        windows = {
+            "main": getattr(self, "_person_dialog", None), "tree": getattr(self, "_tree_canvas_window", None),
+            "timeline": getattr(self, "_timeline_studio_window", None), "map": getattr(self, "_geo_map_window", None),
+            "evidence": getattr(self, "_evidence_window", None), "validation": getattr(self, "_validation_center_window", None),
+            "research": getattr(self, "_research_window", None), "audit": getattr(self, "_audit_window", None),
+        }
+        return tuple(name for name, window in windows.items() if window is not None)
+
+    def _workspace_ui_state(self):
+        geometry = ""
+        try:
+            geometry = self.root.geometry()
+        except Exception:
+            pass
+        return {"geometry": geometry, "filters": {key: value.get() for key, value in self._advanced_search_vars.items()}}
+
+    def _save_workspace_ui_state(self):
+        self.workspace_integration_service.save_ui_state(self._workspace_ui_state())
+
+    def _restore_workspace_ui_state(self):
+        state = self.workspace_integration_service.load_ui_state()
+        if state.get("geometry"):
+            try:
+                self.root.geometry(state["geometry"])
+            except Exception:
+                pass
+        for key, value in state.get("filters", {}).items():
+            if key in self._advanced_search_vars:
+                self._advanced_search_vars[key].set(value)
+        bind = getattr(self.root, "bind", None)
+        if callable(bind):
+            bind("<Configure>", lambda _event: self._save_workspace_ui_state(), add="+")
+
+    def _update_workspace_status(self):
+        label = getattr(self, "workspace_status_label", None)
+        if label is None:
+            return
+        context = self.workspace_integration_service.context
+        running = len(getattr(getattr(self, "task_manager", None), "_tasks", {}))
+        unresolved = len([issue for issue in getattr(getattr(self, "_validation_report", None), "issues", ()) if not issue.resolved])
+        label.config(text=f"Человек: {context.selected_person_id or '-'} | Семья: {context.selected_family_id or '-'} | Модуль: {context.active_module} | Задач: {running} | Проверка: {unresolved} | БД: {Path(self.repository.db_name).name} | {APP_VERSION}")
+
+    def open_integration_diagnostics(self):
+        running = len(getattr(getattr(self, "task_manager", None), "_tasks", {}))
+        availability = {name: hasattr(self, f"open_{name}_studio") or name in {"main", "tree", "evidence", "validation", "research", "audit"} for name in MODULES}
+        data = self.workspace_integration_service.diagnostics(running_tasks=running, service_availability=availability, open_modules=self._workspace_open_modules())
+        dialog = self._create_dialog(); dialog.title("Диагностика интеграции"); dialog.geometry("760x520")
+        body = tk.Text(dialog, wrap="word"); body.pack(fill="both", expand=True, padx=12, pady=12); body.insert("1.0", json.dumps(data, ensure_ascii=False, indent=2)); body.config(state="disabled")
+        tk.Button(dialog, text="Закрыть", command=dialog.destroy).pack(anchor="e", padx=12, pady=(0, 12))
 
     def _create_dialog(self, parent=None):
         """Create a consistently parented transient application dialog."""
@@ -2036,6 +2151,8 @@ class GenealogyViewer:
         record = self._audit_record_map.get(str(selection[0]))
         if record:
             self._set_audit_comparison(record.before_snapshot, record.after_snapshot)
+            if hasattr(self, "workspace_integration_service"):
+                self.workspace_integration_service.update("audit", active_module="audit")
 
     def _set_audit_comparison(self, before, after):
         for widget, snapshot in (
@@ -2231,6 +2348,13 @@ class GenealogyViewer:
         issue = self._selected_validation_issue()
         detail.configure(state="normal"); detail.delete("1.0", "end")
         if issue:
+            if hasattr(self, "workspace_integration_service"):
+                if issue.object_type == "person":
+                    self.workspace_integration_service.select_person(issue.database_id, "validation")
+                elif issue.object_type == "family":
+                    self.workspace_integration_service.select_family(issue.database_id, "validation")
+                elif issue.object_type == "event":
+                    self.workspace_integration_service.select_event(issue.database_id, "validation")
             detail.insert("end", f"{issue.category}\n\n{issue.explanation}\n\nРекомендация: {issue.recommended_action}\nРиск: {issue.risk_level}\nАвто: {'Да' if issue.automatic_fix_available else 'Нет'}\n\nДоказательства:\n{json.dumps(issue.evidence, ensure_ascii=False, indent=2)}\n\nСвязанные аудит/источники: проверьте историю изменений и карточку объекта.")
         detail.configure(state="disabled")
 
@@ -3797,6 +3921,20 @@ class GenealogyViewer:
     def _select_research_hypothesis(self, _event=None):
         hypothesis = self._selected_research_hypothesis()
         if not hypothesis: return
+        if hasattr(self, "workspace_integration_service"):
+            self.workspace_integration_service.update("research", active_module="research")
+            if hypothesis.people:
+                self.workspace_integration_service.select_person(hypothesis.people[0], "research")
+            if hypothesis.families:
+                self.workspace_integration_service.select_family(hypothesis.families[0], "research")
+            if hypothesis.events:
+                self.workspace_integration_service.select_event(hypothesis.events[0], "research")
+            if hypothesis.sources or hypothesis.evidence:
+                self.workspace_integration_service.select_source(
+                    hypothesis.sources[0] if hypothesis.sources else None,
+                    hypothesis.evidence[0] if hypothesis.evidence else None,
+                    "research",
+                )
         evidence = self.research_workspace_service.evidence_summary(hypothesis); issues = self.research_workspace_service.validation_issues(hypothesis)
         self._set_research_details(f"{hypothesis.title}\n\n{hypothesis.statement}\n\nСостояние: {hypothesis.state}\nДостоверность: {evidence['confidence']}\nПоддерживает: {len(evidence['supporting'])}\nПротиворечит: {len(evidence['contradicting'])}\nПроблемы валидации: {len(issues)}\n\nЗаметки:\n{hypothesis.notes}")
     def _set_research_details(self, text):
@@ -3931,10 +4069,13 @@ class GenealogyViewer:
     def _highlight_geo_map_marker(self, marker):
         if self._geo_map_tree and marker.marker_id in self._geo_map_marker_map: self._geo_map_tree.selection_set(marker.marker_id); self._geo_map_tree.see(marker.marker_id)
         self.current_person_id = marker.person_id
+        if hasattr(self, "workspace_integration_service"):
+            self.workspace_integration_service.select_person(marker.person_id, "map")
+            self.workspace_integration_service.select_event(getattr(marker, "event_id", None), "map")
         self.highlight_tree_canvas_person(marker.person_id)
     def highlight_tree_canvas_person(self, person_id):
         """Map integration point: highlight an open Tree Canvas node for a map marker."""
-        canvas = getattr(self, "_tree_canvas_canvas", None)
+        canvas = getattr(self, "_tree_canvas", None)
         if canvas is not None:
             try: canvas.itemconfigure(f"tree-canvas-person:{person_id}", outline="#c63d2f", width=4)
             except Exception: pass
@@ -4824,6 +4965,32 @@ class GenealogyViewer:
         self.root.bind("<Control-z>", self._undo_command)
         self.root.bind("<Control-y>", self._redo_command)
         self._update_undo_menu()
+        workspace_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
+        self._plugin_menu_bar.add_cascade(label="Рабочее пространство", menu=workspace_menu)
+        for label, shortcut, command in (
+            ("Главная карточка", "Ctrl+1", self._workspace_open_main),
+            ("Дерево", "Ctrl+2", lambda: self._workspace_open(self.open_tree_canvas)),
+            ("Хронология", "Ctrl+3", lambda: self._workspace_open(self.open_timeline_studio)),
+            ("Карта", "Ctrl+4", lambda: self._workspace_open(self.open_geo_map_studio)),
+            ("Источники", "Ctrl+5", lambda: self._workspace_open(self.open_evidence_manager)),
+            ("Проверка данных", "Ctrl+6", lambda: self._workspace_open(self.open_validation_center)),
+            ("Исследование", "Ctrl+7", lambda: self._workspace_open(self.open_research_workspace)),
+            ("История изменений", "Ctrl+8", lambda: self._workspace_open(self.open_audit_history)),
+        ):
+            workspace_menu.add_command(label=label, accelerator=shortcut, command=command)
+        workspace_menu.add_separator()
+        workspace_menu.add_command(label="Назад", accelerator="Alt+Left", command=self._workspace_back)
+        workspace_menu.add_command(label="Вперёд", accelerator="Alt+Right", command=self._workspace_forward)
+        workspace_menu.add_separator()
+        workspace_menu.add_command(label="Диагностика интеграции", command=self.open_integration_diagnostics)
+        for sequence, command in (
+            ("<Alt-Left>", self._workspace_back), ("<Alt-Right>", self._workspace_forward),
+            ("<Control-1>", self._workspace_open_main), ("<Control-2>", lambda event: self._workspace_open(self.open_tree_canvas, event)),
+            ("<Control-3>", lambda event: self._workspace_open(self.open_timeline_studio, event)), ("<Control-4>", lambda event: self._workspace_open(self.open_geo_map_studio, event)),
+            ("<Control-5>", lambda event: self._workspace_open(self.open_evidence_manager, event)), ("<Control-6>", lambda event: self._workspace_open(self.open_validation_center, event)),
+            ("<Control-7>", lambda event: self._workspace_open(self.open_research_workspace, event)), ("<Control-8>", lambda event: self._workspace_open(self.open_audit_history, event)),
+        ):
+            self.root.bind(sequence, command)
         help_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
         self._plugin_menu_bar.add_cascade(label="Help", menu=help_menu)
         help_menu.add_command(label="User Manual", command=self._show_user_manual)
@@ -4887,6 +5054,11 @@ class GenealogyViewer:
         top = tk.Frame(self.root)
         top.pack(fill="x", padx=10, pady=(4, 10))
         self._plugin_button_frame = top
+        workspace_status = tk.Frame(self.root)
+        workspace_status.pack(side="bottom", fill="x", padx=10, pady=(0, 6))
+        self.workspace_status_label = tk.Label(workspace_status, anchor="w")
+        self.workspace_status_label.pack(fill="x")
+        self._update_workspace_status()
 
         self.backup_button = tk.Button(top, text="Backup database", command=self.backup_database)
         self.backup_button.pack(side="left", padx=(10, 5))
@@ -6347,6 +6519,8 @@ class GenealogyViewer:
         self._load_tree_canvas()
 
     def _visit_tree_canvas_person(self, person_id) -> None:
+        if hasattr(self, "workspace_integration_service"):
+            self.workspace_integration_service.select_person(person_id, "tree")
         self._tree_canvas_navigation.visit(person_id)
         self._tree_canvas_collapsed_ids.clear()
         self._load_tree_canvas()
@@ -7212,6 +7386,12 @@ class GenealogyViewer:
 
     def _open_timeline_studio_event(self, _event=None):
         event = self._selected_timeline_studio_event()
+        if event and hasattr(self, "workspace_integration_service"):
+            self.workspace_integration_service.select_event(event.event_id.split(":")[-1], "timeline")
+            if event.person_id is not None:
+                self.workspace_integration_service.select_person(event.person_id, "timeline")
+            elif event.family_id is not None:
+                self.workspace_integration_service.select_family(event.family_id, "timeline")
         if event and event.person_id is not None: self.show_person(event.person_id)
         elif event and event.family_id is not None: self._show_data_quality_family_context(type("Issue", (), {"database_id": event.family_id, "issue_type": event.event_label, "severity": "Information", "gedcom_id": "", "explanation": event.description})())
 
@@ -7662,6 +7842,8 @@ class GenealogyViewer:
         source_id = self._selected_evidence_source_id()
         if source_id is None or self._evidence_model is None:
             return
+        if hasattr(self, "workspace_integration_service"):
+            self.workspace_integration_service.select_source(source_id, None, "evidence")
         for tree in (self._evidence_citation_tree, self._evidence_usage_tree):
             for item in tree.get_children():
                 tree.delete(item)
@@ -7683,6 +7865,8 @@ class GenealogyViewer:
             item for item in self._evidence_model.citations
             if int(item["id"]) == citation_id
         ), None) if self._evidence_model else None
+        if citation and hasattr(self, "workspace_integration_service"):
+            self.workspace_integration_service.select_source(citation.get("source_id"), citation_id, "evidence")
         self._show_evidence_details(citation)
 
     def _show_evidence_details(self, citation) -> None:
@@ -8614,6 +8798,8 @@ class GenealogyViewer:
             return
         self.current_person_id = person_id
         self.current_person_gedcom_id = person[0]
+        if hasattr(self, "workspace_integration_service"):
+            self._set_workspace_person(person_id, "main")
         if add_to_history:
             self._push_person_history(person_id)
 
