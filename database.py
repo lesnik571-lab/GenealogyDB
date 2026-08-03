@@ -390,8 +390,4 @@ def restore_database(source_path, target_path, create_safety_backup=True):
 
 
 if __name__ == "__main__":
-    created = initialize_database()
-    if created:
-        print("База данных создана.")
-    else:
-        print("База данных уже готова.")
+    initialize_database()

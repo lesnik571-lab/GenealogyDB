@@ -27,8 +27,6 @@ class GedcomImporter:
         finally:
             conn.close()
 
-        print(f"Импортировано людей: {imported_people}")
-        print(f"Импортировано семей: {len(data['families'])}")
         audit.record_state_change(
             "import",
             before_state,

@@ -1,0 +1,24 @@
+from pathlib import Path
+
+from final_audit_service import BLOCKED, PASS, FinalAuditCheck, FinalAuditService
+
+
+def test_final_audit_reports_static_viewer_contracts_and_deterministic_outputs():
+    service = FinalAuditService(project_root=Path.cwd())
+    report = service.audit()
+    checks = {check.check_id: check for check in report.checks}
+
+    assert checks["viewer.interactions"].status == PASS
+    assert checks["viewer.help"].status == PASS
+    assert checks["viewer.no-direct-sql"].status == PASS
+    assert checks["viewer.imports"].status == PASS
+    assert checks["repository.hygiene"].status == PASS
+    first = service.export_all(report)
+    assert first == service.export_all(report)
+    assert all(path.exists() and path.stat().st_size > 0 for path in first)
+
+
+def test_final_audit_recommendation_requires_no_blockers():
+    checks = (FinalAuditCheck("ready", "Viewer", PASS, "ok"),)
+    assert FinalAuditService.recommendation(checks) == "READY FOR 2.0.0"
+    assert FinalAuditService.recommendation((*checks, FinalAuditCheck("blocked", "Packaging", BLOCKED, "", "missing"))) == "NOT READY"

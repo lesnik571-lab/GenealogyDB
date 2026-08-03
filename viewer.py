@@ -523,7 +523,6 @@ class GenealogyViewer:
         self._card_photo_image = None
         self.integrity_service = IntegrityCheckService(self.repository, data_dir=DATA_DIR)
         self.data_quality_service = DataQualityService(self.repository)
-        self.validation_center_service = ValidationCenterService(self.repository)
         self.advanced_search_service = AdvancedSearchService(
             self.repository, DATA_DIR / "advanced_search_last.json"
         )

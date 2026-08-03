@@ -1,0 +1,83 @@
+{
+  "checks": [
+    {
+      "area": "Menus, toolbar buttons, and keyboard shortcuts",
+      "check_id": "viewer.interactions",
+      "evidence": "344 command targets checked",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "area": "Help entries have commands",
+      "check_id": "viewer.help",
+      "evidence": "entries: User Manual, Release Center, Beta Readiness, RC1 Validation, Diagnostics, About",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "area": "Export entries have handlers",
+      "check_id": "viewer.exports",
+      "evidence": "46 export handlers; 37 save dialogs",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "area": "Dialog titles are non-empty",
+      "check_id": "viewer.dialog-titles",
+      "evidence": "57 title calls",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "area": "Russian labels are valid Unicode",
+      "check_id": "viewer.russian-labels",
+      "evidence": "1522 Russian labels checked",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "area": "Viewer contains no direct SQL",
+      "check_id": "viewer.no-direct-sql",
+      "evidence": "AST scan",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "area": "Services instantiate once and remain registered",
+      "check_id": "viewer.services",
+      "evidence": "28 startup services",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "area": "Viewer has no statically unused imports",
+      "check_id": "viewer.imports",
+      "evidence": "AST import/use scan",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "area": "No development markers or debug output remain",
+      "check_id": "repository.hygiene",
+      "evidence": "production Python scan",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "area": "Packaging files, resources, and release documentation",
+      "check_id": "packaging.resources",
+      "evidence": "all required files present",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "area": "Version is staged for 2.0.0 without changing it",
+      "check_id": "packaging.version",
+      "evidence": "current version: 2.0.0-beta1",
+      "reason": "",
+      "status": "PASS"
+    }
+  ],
+  "recommendation": "READY FOR 2.0.0",
+  "version": "2.0.0-beta1"
+}
