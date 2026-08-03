@@ -41,6 +41,7 @@ from beta_stabilization_service import BetaStabilizationService
 from beta_remediation_service import BetaRemediationService
 from collaboration_service import CollaborationService
 from conflict_resolution_service import ConflictResolutionService
+from change_exchange_service import ChangeExchangeService
 from history_browser_service import HistoryBrowserService
 from project_merge_service import ProjectMergeService
 from workflow_automation_service import DRY_RUN, FULL_RUN, READ_ONLY_RUN, WorkflowAutomationService
@@ -5042,6 +5043,7 @@ class GenealogyViewer:
         tools_menu.add_command(label="Conflict Resolution", command=self.open_conflict_resolution)
         tools_menu.add_command(label="History Browser", command=self.open_history_browser)
         tools_menu.add_command(label="Workflow Automation", command=self.open_workflow_automation)
+        tools_menu.add_command(label="Offline Change Exchange", command=self.open_offline_change_exchange)
         diagnostics_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
         self._plugin_menu_bar.add_cascade(label="Диагностика", menu=diagnostics_menu)
         diagnostics_menu.add_command(label="Производительность", command=self.open_performance_center)
@@ -5902,6 +5904,41 @@ class GenealogyViewer:
         ttk.Combobox(controls, textvariable=mode, values=(DRY_RUN, READ_ONLY_RUN, FULL_RUN), state="readonly", width=28).pack(side="left", padx=(6, 0))
         tk.Button(controls, text="Запустить", command=run).pack(side="left", padx=(6, 0))
         tk.Button(controls, text="Отчёты", command=lambda: WorkflowAutomationService(self.repository).export_all(WorkflowAutomationService(self.repository).run(selected[0], mode=DRY_RUN)) if selected[0] else None).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Закрыть", command=dialog.destroy).pack(side="right")
+
+    def open_offline_change_exchange(self):
+        dialog = self._create_dialog(); dialog.title("Офлайн-обмен изменениями"); dialog.geometry("980x620"); dialog.minsize(700, 460)
+        body = tk.Text(dialog, wrap="word"); body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
+        package_path = tk.StringVar(value=""); inspected = [None]
+        controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Entry(controls, textvariable=package_path, width=60).pack(side="left", fill="x", expand=True)
+        tk.Button(controls, text="Пакет", command=lambda: package_path.set(filedialog.askopenfilename(parent=dialog, filetypes=[("ZIP", "*.zip")]))).pack(side="left", padx=(6, 0))
+
+        def render(result):
+            inspected[0] = result
+            body.config(state="normal"); body.delete("1.0", "end")
+            body.insert("1.0", f"Пакет: {result.package_uuid}\nСтатус: {result.status}\nОперации: {len(result.operations)}\nПредупреждения: {', '.join(result.warnings) or '-'}\nБлокеры: {', '.join(result.blockers) or '-'}\nКонфликты: {', '.join(result.conflicts) or '-'}")
+            body.config(state="disabled")
+
+        def inspect_package():
+            if not package_path.get(): return
+            return self._submit_repository_task("Offline Change Exchange", lambda repository, context: ChangeExchangeService(repository).inspect(package_path.get(), cancel_callback=context.raise_if_cancelled if context else None), render, on_error=lambda error: self._show_unified_error("Офлайн-обмен", error), cancellable=True)
+
+        def create_package():
+            destination = filedialog.asksaveasfilename(parent=dialog, defaultextension=".zip", filetypes=[("ZIP", "*.zip")])
+            if not destination: return
+            return self._submit_repository_task("Offline Change Exchange Export", lambda repository, context: ChangeExchangeService(repository).export(destination, cancel_callback=context.raise_if_cancelled if context else None, progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None), lambda path: package_path.set(str(path)), on_error=lambda error: self._show_unified_error("Офлайн-обмен", error), cancellable=True)
+
+        def preview_package():
+            if inspected[0] is None: return
+            try: render(ChangeExchangeService(self.repository).preview_against_current(inspected[0]))
+            except ValueError as error: self._show_unified_error("Офлайн-обмен", error)
+
+        tk.Button(controls, text="Создать пакет", command=create_package).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Проверить", command=inspect_package).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Предпросмотр", command=preview_package).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Отчёт", command=lambda: ChangeExchangeService(self.repository).export_all_reports(inspected[0]) if inspected[0] else None).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Отклонить", command=lambda: ChangeExchangeService(self.repository).reject(inspected[0], "User rejected") if inspected[0] else None).pack(side="left", padx=(6, 0))
         tk.Button(controls, text="Закрыть", command=dialog.destroy).pack(side="right")
 
     def open_release_center(self):
