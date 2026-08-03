@@ -10,6 +10,7 @@ import unicodedata
 import os
 import webbrowser
 from collections import Counter, defaultdict
+from dataclasses import asdict
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Any, Mapping
@@ -36,6 +37,7 @@ from batch_operations_service import (
     OPERATION_LABELS,
 )
 from data_quality_service import CATEGORY_DEFINITIONS, DataQualityService
+from validation_center_service import ValidationCenterService, ValidationFixCommand
 from database import backup_database, initialize_database, restore_database
 from evidence_service import (
     CONFIDENCE_LEVELS,
@@ -64,6 +66,7 @@ from source_service import CITATION_FIELDS, SOURCE_FIELDS, TARGET_TYPES, SourceS
 from split_service import SPLIT_FIELDS, SplitService
 from task_manager import TaskManager
 from timeline_service import FamilyTimelineService, SUPPORTED_EVENT_TYPES, TimelineFilters
+from timeline_studio_service import SCOPES, TimelineStudioFilters, TimelineStudioService
 from tree_canvas_service import (
     CARD_HEIGHT,
     CARD_WIDTH,
@@ -455,6 +458,7 @@ class GenealogyViewer:
         self.event_service = PersonEventService(self.repository)
         self.timeline_service = PersonTimelineService(self.repository)
         self.family_timeline_service = FamilyTimelineService(self.repository)
+        self.timeline_studio_service = TimelineStudioService(self.repository)
         self.source_service = SourceService(self.repository)
         self.life_map_service = PersonLifeMapService(self.repository, timeline_service=self.timeline_service)
         self.current_person_id = None
@@ -488,6 +492,7 @@ class GenealogyViewer:
         self._card_photo_image = None
         self.integrity_service = IntegrityCheckService(self.repository, data_dir=DATA_DIR)
         self.data_quality_service = DataQualityService(self.repository)
+        self.validation_center_service = ValidationCenterService(self.repository)
         self.advanced_search_service = AdvancedSearchService(
             self.repository, DATA_DIR / "advanced_search_last.json"
         )
@@ -531,6 +536,17 @@ class GenealogyViewer:
         self._family_timeline_person_ids = {}
         self._family_timeline_status = None
         self._family_timeline_event_control = None
+        self._timeline_studio_window = None
+        self._timeline_studio_model = None
+        self._timeline_studio_events = ()
+        self._timeline_studio_event_map = {}
+        self._timeline_studio_lane_tree = None
+        self._timeline_studio_event_tree = None
+        self._timeline_studio_canvas = None
+        self._timeline_studio_vars = {}
+        self._timeline_studio_history = []
+        self._timeline_studio_history_index = -1
+        self._timeline_studio_status = None
         self._source_window = None
         self._source_tree = None
         self._source_citation_tree = None
@@ -565,6 +581,13 @@ class GenealogyViewer:
         self._data_quality_issue_tree = None
         self._data_quality_severity_var = None
         self._data_quality_issue_map = {}
+        self._validation_center_window = None
+        self._validation_report = None
+        self._validation_category_tree = None
+        self._validation_issue_tree = None
+        self._validation_issue_map = {}
+        self._validation_detail_text = None
+        self._validation_filter_vars = {}
         self._batch_operations_window = None
         self._batch_operations_people_tree = None
         self._batch_operations_preview_tree = None
@@ -2051,6 +2074,196 @@ class GenealogyViewer:
             if (category == "all" or issue.category == category)
             and (severity == "All" or issue.severity == severity)
         )
+
+    def open_validation_center(self):
+        if self._validation_center_window is not None:
+            try:
+                self._validation_center_window.lift()
+                self._refresh_validation_center()
+                return
+            except Exception:
+                self._validation_center_window = None
+        dialog = self._create_dialog()
+        self._validation_center_window = dialog
+        dialog.title("Проверка и исправление")
+        dialog.geometry("1420x780")
+        self._validation_filter_vars = {
+            "severity": tk.StringVar(value=""), "object_type": tk.StringVar(value=""),
+            "risk": tk.StringVar(value=""), "automatic": tk.BooleanVar(value=False),
+            "resolved": tk.StringVar(value="Нерешенные"), "text": tk.StringVar(value=""),
+        }
+        dialog.protocol("WM_DELETE_WINDOW", self._close_validation_center)
+        toolbar = tk.Frame(dialog)
+        toolbar.pack(fill="x", padx=12, pady=12)
+        for label, action in (("Обновить", self._refresh_validation_center), ("Открыть выбранное", self._open_validation_issue), ("Проверить исправление", self._dry_run_validation_fix), ("Применить безопасное", self._apply_selected_validation_fix), ("Применить все безопасные", self._apply_all_safe_validation_fixes), ("Игнорировать", self._ignore_validation_issue), ("Восстановить", self._restore_validation_issue), ("Экспорт", self._export_validation_report)):
+            tk.Button(toolbar, text=label, command=action).pack(side="left", padx=(0, 5))
+        tk.Button(toolbar, text="Закрыть", command=self._close_validation_center).pack(side="right")
+        filters = tk.Frame(dialog)
+        filters.pack(fill="x", padx=12, pady=(0, 8))
+        for label, key, values in (("Важность", "severity", ("", "Critical", "Error", "Warning", "Information")), ("Объект", "object_type", ("", "person", "family", "family_child", "event", "source", "citation", "attachment", "layout", "audit")), ("Риск", "risk", ("", "Safe", "Review required", "Dangerous"))):
+            tk.Label(filters, text=label).pack(side="left", padx=(0, 3))
+            combo = ttk.Combobox(filters, textvariable=self._validation_filter_vars[key], values=values, state="readonly", width=16)
+            combo.pack(side="left", padx=(0, 8))
+            combo.bind("<<ComboboxSelected>>", lambda _event: self._render_validation_issues())
+        tk.Checkbutton(filters, text="Только авто", variable=self._validation_filter_vars["automatic"], command=self._render_validation_issues).pack(side="left")
+        tk.Label(filters, text="Статус").pack(side="left", padx=(10, 3))
+        resolved = ttk.Combobox(filters, textvariable=self._validation_filter_vars["resolved"], values=("Все", "Нерешенные", "Решенные"), state="readonly", width=13)
+        resolved.pack(side="left")
+        resolved.bind("<<ComboboxSelected>>", lambda _event: self._render_validation_issues())
+        tk.Label(filters, text="Поиск").pack(side="left", padx=(10, 3))
+        search = ttk.Entry(filters, textvariable=self._validation_filter_vars["text"], width=28)
+        search.pack(side="left")
+        search.bind("<KeyRelease>", lambda _event: self._render_validation_issues())
+        body = ttk.Panedwindow(dialog, orient="horizontal")
+        body.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        left, center, right = tk.Frame(body), tk.Frame(body), tk.Frame(body)
+        body.add(left, weight=1); body.add(center, weight=4); body.add(right, weight=3)
+        category = ttk.Treeview(left, columns=("count",), show="tree headings", selectmode="browse")
+        category.heading("#0", text="Категория"); category.heading("count", text="Кол-во")
+        category.column("#0", width=180); category.column("count", width=55, anchor="e")
+        category.pack(fill="both", expand=True)
+        category.bind("<<TreeviewSelect>>", lambda _event: self._render_validation_issues())
+        self._validation_category_tree = category
+        columns = ("severity", "category", "object", "id", "gedcom", "name", "risk", "auto")
+        issues = ttk.Treeview(center, columns=columns, show="headings", selectmode="browse")
+        for column, title, width in (("severity", "Важность", 85), ("category", "Категория", 150), ("object", "Объект", 90), ("id", "ID", 70), ("gedcom", "GEDCOM", 80), ("name", "Имя", 135), ("risk", "Риск", 120), ("auto", "Авто", 50)):
+            issues.heading(column, text=title, command=lambda key=column: self._sort_validation_issues(key))
+            issues.column(column, width=width, anchor="w")
+        issues.pack(fill="both", expand=True)
+        issues.bind("<<TreeviewSelect>>", lambda _event: self._render_validation_detail())
+        self._validation_issue_tree = issues
+        detail = tk.Text(right, wrap="word", state="disabled")
+        detail.pack(fill="both", expand=True)
+        self._validation_detail_text = detail
+        self._refresh_validation_center()
+
+    def _close_validation_center(self):
+        if self._validation_center_window is not None:
+            try: self._validation_center_window.destroy()
+            except Exception: pass
+        self._validation_center_window = None
+        self._validation_report = None
+        self._validation_category_tree = None
+        self._validation_issue_tree = None
+        self._validation_detail_text = None
+        self._validation_issue_map = {}
+
+    def _refresh_validation_center(self):
+        return self._submit_repository_task(
+            "Проверка и исправление", lambda repository, context: ValidationCenterService(repository).analyze(
+                progress_callback=(lambda message, done, total: context.report(message, done, total)) if context else None,
+                cancel_callback=context.raise_if_cancelled if context else None,
+            ), self._render_validation_report,
+            on_error=lambda error: messagebox.showerror("Проверка и исправление", str(error), parent=self._validation_center_window), cancellable=True,
+        )
+
+    def _render_validation_report(self, report):
+        self._validation_report = report
+        tree = self._validation_category_tree
+        if tree is None: return
+        for item in tree.get_children(): tree.delete(item)
+        tree.insert("", "end", iid="all", text="Все", values=(len(report.issues),))
+        for category, count in report.counters.items(): tree.insert("", "end", iid=category, text=category, values=(count,))
+        self._render_validation_issues()
+
+    def _selected_validation_category(self):
+        tree = self._validation_category_tree
+        selected = tree.selection()[0] if tree is not None and tree.selection() else ""
+        return "" if selected == "all" else selected
+
+    def _filtered_validation_issues(self):
+        if self._validation_report is None: return ()
+        values = self._validation_filter_vars
+        issues = ValidationCenterService(self.repository).filter_issues(
+            self._validation_report, category=self._selected_validation_category(), severity=values["severity"].get(),
+            object_type=values["object_type"].get(), automatic_only=bool(values["automatic"].get()),
+            risk_level=values["risk"].get(), text=values["text"].get(),
+        )
+        if values["resolved"].get() == "Решенные":
+            return tuple(issue for issue in issues if issue.resolved)
+        if values["resolved"].get() == "Нерешенные":
+            return tuple(issue for issue in issues if not issue.resolved)
+        return issues
+
+    def _render_validation_issues(self):
+        tree = self._validation_issue_tree
+        if tree is None: return
+        for item in tree.get_children(): tree.delete(item)
+        self._validation_issue_map = {}
+        for issue in self._filtered_validation_issues():
+            tree.insert("", "end", iid=issue.issue_id, values=(issue.severity, issue.category, issue.object_type, issue.database_id or "", issue.gedcom_id, issue.display_name, issue.risk_level, "Да" if issue.automatic_fix_available else ""))
+            self._validation_issue_map[issue.issue_id] = issue
+        self._render_validation_detail()
+
+    def _sort_validation_issues(self, column):
+        tree = self._validation_issue_tree
+        if tree is None: return
+        values = sorted(tree.get_children(), key=lambda item: str(tree.set(item, column)).casefold())
+        for index, item in enumerate(values): tree.move(item, "", index)
+
+    def _selected_validation_issue(self):
+        tree = self._validation_issue_tree
+        return self._validation_issue_map.get(tree.selection()[0]) if tree is not None and tree.selection() else None
+
+    def _render_validation_detail(self):
+        detail = self._validation_detail_text
+        if detail is None: return
+        issue = self._selected_validation_issue()
+        detail.configure(state="normal"); detail.delete("1.0", "end")
+        if issue:
+            detail.insert("end", f"{issue.category}\n\n{issue.explanation}\n\nРекомендация: {issue.recommended_action}\nРиск: {issue.risk_level}\nАвто: {'Да' if issue.automatic_fix_available else 'Нет'}\n\nДоказательства:\n{json.dumps(issue.evidence, ensure_ascii=False, indent=2)}\n\nСвязанные аудит/источники: проверьте историю изменений и карточку объекта.")
+        detail.configure(state="disabled")
+
+    def _open_validation_issue(self):
+        issue = self._selected_validation_issue()
+        if issue and issue.object_type == "person" and issue.database_id is not None: self.show_person(issue.database_id)
+
+    def _dry_run_validation_fix(self):
+        issue = self._selected_validation_issue()
+        if not issue: return
+        preview = ValidationCenterService(self.repository).preview_fixes((issue,))
+        messagebox.showinfo("Предпросмотр", f"Безопасных изменений: {len(preview.changes)}\nБлокировок: {len(preview.blockers)}", parent=self._validation_center_window)
+
+    def _apply_selected_validation_fix(self):
+        issue = self._selected_validation_issue()
+        self._apply_validation_fixes((issue,) if issue else ())
+
+    def _apply_all_safe_validation_fixes(self):
+        self._apply_validation_fixes(self._filtered_validation_issues())
+
+    def _apply_validation_fixes(self, issues):
+        preview = ValidationCenterService(self.repository).preview_fixes(issues)
+        if not preview.can_apply:
+            messagebox.showwarning("Исправление", "Нет безопасных исправлений в выбранном наборе.", parent=self._validation_center_window); return
+        if not messagebox.askyesno("Исправление", f"Применить {len(preview.changes)} безопасных исправлений?", parent=self._validation_center_window): return
+        return self._submit_repository_task(
+            "Применение безопасных исправлений", lambda repository, context: ValidationCenterService(repository).apply_fixes(preview, cancel_callback=context.raise_if_cancelled if context else None),
+            self._complete_validation_fixes, on_error=lambda error: messagebox.showerror("Исправление", str(error), parent=self._validation_center_window), cancellable=True,
+        )
+
+    def _complete_validation_fixes(self, result):
+        self._get_undo_manager().record_applied(ValidationFixCommand(self.repository, result))
+        self._refresh_validation_center()
+        self._refresh_person_card()
+
+    def _ignore_validation_issue(self):
+        issue = self._selected_validation_issue()
+        if issue:
+            ValidationCenterService(self.repository).ignore(issue, simpledialog.askstring("Игнорировать", "Причина:", parent=self._validation_center_window) or "")
+            self._refresh_validation_center()
+
+    def _restore_validation_issue(self):
+        issue = self._selected_validation_issue()
+        if issue:
+            ValidationCenterService(self.repository).restore_ignored(issue)
+            self._refresh_validation_center()
+
+    def _export_validation_report(self):
+        if self._validation_report is None: return
+        destination = filedialog.asksaveasfilename(parent=self._validation_center_window, title="Экспорт отчёта", defaultextension=".json", filetypes=[("JSON", "*.json"), ("CSV", "*.csv"), ("HTML", "*.html")])
+        if destination:
+            extension = Path(destination).suffix.lower().lstrip(".") or "json"
+            ValidationCenterService(self.repository).export_report(self._validation_report, destination, extension)
 
     def open_data_quality_center(self):
         if self._data_quality_window is not None:
@@ -4403,6 +4616,8 @@ class GenealogyViewer:
         self.graph_editor_button.pack(side="left", padx=(10, 0))
         self.family_timeline_button = tk.Button(top, text="Хронология", command=self.open_family_timeline)
         self.family_timeline_button.pack(side="left", padx=(10, 0))
+        self.timeline_studio_button = tk.Button(top, text="Хронология 2.0", command=self.open_timeline_studio)
+        self.timeline_studio_button.pack(side="left", padx=(10, 0))
         self.source_manager_button = tk.Button(top, text="Источники", command=self.open_source_manager)
         self.source_manager_button.pack(side="left", padx=(10, 0))
         self.evidence_manager_button = tk.Button(
@@ -4455,6 +4670,8 @@ class GenealogyViewer:
         self.integrity_button.pack(side="left", padx=(10, 0))
         self.data_quality_button = tk.Button(top, text="Качество данных", command=self.open_data_quality_center)
         self.data_quality_button.pack(side="left", padx=(10, 0))
+        self.validation_center_button = tk.Button(top, text="Проверка и исправление", command=self.open_validation_center)
+        self.validation_center_button.pack(side="left", padx=(10, 0))
         self.recovery_button = tk.Button(top, text="Мастер восстановления", command=self.open_recovery_wizard)
         self.recovery_button.pack(side="left", padx=(10, 0))
         self.add_person_button = tk.Button(top, text="Add person", command=lambda: self._show_person_editor(None))
@@ -6584,6 +6801,247 @@ class GenealogyViewer:
         self._family_timeline_status.pack(side="left", padx=16)
         tk.Button(controls, text="Закрыть", command=self._close_family_timeline).pack(side="right")
         self._load_family_timeline()
+
+    def open_timeline_studio(self):
+        if self._timeline_studio_window is not None:
+            try:
+                self._timeline_studio_window.lift()
+                self._timeline_studio_window.focus_force()
+                return
+            except Exception:
+                self._timeline_studio_window = None
+        window = self._create_dialog()
+        self._timeline_studio_window = window
+        window.title("Хронология 2.0")
+        window.geometry("1420x800")
+        window.minsize(960, 600)
+        window.protocol("WM_DELETE_WINDOW", self._close_timeline_studio)
+        self._timeline_studio_vars = {key: tk.StringVar(value=value) for key, value in {
+            "scope": "selected_person", "people": str(self.current_person_id or ""), "year_from": "", "year_to": "", "surname": "", "person": "", "family": "", "place": "", "event_type": "", "sourced": "", "confidence": "", "text": "", "jump": "",
+        }.items()}
+        self._timeline_studio_vars["historical"] = tk.BooleanVar(value=False)
+        self._timeline_studio_vars["conflicts"] = tk.BooleanVar(value=False)
+        controls = tk.Frame(window); controls.pack(fill="x", padx=12, pady=(12, 4))
+        for label, command in (("Загрузить", self._load_timeline_studio), ("Сравнить", self._compare_timeline_studio), ("Подогнать", self._fit_timeline_studio), ("Назад", self._timeline_studio_back), ("Вперёд", self._timeline_studio_forward), ("Свернуть/развернуть", self._toggle_timeline_studio_lane), ("Выше", lambda: self._move_timeline_studio_lane(-1)), ("Ниже", lambda: self._move_timeline_studio_lane(1)), ("Историческая заметка", self._add_timeline_studio_context), ("Сохранить вид", self._save_timeline_studio_view), ("Загрузить вид", self._load_timeline_studio_view), ("Переименовать вид", self._rename_timeline_studio_view), ("Дублировать вид", self._duplicate_timeline_studio_view), ("Удалить вид", self._delete_timeline_studio_view), ("Импорт вида", self._import_timeline_studio_view), ("Экспорт вида", self._export_timeline_studio_view), ("Экспорт", self._export_timeline_studio)):
+            tk.Button(controls, text=label, command=command).pack(side="left", padx=(0, 4))
+        filters = tk.LabelFrame(window, text="Область и фильтры"); filters.pack(fill="x", padx=12, pady=(0, 5))
+        fields = (("scope", "Область", SCOPES), ("people", "Люди ID", None), ("year_from", "Год от", None), ("year_to", "Год до", None), ("surname", "Фамилия", None), ("person", "Человек", None), ("family", "Семья", None), ("place", "Место", None), ("event_type", "Событие", ("", *SUPPORTED_EVENT_TYPES)), ("sourced", "Источники", ("", "sourced", "unsourced")), ("confidence", "Достоверность", ("", "high", "primary", "medium", "secondary", "low", "unknown")), ("text", "Текст", None))
+        for index, (key, label, choices) in enumerate(fields):
+            row, column = divmod(index, 6)
+            tk.Label(filters, text=label).grid(row=row, column=column * 2, sticky="e", padx=(6, 2), pady=3)
+            control = ttk.Combobox(filters, textvariable=self._timeline_studio_vars[key], values=choices, width=15, state="readonly") if choices else tk.Entry(filters, textvariable=self._timeline_studio_vars[key], width=16)
+            control.grid(row=row, column=column * 2 + 1, sticky="ew", padx=(0, 4), pady=3)
+        tk.Checkbutton(filters, text="Исторический контекст", variable=self._timeline_studio_vars["historical"]).grid(row=2, column=0, columnspan=3, sticky="w", padx=6)
+        tk.Checkbutton(filters, text="Только конфликты", variable=self._timeline_studio_vars["conflicts"], command=self._apply_timeline_studio_filters).grid(row=2, column=3, columnspan=3, sticky="w")
+        tk.Label(filters, text="Перейти к году").grid(row=2, column=6, sticky="e")
+        tk.Entry(filters, textvariable=self._timeline_studio_vars["jump"], width=10).grid(row=2, column=7, sticky="w")
+        tk.Button(filters, text="Центр", command=self._jump_timeline_studio_year).grid(row=2, column=8, sticky="w")
+        panes = ttk.Panedwindow(window, orient="horizontal"); panes.pack(fill="both", expand=True, padx=12, pady=6)
+        lane_frame, event_frame, canvas_frame = tk.Frame(panes), tk.Frame(panes), tk.Frame(panes)
+        panes.add(lane_frame, weight=1); panes.add(event_frame, weight=3); panes.add(canvas_frame, weight=3)
+        lane_tree = ttk.Treeview(lane_frame, columns=("kind",), show="tree headings", selectmode="browse")
+        lane_tree.heading("#0", text="Дорожка"); lane_tree.heading("kind", text="Тип"); lane_tree.pack(fill="both", expand=True)
+        self._timeline_studio_lane_tree = lane_tree
+        columns = ("date", "original", "type", "subject", "place", "age", "sources", "confidence", "conflicts")
+        event_tree = ttk.Treeview(event_frame, columns=columns, show="headings", selectmode="browse")
+        for column, title, width in (("date", "Дата", 90), ("original", "Оригинал", 105), ("type", "Событие", 100), ("subject", "Человек/семья", 180), ("place", "Место", 130), ("age", "Возраст", 65), ("sources", "Ист.", 45), ("confidence", "Дов.", 70), ("conflicts", "Конфликты", 130)):
+            event_tree.heading(column, text=title); event_tree.column(column, width=width, anchor="w")
+        event_tree.pack(fill="both", expand=True)
+        event_tree.bind("<Double-1>", self._open_timeline_studio_event)
+        event_tree.bind("<<TreeviewSelect>>", lambda _event: self._center_selected_timeline_studio_event())
+        event_tree.bind("<Button-3>", self._timeline_studio_context_menu)
+        self._timeline_studio_event_tree = event_tree
+        canvas = tk.Canvas(canvas_frame, background="#f7f8fa", highlightthickness=0)
+        canvas.pack(fill="both", expand=True); canvas.bind("<MouseWheel>", self._zoom_timeline_studio); canvas.bind("<ButtonPress-1>", lambda event: canvas.scan_mark(event.x, event.y)); canvas.bind("<B1-Motion>", lambda event: canvas.scan_dragto(event.x, event.y, gain=1))
+        self._timeline_studio_canvas = canvas
+        footer = tk.Frame(window); footer.pack(fill="x", padx=12, pady=(0, 12))
+        self._timeline_studio_status = tk.Label(footer, text="") ; self._timeline_studio_status.pack(side="left")
+        self._load_timeline_studio()
+
+    def _timeline_studio_ids(self):
+        values = re.findall(r"\d+", self._timeline_studio_vars["people"].get())
+        return tuple(int(value) for value in values)
+
+    def _load_timeline_studio(self):
+        scope = self._timeline_studio_vars["scope"].get(); people = self._timeline_studio_ids(); historical = bool(self._timeline_studio_vars["historical"].get())
+        return self._submit_repository_task("Хронология 2.0", lambda repository, context: TimelineStudioService(repository).build(scope=scope, selected_person_ids=people, include_historical=historical, progress_callback=(lambda label, done, total: context.report(label, done, total)) if context else None, cancel_callback=context.raise_if_cancelled if context else None), self._apply_timeline_studio_model, on_error=lambda error: messagebox.showerror("Хронология 2.0", str(error), parent=self._timeline_studio_window), cancellable=True)
+
+    def _apply_timeline_studio_model(self, model):
+        self._timeline_studio_model = model
+        self._timeline_studio_history = self._timeline_studio_history[:self._timeline_studio_history_index + 1] + [model]
+        self._timeline_studio_history_index = len(self._timeline_studio_history) - 1
+        self._apply_timeline_studio_filters()
+
+    def _timeline_studio_filters(self):
+        values = self._timeline_studio_vars
+        def year(key):
+            value = values[key].get().strip(); return int(value) if value else None
+        return TimelineStudioFilters(year_from=year("year_from"), year_to=year("year_to"), surname=values["surname"].get(), person=values["person"].get(), family=values["family"].get(), place=values["place"].get(), event_type=values["event_type"].get(), sourced=values["sourced"].get(), confidence=values["confidence"].get(), only_conflicts=bool(values["conflicts"].get()), text=values["text"].get())
+
+    def _apply_timeline_studio_filters(self):
+        if self._timeline_studio_model is None: return
+        try: self._timeline_studio_events = self.timeline_studio_service.filter(self._timeline_studio_model, self._timeline_studio_filters())
+        except ValueError as error: messagebox.showerror("Хронология 2.0", str(error), parent=self._timeline_studio_window); return
+        self._render_timeline_studio()
+
+    def _render_timeline_studio(self):
+        lane_tree, event_tree = self._timeline_studio_lane_tree, self._timeline_studio_event_tree
+        for tree in (lane_tree, event_tree):
+            if tree:
+                for item in tree.get_children(): tree.delete(item)
+        if lane_tree:
+            for lane in self._timeline_studio_model.lanes: lane_tree.insert("", "end", iid=lane.lane_id, text=("[+] " if lane.collapsed else "[-] ") + lane.label, values=(lane.kind,))
+        self._timeline_studio_event_map = {}
+        if event_tree:
+            for event in self._timeline_studio_events:
+                event_tree.insert("", "end", iid=event.event_id, values=(event.normalized_date, event.original_date, event.event_label, event.subject_label, event.place, event.age if event.age is not None else "", event.source_count, event.confidence, ", ".join(event.conflicts)))
+                self._timeline_studio_event_map[event.event_id] = event
+        self._draw_timeline_studio()
+        if self._timeline_studio_status: self._timeline_studio_status.config(text=f"Событий: {len(self._timeline_studio_events)} | Масштаб: {self.timeline_studio_service.time_scale(self._timeline_studio_events)}")
+
+    def _draw_timeline_studio(self):
+        canvas = self._timeline_studio_canvas
+        if canvas is None: return
+        canvas.delete("all"); events = self._timeline_studio_events; years = [event.earliest.year for event in events if event.earliest]
+        if not years: canvas.create_text(20, 20, anchor="nw", text="Нет дат для отображения"); return
+        minimum, maximum = min(years), max(years); span = max(1, maximum - minimum); lanes = {lane.lane_id: index for index, lane in enumerate(self._timeline_studio_model.lanes)}
+        canvas.create_text(16, 14, anchor="nw", text=f"{minimum} - {maximum} ({self.timeline_studio_service.time_scale(events)})")
+        for lane, index in lanes.items():
+            y = 48 + index * 42; canvas.create_line(120, y, 1500, y, fill="#cbd5df"); canvas.create_text(8, y, anchor="w", text=lane)
+        for event in events:
+            if event.earliest and event.lane_id in lanes:
+                x, y = 120 + (event.earliest.year - minimum) * 1320 / span, 48 + lanes[event.lane_id] * 42
+                canvas.create_oval(x - 5, y - 5, x + 5, y + 5, fill=event.color, outline="#8b1e1e" if event.conflicts else "")
+        canvas.configure(scrollregion=(0, 0, 1550, max(120, 80 + len(lanes) * 42)))
+
+    def _selected_timeline_studio_event(self):
+        tree = self._timeline_studio_event_tree
+        return self._timeline_studio_event_map.get(tree.selection()[0]) if tree and tree.selection() else None
+
+    def _open_timeline_studio_event(self, _event=None):
+        event = self._selected_timeline_studio_event()
+        if event and event.person_id is not None: self.show_person(event.person_id)
+        elif event and event.family_id is not None: self._show_data_quality_family_context(type("Issue", (), {"database_id": event.family_id, "issue_type": event.event_label, "severity": "Information", "gedcom_id": "", "explanation": event.description})())
+
+    def _center_selected_timeline_studio_event(self):
+        event = self._selected_timeline_studio_event()
+        if event and event.earliest: self._timeline_studio_vars["jump"].set(str(event.earliest.year)); self._jump_timeline_studio_year()
+
+    def _jump_timeline_studio_year(self):
+        canvas = self._timeline_studio_canvas
+        try: year = int(self._timeline_studio_vars["jump"].get())
+        except ValueError: return
+        years = [event.earliest.year for event in self._timeline_studio_events if event.earliest]
+        if canvas and years: canvas.xview_moveto(max(0.0, min(1.0, (year - min(years)) / max(1, max(years) - min(years)))))
+
+    def _fit_timeline_studio(self):
+        if self._timeline_studio_canvas: self._timeline_studio_canvas.xview_moveto(0); self._timeline_studio_canvas.yview_moveto(0)
+
+    def _zoom_timeline_studio(self, event):
+        canvas = self._timeline_studio_canvas
+        if canvas: canvas.scale("all", event.x, event.y, 1.15 if event.delta > 0 else 0.87, 1.0)
+
+    def _toggle_timeline_studio_lane(self):
+        tree = self._timeline_studio_lane_tree
+        if not tree or not tree.selection() or self._timeline_studio_model is None: return
+        lane_id = tree.selection()[0]; collapsed = {lane.lane_id for lane in self._timeline_studio_model.lanes if lane.collapsed}; collapsed.symmetric_difference_update({lane_id})
+        self._timeline_studio_model = self.timeline_studio_service.build(scope=self._timeline_studio_model.scope, selected_person_ids=self._timeline_studio_model.selected_person_ids, collapsed_lane_ids=collapsed)
+        self._apply_timeline_studio_filters()
+
+    def _move_timeline_studio_lane(self, delta):
+        tree = self._timeline_studio_lane_tree
+        if not tree or not tree.selection() or self._timeline_studio_model is None: return
+        order = [lane.lane_id for lane in self._timeline_studio_model.lanes]; index = order.index(tree.selection()[0]); target = max(0, min(len(order) - 1, index + delta)); order[index], order[target] = order[target], order[index]
+        self._timeline_studio_model = self.timeline_studio_service.build(scope=self._timeline_studio_model.scope, selected_person_ids=self._timeline_studio_model.selected_person_ids, lane_order=order)
+        self._apply_timeline_studio_filters()
+
+    def _timeline_studio_back(self):
+        if self._timeline_studio_history_index > 0: self._timeline_studio_history_index -= 1; self._timeline_studio_model = self._timeline_studio_history[self._timeline_studio_history_index]; self._apply_timeline_studio_filters()
+    def _timeline_studio_forward(self):
+        if self._timeline_studio_history_index + 1 < len(self._timeline_studio_history): self._timeline_studio_history_index += 1; self._timeline_studio_model = self._timeline_studio_history[self._timeline_studio_history_index]; self._apply_timeline_studio_filters()
+    def _timeline_studio_context_menu(self, event):
+        selected = self._selected_timeline_studio_event()
+        if not selected: return
+        menu = tk.Menu(self._timeline_studio_window, tearoff=False)
+        menu.add_command(label="Открыть человека", command=self._open_timeline_studio_event)
+        menu.add_command(label="Открыть событие", command=lambda: self._manage_person_event(self._timeline_studio_window, selected.person_id, int(selected.event_id.split(":")[1]), close_parent_on_save=False) if selected.event_id.startswith("event:") else None)
+        menu.add_command(label="Открыть доказательства", command=self.open_evidence_manager)
+        menu.add_command(label="Показать связанных людей", command=lambda: self._open_timeline_studio_related(selected))
+        menu.add_command(label="Показать на дереве", command=self.open_tree_canvas)
+        menu.add_command(label="Показать на карте жизни", command=self.open_life_map)
+        menu.add_command(label="Копировать детали", command=lambda: self.root.clipboard_append(json.dumps(asdict(selected), ensure_ascii=False, default=str)))
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _open_timeline_studio_related(self, event):
+        if event.person_id is not None:
+            self.current_person_id = event.person_id
+            self.open_relationship_editor()
+
+    def _compare_timeline_studio(self):
+        if self._timeline_studio_model is None: return
+        try:
+            comparison = self.timeline_studio_service.compare(self._timeline_studio_model, self._timeline_studio_ids())
+        except ValueError as error:
+            messagebox.showwarning("Сравнение", str(error), parent=self._timeline_studio_window); return
+        messagebox.showinfo("Сравнение", f"Одновременных событий: {len(comparison.simultaneous_event_ids)}\nОбщих мест: {', '.join(comparison.shared_places) or '-'}\nПересечений проживания: {len(comparison.overlapping_residences)}\nРазница возраста: {comparison.age_differences or '-'}", parent=self._timeline_studio_window)
+
+    def _add_timeline_studio_context(self):
+        title = simpledialog.askstring("Исторический контекст", "Название:", parent=self._timeline_studio_window)
+        if title:
+            date_text = simpledialog.askstring("Исторический контекст", "Дата GEDCOM:", parent=self._timeline_studio_window) or ""
+            category = simpledialog.askstring("Исторический контекст", "Тип: война, миграция, политическое изменение, эпидемия или заметка", parent=self._timeline_studio_window) or "note"
+            self.timeline_studio_service.save_historical_event({"title": title, "date": date_text, "category": category, "note": ""})
+            self._load_timeline_studio()
+
+    def _save_timeline_studio_view(self):
+        name = simpledialog.askstring("Сохранить вид", "Название:", parent=self._timeline_studio_window)
+        if name: self.timeline_studio_service.save_view(name, {"scope": self._timeline_studio_vars["scope"].get(), "people": self._timeline_studio_vars["people"].get(), "filters": asdict(self._timeline_studio_filters())})
+    def _load_timeline_studio_view(self):
+        views = self.timeline_studio_service.list_views(); name = simpledialog.askstring("Загрузить вид", "Название: " + ", ".join(view["name"] for view in views), parent=self._timeline_studio_window)
+        if name:
+            try:
+                configuration = self.timeline_studio_service.load_view(name)["configuration"]
+                for key, value in configuration.get("filters", {}).items():
+                    if key in self._timeline_studio_vars and not isinstance(self._timeline_studio_vars[key], tk.BooleanVar): self._timeline_studio_vars[key].set(str(value or ""))
+                for key in ("scope", "people"):
+                    if key in configuration: self._timeline_studio_vars[key].set(configuration[key])
+                self._load_timeline_studio()
+            except (OSError, ValueError) as error: messagebox.showerror("Хронология 2.0", str(error), parent=self._timeline_studio_window)
+
+    def _timeline_studio_view_name(self, title):
+        return simpledialog.askstring(title, "Название: " + ", ".join(view["name"] for view in self.timeline_studio_service.list_views()), parent=self._timeline_studio_window)
+    def _rename_timeline_studio_view(self):
+        old_name = self._timeline_studio_view_name("Переименовать вид")
+        new_name = simpledialog.askstring("Переименовать вид", "Новое название:", parent=self._timeline_studio_window) if old_name else None
+        if old_name and new_name: self.timeline_studio_service.rename_view(old_name, new_name)
+    def _duplicate_timeline_studio_view(self):
+        name = self._timeline_studio_view_name("Дублировать вид")
+        copy_name = simpledialog.askstring("Дублировать вид", "Название копии:", parent=self._timeline_studio_window) if name else None
+        if name and copy_name: self.timeline_studio_service.duplicate_view(name, copy_name)
+    def _delete_timeline_studio_view(self):
+        name = self._timeline_studio_view_name("Удалить вид")
+        if name and messagebox.askyesno("Удалить вид", f"Удалить {name}?", parent=self._timeline_studio_window): self.timeline_studio_service.delete_view(name)
+    def _import_timeline_studio_view(self):
+        source = filedialog.askopenfilename(parent=self._timeline_studio_window, title="Импорт вида", filetypes=[("JSON", "*.json")])
+        if source: self.timeline_studio_service.import_view(source)
+    def _export_timeline_studio_view(self):
+        name = self._timeline_studio_view_name("Экспорт вида")
+        destination = filedialog.asksaveasfilename(parent=self._timeline_studio_window, title="Экспорт вида", defaultextension=".json", filetypes=[("JSON", "*.json")]) if name else ""
+        if destination: self.timeline_studio_service.export_view(name, destination)
+
+    def _export_timeline_studio(self):
+        if self._timeline_studio_model is None: return
+        destination = filedialog.asksaveasfilename(parent=self._timeline_studio_window, title="Экспорт Хронологии 2.0", initialdir=str(EXPORT_DIR), defaultextension=".svg", filetypes=[("PDF", "*.pdf"), ("SVG", "*.svg"), ("PNG", "*.png"), ("HTML", "*.html"), ("CSV", "*.csv")])
+        if destination:
+            export_format = Path(destination).suffix.lower().lstrip(".")
+            return self._submit_repository_task("Экспорт Хронологии 2.0", lambda repository, _context: TimelineStudioService(repository).export(self._timeline_studio_model, self._timeline_studio_events, destination, export_format, filters=self._timeline_studio_filters()), lambda _path: None, on_error=lambda error: messagebox.showerror("Экспорт", str(error), parent=self._timeline_studio_window))
+
+    def _close_timeline_studio(self):
+        if self._timeline_studio_window is not None:
+            try: self._timeline_studio_window.destroy()
+            except Exception: pass
+        self._timeline_studio_window = self._timeline_studio_model = self._timeline_studio_lane_tree = self._timeline_studio_event_tree = self._timeline_studio_canvas = self._timeline_studio_status = None
+        self._timeline_studio_events = (); self._timeline_studio_event_map = {}; self._timeline_studio_vars = {}
 
     def open_gedcom_repair_center(self) -> None:
         if self._gedcom_repair_window is not None:
