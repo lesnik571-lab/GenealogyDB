@@ -3,14 +3,14 @@
     {
       "area": "Menus, toolbar buttons, and keyboard shortcuts",
       "check_id": "viewer.interactions",
-      "evidence": "350 command targets checked",
+      "evidence": "351 command targets checked",
       "reason": "",
       "status": "PASS"
     },
     {
       "area": "Help entries have commands",
       "check_id": "viewer.help",
-      "evidence": "entries: User Manual, Release Center, Beta Readiness, RC1 Validation, Diagnostics, About",
+      "evidence": "entries: User Manual, Release Center, Beta Readiness, RC1 Validation, 2.1 Integration Check, Diagnostics, About",
       "reason": "",
       "status": "PASS"
     },
@@ -24,7 +24,7 @@
     {
       "area": "Dialog titles are non-empty",
       "check_id": "viewer.dialog-titles",
-      "evidence": "63 title calls",
+      "evidence": "64 title calls",
       "reason": "",
       "status": "PASS"
     },

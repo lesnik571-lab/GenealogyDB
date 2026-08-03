@@ -62,6 +62,7 @@ from family_tree_view_service import FamilyTreeModel, FamilyTreePerson, FamilyTr
 from graph_editor_service import GraphEditorService, GraphModification
 from integrity_service import IntegrityCheckService
 from intelligence_service import IntelligenceService
+from integration_stabilization_service import IntegrationStabilizationService
 from kinship_service import KinshipAnalysis, KinshipService
 from logging_service import (
     configure_logging,
@@ -5034,6 +5035,7 @@ class GenealogyViewer:
         help_menu.add_command(label="Release Center", command=self.open_release_center)
         help_menu.add_command(label="Beta Readiness", command=self.open_beta_readiness)
         help_menu.add_command(label="RC1 Validation", command=self.open_rc1_validation)
+        help_menu.add_command(label="2.1 Integration Check", command=self.open_21_integration_check)
         help_menu.add_command(label="Diagnostics", command=self._show_diagnostics)
         help_menu.add_command(label="About", command=self._show_about)
         tools_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
@@ -5682,6 +5684,13 @@ class GenealogyViewer:
         controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12))
         tk.Button(controls, text="Run validation", command=run).pack(side="left")
         tk.Button(controls, text="Close", command=dialog.destroy).pack(side="right")
+
+    def open_21_integration_check(self):
+        dialog = self._create_dialog(); dialog.title("2.1 Integration Check"); dialog.geometry("900x600"); dialog.minsize(650, 420)
+        body = tk.Text(dialog, wrap="word"); body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
+        def run():
+            return self._submit_repository_task("2.1 Integration Check", lambda repository, _context: IntegrationStabilizationService(repository.db_name).validate(), lambda report: (body.config(state="normal"), body.delete("1.0", "end"), body.insert("1.0", IntegrationStabilizationService._markdown(report)), body.config(state="disabled")), on_error=lambda error: self._show_unified_error("2.1 Integration Check", error), cancellable=True)
+        controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12)); tk.Button(controls, text="Run check", command=run).pack(side="left"); tk.Button(controls, text="Close", command=dialog.destroy).pack(side="right")
 
     def open_collaboration(self):
         dialog = self._create_dialog()

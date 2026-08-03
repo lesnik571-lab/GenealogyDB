@@ -1,0 +1,49 @@
+{
+  "checks": [
+    {
+      "check_id": "services.availability",
+      "evidence": "12/12 services anchored",
+      "reason": "",
+      "section": "Service availability",
+      "status": "PASS"
+    },
+    {
+      "check_id": "viewer.integration",
+      "evidence": "commands=32",
+      "reason": "Legacy direct SQL at lines: 1240, 1476, 1767, 2051, 4465, 4860, 8415, 8769, 10107, 10116, 10132, 7793",
+      "section": "Viewer integration",
+      "status": "WARNING"
+    },
+    {
+      "check_id": "identity.uuid",
+      "evidence": "project, dataset, operation UUIDs validated",
+      "reason": "",
+      "section": "Identity consistency",
+      "status": "PASS"
+    },
+    {
+      "check_id": "lifecycle.transitions",
+      "evidence": "5 lifecycle models",
+      "reason": "",
+      "section": "Lifecycle consistency",
+      "status": "PASS"
+    },
+    {
+      "check_id": "temporary.end-to-end",
+      "evidence": "exchange, history preview, workflow dry run",
+      "reason": "",
+      "section": "Temporary scenarios",
+      "status": "PASS"
+    },
+    {
+      "check_id": "data.configured-checksum",
+      "evidence": "before=31ee103ff72cacd3ae1706a8b29e1c0081b07c8cc9cb933fc67c143f1b658ab4; after=31ee103ff72cacd3ae1706a8b29e1c0081b07c8cc9cb933fc67c143f1b658ab4",
+      "reason": "",
+      "section": "Data safety",
+      "status": "PASS"
+    }
+  ],
+  "configured_checksum_after": "31ee103ff72cacd3ae1706a8b29e1c0081b07c8cc9cb933fc67c143f1b658ab4",
+  "configured_checksum_before": "31ee103ff72cacd3ae1706a8b29e1c0081b07c8cc9cb933fc67c143f1b658ab4",
+  "recommendation": "READY WITH WARNINGS"
+}
