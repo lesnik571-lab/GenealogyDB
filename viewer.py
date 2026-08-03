@@ -64,6 +64,14 @@ from source_service import CITATION_FIELDS, SOURCE_FIELDS, TARGET_TYPES, SourceS
 from split_service import SPLIT_FIELDS, SplitService
 from task_manager import TaskManager
 from timeline_service import FamilyTimelineService, SUPPORTED_EVENT_TYPES, TimelineFilters
+from tree_canvas_service import (
+    CARD_HEIGHT,
+    CARD_WIDTH,
+    MAX_ZOOM as TREE_CANVAS_MAX_ZOOM,
+    MIN_ZOOM as TREE_CANVAS_MIN_ZOOM,
+    TreeCanvasNavigation,
+    TreeCanvasService,
+)
 from repository import PersonRepository
 from repository.person_attachment_service import PersonAttachmentService
 from repository.person_event_service import PersonEventService
@@ -584,6 +592,19 @@ class GenealogyViewer:
         self._graph_editor_status = None
         self._graph_preview_window = None
         self._graph_preview = None
+        self._tree_canvas_window = None
+        self._tree_canvas = None
+        self._tree_canvas_model = None
+        self._tree_canvas_navigation = None
+        self._tree_canvas_positions = {}
+        self._tree_canvas_zoom = 1.0
+        self._tree_canvas_drag = None
+        self._tree_canvas_pan = None
+        self._tree_canvas_collapsed_ids = set()
+        self._tree_canvas_mode_var = None
+        self._tree_canvas_ancestor_var = None
+        self._tree_canvas_descendant_var = None
+        self._tree_canvas_status = None
         self.audit_service = AuditService.for_database(self.repository.db_name)
         self._audit_window = None
         self._audit_records = []
@@ -5197,6 +5218,7 @@ class GenealogyViewer:
         tk.Button(toolbar, text="+", command=lambda: self._zoom_graph_editor(0.1)).pack(side="left", padx=(4, 0))
         tk.Button(toolbar, text="Вписать", command=self._fit_graph_editor).pack(side="left", padx=(8, 0))
         tk.Button(toolbar, text="Центр", command=self._center_graph_editor_selected).pack(side="left", padx=(8, 0))
+        tk.Button(toolbar, text="Интерактивное полотно", command=self.open_tree_canvas).pack(side="left", padx=(8, 0))
         tk.Button(toolbar, text="Обновить", command=self._load_graph_editor).pack(side="left", padx=(8, 0))
         tk.Button(toolbar, text="Закрыть", command=self._close_graph_editor).pack(side="right")
         self._graph_editor_status = tk.Label(toolbar, text="")
@@ -5219,6 +5241,241 @@ class GenealogyViewer:
         canvas.bind("<B2-Motion>", self._pan_graph_editor)
         canvas.bind("<Button-3>", self._open_graph_context_menu)
         self._load_graph_editor()
+
+    def open_tree_canvas(self) -> None:
+        center_id = self._graph_editor_selected_person_id or self.current_person_id
+        if center_id is None:
+            messagebox.showwarning("Интерактивное полотно", "Выберите человека.")
+            return
+        if self._tree_canvas_window is not None:
+            try:
+                self._tree_canvas_window.lift()
+                self._tree_canvas_window.focus_force()
+                if self._tree_canvas_navigation.current != int(center_id):
+                    self._tree_canvas_navigation.visit(center_id)
+                    self._load_tree_canvas()
+                return
+            except Exception:
+                self._tree_canvas_window = None
+        window = self._create_dialog(self._graph_editor_window)
+        self._tree_canvas_window = window
+        window.title("Интерактивное полотно дерева")
+        window.geometry("1320x820")
+        window.minsize(940, 620)
+        window.protocol("WM_DELETE_WINDOW", self._close_tree_canvas)
+        self._tree_canvas_navigation = TreeCanvasNavigation(center_id)
+        self._tree_canvas_positions = {}
+        self._tree_canvas_collapsed_ids = set()
+        self._tree_canvas_zoom = 1.0
+        toolbar = tk.Frame(window)
+        toolbar.pack(fill="x", padx=12, pady=(12, 6))
+        tk.Button(toolbar, text="Назад", command=self._tree_canvas_back).pack(side="left")
+        tk.Button(toolbar, text="Вперёд", command=self._tree_canvas_forward).pack(side="left", padx=(4, 0))
+        tk.Label(toolbar, text="Предки").pack(side="left", padx=(14, 3))
+        self._tree_canvas_ancestor_var = tk.StringVar(value="3")
+        ttk.Combobox(toolbar, textvariable=self._tree_canvas_ancestor_var, values=tuple(str(value) for value in range(1, 9)), state="readonly", width=3).pack(side="left")
+        tk.Label(toolbar, text="Потомки").pack(side="left", padx=(10, 3))
+        self._tree_canvas_descendant_var = tk.StringVar(value="3")
+        ttk.Combobox(toolbar, textvariable=self._tree_canvas_descendant_var, values=tuple(str(value) for value in range(1, 9)), state="readonly", width=3).pack(side="left")
+        self._tree_canvas_mode_var = tk.StringVar(value="hourglass")
+        ttk.Combobox(toolbar, textvariable=self._tree_canvas_mode_var, values=("top_to_bottom", "left_to_right", "ancestors_only", "descendants_only", "hourglass"), state="readonly", width=18).pack(side="left", padx=(10, 0))
+        tk.Button(toolbar, text="Обновить", command=self._load_tree_canvas).pack(side="left", padx=(8, 0))
+        tk.Button(toolbar, text="−", command=lambda: self._zoom_tree_canvas(-0.1)).pack(side="left", padx=(12, 0))
+        tk.Button(toolbar, text="+", command=lambda: self._zoom_tree_canvas(0.1)).pack(side="left", padx=(4, 0))
+        tk.Button(toolbar, text="Вписать", command=self._fit_tree_canvas).pack(side="left", padx=(8, 0))
+        tk.Button(toolbar, text="Центр", command=self._center_tree_canvas).pack(side="left", padx=(4, 0))
+        tk.Button(toolbar, text="Сохранить позиции", command=self._save_tree_canvas_positions).pack(side="left", padx=(8, 0))
+        tk.Button(toolbar, text="SVG", command=lambda: self._export_tree_canvas("svg")).pack(side="left", padx=(12, 0))
+        tk.Button(toolbar, text="PNG", command=lambda: self._export_tree_canvas("png")).pack(side="left", padx=(4, 0))
+        tk.Button(toolbar, text="PDF", command=lambda: self._export_tree_canvas("pdf")).pack(side="left", padx=(4, 0))
+        self._tree_canvas_status = tk.Label(toolbar, text="")
+        self._tree_canvas_status.pack(side="right")
+        frame = tk.Frame(window)
+        frame.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        canvas = tk.Canvas(frame, background="#f4f7f8", highlightthickness=0)
+        self._tree_canvas = canvas
+        horizontal = ttk.Scrollbar(frame, orient="horizontal", command=canvas.xview)
+        vertical = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+        canvas.configure(xscrollcommand=horizontal.set, yscrollcommand=vertical.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vertical.grid(row=0, column=1, sticky="ns")
+        horizontal.grid(row=1, column=0, sticky="ew")
+        frame.grid_rowconfigure(0, weight=1)
+        frame.grid_columnconfigure(0, weight=1)
+        canvas.bind("<MouseWheel>", self._tree_canvas_mousewheel)
+        canvas.bind("<ButtonPress-2>", self._start_tree_canvas_pan)
+        canvas.bind("<B2-Motion>", self._pan_tree_canvas)
+        self._load_tree_canvas()
+
+    def _load_tree_canvas(self) -> None:
+        if self._tree_canvas_navigation is None:
+            return
+        center_id = self._tree_canvas_navigation.current
+        ancestor_depth = int(self._tree_canvas_ancestor_var.get())
+        descendant_depth = int(self._tree_canvas_descendant_var.get())
+        mode = self._tree_canvas_mode_var.get()
+        collapsed = tuple(self._tree_canvas_collapsed_ids)
+
+        def build(repository, context):
+            cancel = context.raise_if_cancelled if context is not None else None
+            progress = (lambda message, completed, total: context.report(message, completed, total)) if context is not None else None
+            return TreeCanvasService(repository).build(
+                center_id, ancestor_depth=ancestor_depth, descendant_depth=descendant_depth,
+                mode=mode, collapsed_ids=collapsed, progress_callback=progress, cancel_callback=cancel,
+            )
+
+        return self._submit_repository_task(
+            "Разметка интерактивного дерева", build, self._render_tree_canvas,
+            on_error=lambda error: messagebox.showerror("Интерактивное полотно", str(error), parent=self._tree_canvas_window),
+            cancellable=True,
+        )
+
+    def _render_tree_canvas(self, model) -> None:
+        self._tree_canvas_model = model
+        self._tree_canvas_positions = dict(model.positions)
+        self._draw_tree_canvas()
+        if self._tree_canvas_status is not None:
+            self._tree_canvas_status.config(text=f"Узлов: {len(model.nodes)} | Масштаб: {self._tree_canvas_zoom:.2f}")
+        self._tree_canvas.after_idle(self._center_tree_canvas)
+
+    def _draw_tree_canvas(self) -> None:
+        canvas, model = self._tree_canvas, self._tree_canvas_model
+        if canvas is None or model is None:
+            return
+        canvas.delete("all")
+        zoom = self._tree_canvas_zoom
+        bounds = {}
+        for connector in model.connectors:
+            source, target = self._tree_canvas_positions.get(connector.source_id), self._tree_canvas_positions.get(connector.target_id)
+            if source is None or target is None:
+                continue
+            if connector.kind == "parent":
+                points = ((source[0] + CARD_WIDTH / 2) * zoom, (source[1] + CARD_HEIGHT) * zoom, (source[0] + CARD_WIDTH / 2) * zoom, ((source[1] + CARD_HEIGHT + target[1]) / 2) * zoom, (target[0] + CARD_WIDTH / 2) * zoom, ((source[1] + CARD_HEIGHT + target[1]) / 2) * zoom, (target[0] + CARD_WIDTH / 2) * zoom, target[1] * zoom)
+            else:
+                points = ((source[0] + CARD_WIDTH) * zoom, (source[1] + CARD_HEIGHT / 2) * zoom, target[0] * zoom, (target[1] + CARD_HEIGHT / 2) * zoom)
+            canvas.create_line(*points, fill="#8c4b19" if connector.special else "#5e7180", width=2, dash=(7, 4) if connector.special else (), arrow="last" if connector.kind == "parent" else "both")
+        for node in model.nodes:
+            x, y = self._tree_canvas_positions[node.person_id]
+            left, top = x * zoom, y * zoom
+            right, bottom = left + CARD_WIDTH * zoom, top + CARD_HEIGHT * zoom
+            bounds[node.person_id] = (left, top, right, bottom)
+            if "selected" in node.states:
+                fill, outline = "#dceeff", "#146c94"
+            elif "warning" in node.states:
+                fill, outline = "#fff2cf", "#b67b00"
+            elif "duplicate" in node.states:
+                fill, outline = "#ffe1db", "#bf4f38"
+            elif "unnamed" in node.states:
+                fill, outline = "#e4e7ea", "#75808a"
+            else:
+                fill, outline = "white", "#687681"
+            tag = f"tree-canvas-person:{node.person_id}"
+            canvas.create_rectangle(left, top, right, bottom, fill=fill, outline=outline, width=3 if "selected" in node.states else 2, tags=(tag,))
+            for index, text in enumerate((node.full_name, f"{node.birth_year or '-'} — {node.death_year or '-'}", f"ID {node.person_id} | {node.gedcom_id or '-'}", node.role + (" [+]" if node.collapsed else ""))):
+                canvas.create_text(left + 9 * zoom, top + (13 + index * 20) * zoom, text=text, anchor="nw", tags=(tag,), font=("Segoe UI", max(7, round((10 if index == 0 else 8) * zoom)), "bold" if index == 0 else "normal"))
+            canvas.tag_bind(tag, "<ButtonPress-1>", lambda event, person_id=node.person_id: self._start_tree_canvas_drag(event, person_id))
+            canvas.tag_bind(tag, "<B1-Motion>", self._drag_tree_canvas_card)
+            canvas.tag_bind(tag, "<ButtonRelease-1>", self._finish_tree_canvas_drag)
+            canvas.tag_bind(tag, "<Double-1>", lambda _event, person_id=node.person_id: self._visit_tree_canvas_person(person_id))
+            canvas.tag_bind(tag, "<Button-3>", lambda _event, person_id=node.person_id: self._toggle_tree_canvas_branch(person_id))
+        self._tree_canvas_bounds = bounds
+        maximum_x = max((position[0] for position in self._tree_canvas_positions.values()), default=800) + CARD_WIDTH + 100
+        maximum_y = max((position[1] for position in self._tree_canvas_positions.values()), default=600) + CARD_HEIGHT + 100
+        canvas.configure(scrollregion=(0, 0, maximum_x * zoom, maximum_y * zoom))
+
+    def _start_tree_canvas_drag(self, event, person_id) -> None:
+        x, y = self._tree_canvas.canvasx(event.x), self._tree_canvas.canvasy(event.y)
+        position = self._tree_canvas_positions[person_id]
+        self._tree_canvas_drag = (person_id, x / self._tree_canvas_zoom - position[0], y / self._tree_canvas_zoom - position[1])
+
+    def _drag_tree_canvas_card(self, event) -> None:
+        if not self._tree_canvas_drag:
+            return
+        person_id, offset_x, offset_y = self._tree_canvas_drag
+        self._tree_canvas_positions[person_id] = (self._tree_canvas.canvasx(event.x) / self._tree_canvas_zoom - offset_x, self._tree_canvas.canvasy(event.y) / self._tree_canvas_zoom - offset_y)
+        self._draw_tree_canvas()
+
+    def _finish_tree_canvas_drag(self, _event=None) -> None:
+        self._tree_canvas_drag = None
+
+    def _start_tree_canvas_pan(self, event) -> None:
+        self._tree_canvas.scan_mark(event.x, event.y)
+
+    def _pan_tree_canvas(self, event) -> None:
+        self._tree_canvas.scan_dragto(event.x, event.y, gain=1)
+
+    def _tree_canvas_mousewheel(self, event) -> None:
+        self._zoom_tree_canvas(0.1 if event.delta > 0 else -0.1)
+
+    def _zoom_tree_canvas(self, change) -> None:
+        self._tree_canvas_zoom = max(TREE_CANVAS_MIN_ZOOM, min(TREE_CANVAS_MAX_ZOOM, round(self._tree_canvas_zoom + change, 2)))
+        self._draw_tree_canvas()
+
+    def _fit_tree_canvas(self) -> None:
+        if not self._tree_canvas_positions:
+            return
+        width = max(x for x, _y in self._tree_canvas_positions.values()) + CARD_WIDTH + 100
+        height = max(y for _x, y in self._tree_canvas_positions.values()) + CARD_HEIGHT + 100
+        available_width = max(1, self._tree_canvas.winfo_width())
+        available_height = max(1, self._tree_canvas.winfo_height())
+        self._tree_canvas_zoom = max(TREE_CANVAS_MIN_ZOOM, min(TREE_CANVAS_MAX_ZOOM, round(min(available_width / width, available_height / height), 2)))
+        self._draw_tree_canvas()
+
+    def _center_tree_canvas(self) -> None:
+        center_id = self._tree_canvas_navigation.current if self._tree_canvas_navigation else None
+        if center_id not in self._tree_canvas_positions:
+            return
+        x, y = self._tree_canvas_positions[center_id]
+        canvas = self._tree_canvas
+        canvas.xview_moveto(max(0, (x * self._tree_canvas_zoom - canvas.winfo_width() / 2) / max(1, canvas.bbox("all")[2])))
+        canvas.yview_moveto(max(0, (y * self._tree_canvas_zoom - canvas.winfo_height() / 2) / max(1, canvas.bbox("all")[3])))
+
+    def _toggle_tree_canvas_branch(self, person_id) -> None:
+        if person_id in self._tree_canvas_collapsed_ids:
+            self._tree_canvas_collapsed_ids.remove(person_id)
+        else:
+            self._tree_canvas_collapsed_ids.add(person_id)
+        self._load_tree_canvas()
+
+    def _visit_tree_canvas_person(self, person_id) -> None:
+        self._tree_canvas_navigation.visit(person_id)
+        self._tree_canvas_collapsed_ids.clear()
+        self._load_tree_canvas()
+
+    def _tree_canvas_back(self) -> None:
+        self._tree_canvas_navigation.back()
+        self._tree_canvas_collapsed_ids.clear()
+        self._load_tree_canvas()
+
+    def _tree_canvas_forward(self) -> None:
+        self._tree_canvas_navigation.forward()
+        self._tree_canvas_collapsed_ids.clear()
+        self._load_tree_canvas()
+
+    def _save_tree_canvas_positions(self) -> None:
+        if self._tree_canvas_model is not None:
+            TreeCanvasService(self.repository).save_positions(self._tree_canvas_model.center_id, self._tree_canvas_positions)
+            self._tree_canvas_status.config(text="Позиции сохранены")
+
+    def _export_tree_canvas(self, export_format) -> None:
+        if self._tree_canvas_model is None:
+            return
+        destination = filedialog.asksaveasfilename(parent=self._tree_canvas_window, title="Экспорт полотна дерева", initialdir=str(EXPORT_DIR), initialfile=f"tree_canvas.{export_format}", defaultextension=f".{export_format}", filetypes=[(export_format.upper(), f"*.{export_format}")])
+        if not destination:
+            return
+        model = self._tree_canvas_model.__class__(**{**self._tree_canvas_model.__dict__, "positions": dict(self._tree_canvas_positions)})
+        return self._submit_repository_task("Экспорт полотна дерева", lambda repository, _context: getattr(TreeCanvasService(repository), f"export_{export_format}")(model, destination, scale=self._tree_canvas_zoom), lambda _path: None, on_error=lambda error: messagebox.showerror("Экспорт полотна", str(error), parent=self._tree_canvas_window))
+
+    def _close_tree_canvas(self) -> None:
+        if self._tree_canvas_window is not None:
+            try:
+                self._tree_canvas_window.destroy()
+            except Exception:
+                pass
+        self._tree_canvas_window = None
+        self._tree_canvas = None
+        self._tree_canvas_model = None
+        self._tree_canvas_navigation = None
 
     def _load_graph_editor(self):
         return self._submit_repository_task(
@@ -5962,7 +6219,8 @@ class GenealogyViewer:
     def _complete_gedcom_repair(self, result) -> None:
         self._get_undo_manager().record_applied(GedcomRepairCommand(result))
         self._analyze_gedcom_repair_file()
-        messagebox.showinfo("Исправление GEDCOM", f"Исправленный файл сохранён: {result.repaired_path}", parent=self._gedcom_repair_window)
+        if self._gedcom_repair_window is not None:
+            messagebox.showinfo("Исправление GEDCOM", f"Исправленный файл сохранён: {result.repaired_path}", parent=self._gedcom_repair_window)
 
     def _export_gedcom_repair_report(self, export_format) -> None:
         preview = self._gedcom_repair_preview
