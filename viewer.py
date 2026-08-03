@@ -43,6 +43,7 @@ from collaboration_service import CollaborationService
 from conflict_resolution_service import ConflictResolutionService
 from history_browser_service import HistoryBrowserService
 from project_merge_service import ProjectMergeService
+from workflow_automation_service import DRY_RUN, FULL_RUN, READ_ONLY_RUN, WorkflowAutomationService
 from rc_validation_service import RCValidationService
 from data_quality_service import CATEGORY_DEFINITIONS, DataQualityService
 from validation_center_service import ValidationCenterService, ValidationFixCommand
@@ -5040,6 +5041,7 @@ class GenealogyViewer:
         tools_menu.add_command(label="Project Merge", command=self.open_project_merge)
         tools_menu.add_command(label="Conflict Resolution", command=self.open_conflict_resolution)
         tools_menu.add_command(label="History Browser", command=self.open_history_browser)
+        tools_menu.add_command(label="Workflow Automation", command=self.open_workflow_automation)
         diagnostics_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
         self._plugin_menu_bar.add_cascade(label="Диагностика", menu=diagnostics_menu)
         diagnostics_menu.add_command(label="Производительность", command=self.open_performance_center)
@@ -5871,6 +5873,36 @@ class GenealogyViewer:
         tk.Button(controls, text="Historical preview", command=build_preview).pack(side="left", padx=(6, 0))
         tk.Button(controls, text="Reports", command=lambda: HistoryBrowserService(self.repository).export_all(entries[0])).pack(side="left", padx=(6, 0))
         tk.Button(controls, text="Close", command=close).pack(side="right")
+
+    def open_workflow_automation(self):
+        dialog = self._create_dialog(); dialog.title("Автоматизация workflows"); dialog.geometry("980x620"); dialog.minsize(700, 460)
+        body = tk.Text(dialog, wrap="word"); body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
+        mode = tk.StringVar(value=DRY_RUN); selected = [None]; preview = [()]
+        controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12))
+
+        def show_plan(workflow):
+            selected[0] = workflow; preview[0] = WorkflowAutomationService(self.repository).preview(workflow)
+            body.config(state="normal"); body.delete("1.0", "end")
+            body.insert("1.0", "Предпросмотр выполнения (только чтение)\n\n" + "\n".join(f"{item['order']}. {item['type']} | {item['safety']} | подтверждение: {'да' if item['confirmation'] else 'нет'}" for item in preview[0]))
+            body.config(state="disabled")
+
+        def load_template():
+            templates = WorkflowAutomationService(self.repository).templates()
+            if templates: show_plan(templates[0])
+
+        def run():
+            if selected[0] is None: return
+            def execute(repository, context):
+                return WorkflowAutomationService(repository).run(selected[0], mode=mode.get(), cancel_callback=context.raise_if_cancelled if context else None, progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None)
+            def complete(result):
+                body.config(state="normal"); body.insert("end", f"\n\nRun {result.run_uuid}: {result.status}"); body.config(state="disabled")
+            return self._submit_repository_task("Workflow Automation", execute, complete, on_error=lambda error: self._show_unified_error("Workflow Automation", error), cancellable=True)
+
+        tk.Button(controls, text="Шаблон", command=load_template).pack(side="left")
+        ttk.Combobox(controls, textvariable=mode, values=(DRY_RUN, READ_ONLY_RUN, FULL_RUN), state="readonly", width=28).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Запустить", command=run).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Отчёты", command=lambda: WorkflowAutomationService(self.repository).export_all(WorkflowAutomationService(self.repository).run(selected[0], mode=DRY_RUN)) if selected[0] else None).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Закрыть", command=dialog.destroy).pack(side="right")
 
     def open_release_center(self):
         dialog = self._create_dialog()

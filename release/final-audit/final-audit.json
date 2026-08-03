@@ -3,7 +3,7 @@
     {
       "area": "Menus, toolbar buttons, and keyboard shortcuts",
       "check_id": "viewer.interactions",
-      "evidence": "348 command targets checked",
+      "evidence": "349 command targets checked",
       "reason": "",
       "status": "PASS"
     },
@@ -24,14 +24,14 @@
     {
       "area": "Dialog titles are non-empty",
       "check_id": "viewer.dialog-titles",
-      "evidence": "61 title calls",
+      "evidence": "62 title calls",
       "reason": "",
       "status": "PASS"
     },
     {
       "area": "Russian labels are valid Unicode",
       "check_id": "viewer.russian-labels",
-      "evidence": "1522 Russian labels checked",
+      "evidence": "1531 Russian labels checked",
       "reason": "",
       "status": "PASS"
     },
