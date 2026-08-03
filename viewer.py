@@ -52,6 +52,7 @@ from geo_map_studio_service import GeoMapFilters, GeoMapStudioService, SCOPES as
 from family_tree_view_service import FamilyTreeModel, FamilyTreePerson, FamilyTreeViewService
 from graph_editor_service import GraphEditorService, GraphModification
 from integrity_service import IntegrityCheckService
+from intelligence_service import IntelligenceService
 from kinship_service import KinshipAnalysis, KinshipService
 from logging_service import (
     configure_logging,
@@ -68,6 +69,7 @@ from release_center_service import ReleaseCenterService
 from research_workspace_service import HYPOTHESIS_STATES, TASK_PRIORITIES, TASK_STATUSES, ResearchWorkspaceService
 from relationship_path_service import RelationshipPath, RelationshipPathService
 from source_service import CITATION_FIELDS, SOURCE_FIELDS, TARGET_TYPES, SourceService
+from source_analysis_service import SourceAnalysisService
 from split_service import SPLIT_FIELDS, SplitService
 from task_manager import TaskManager
 from timeline_service import FamilyTimelineService, SUPPORTED_EVENT_TYPES, TimelineFilters
@@ -458,6 +460,10 @@ class GenealogyViewer:
         self._configure_ui_defaults()
         self.performance_service = PerformanceService()
         self.release_center_service = ReleaseCenterService(database_path=self.repository.db_name)
+        self.intelligence_service = IntelligenceService(self.repository)
+        self._intelligence_report = None
+        self._intelligence_tree = None
+        self._intelligence_window = None
         with self.performance_service.timer("database connection", "database"):
             self.repository = PersonRepository(DB_NAME)
         self.task_manager = TaskManager(root)
@@ -474,6 +480,10 @@ class GenealogyViewer:
         self.workspace_integration_service = WorkspaceIntegrationService()
         self._error_dialog_active = False
         self.source_service = SourceService(self.repository)
+        self.source_analysis_service = SourceAnalysisService(self.repository)
+        self._source_analysis_report = None
+        self._source_analysis_tree = None
+        self._source_analysis_window = None
         self.life_map_service = PersonLifeMapService(self.repository, timeline_service=self.timeline_service)
         self.current_person_id = None
         self.current_person_gedcom_id = None
@@ -5014,6 +5024,10 @@ class GenealogyViewer:
         diagnostics_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
         self._plugin_menu_bar.add_cascade(label="Диагностика", menu=diagnostics_menu)
         diagnostics_menu.add_command(label="Производительность", command=self.open_performance_center)
+        analysis_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
+        self._plugin_menu_bar.add_cascade(label="Analysis", menu=analysis_menu)
+        analysis_menu.add_command(label="Intelligence Center", command=self.open_intelligence_center)
+        analysis_menu.add_command(label="Source Analysis", command=self.open_source_analysis_center)
 
         search_frame = tk.LabelFrame(self.root, text="Расширенный поиск")
         search_frame.pack(fill="x", padx=10, pady=(10, 4))
@@ -5312,6 +5326,176 @@ class GenealogyViewer:
             plugins=getattr(self, "loaded_plugins", ()),
             services=service_names,
         )
+
+    def open_intelligence_center(self):
+        if self._intelligence_window is not None:
+            try:
+                self._intelligence_window.lift(); self._intelligence_window.focus_force(); return
+            except Exception:
+                self._intelligence_window = None
+        dialog = self._create_dialog(); self._intelligence_window = dialog
+        dialog.title("Intelligence Center"); dialog.geometry("1260x700"); dialog.minsize(900, 540)
+        dialog.protocol("WM_DELETE_WINDOW", self._close_intelligence_center)
+        self._intelligence_filter_vars = {"confidence": tk.StringVar(value="0"), "category": tk.StringVar(value=""), "person": tk.StringVar(value=""), "family": tk.StringVar(value=""), "source": tk.StringVar(value=""), "unresolved": tk.BooleanVar(value=True)}
+        controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(12, 6))
+        tk.Button(controls, text="Анализ", command=self._run_intelligence_analysis).pack(side="left")
+        for key, label, values in (("confidence", "Достоверность", ("0", "50", "70", "90")), ("category", "Категория", ("", "probable_duplicate_people", "chronology", "parent_age", "unlikely_marriage", "surname_variation", "isolated_person", "possible_sibling_group", "duplicate_place", "duplicate_source"))):
+            tk.Label(controls, text=label).pack(side="left", padx=(10, 3)); widget = ttk.Combobox(controls, textvariable=self._intelligence_filter_vars[key], values=values, state="readonly", width=22 if key == "category" else 5); widget.pack(side="left"); widget.bind("<<ComboboxSelected>>", lambda _event: self._render_intelligence())
+        for key, label in (("person", "Человек"), ("family", "Семья"), ("source", "Источник")):
+            tk.Label(controls, text=label).pack(side="left", padx=(8, 3)); entry = tk.Entry(controls, textvariable=self._intelligence_filter_vars[key], width=7); entry.pack(side="left"); entry.bind("<Return>", lambda _event: self._render_intelligence())
+        tk.Checkbutton(controls, text="Нерешенные", variable=self._intelligence_filter_vars["unresolved"], command=self._render_intelligence).pack(side="left", padx=(8, 0))
+        tree = ttk.Treeview(dialog, columns=("category", "confidence", "reasons", "explanation"), show="headings", selectmode="browse")
+        for key, title, width in (("category", "Категория", 180), ("confidence", "%", 55), ("reasons", "Коды", 190), ("explanation", "Объяснение", 700)):
+            tree.heading(key, text=title); tree.column(key, width=width, anchor="w")
+        tree.pack(fill="both", expand=True, padx=12, pady=6); self._intelligence_tree = tree
+        self._intelligence_status = tk.Label(dialog, anchor="w")
+        self._intelligence_status.pack(fill="x", padx=12, pady=(0, 6))
+        actions = tk.Frame(dialog); actions.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Button(actions, text="Игнорировать", command=self._ignore_intelligence).pack(side="left")
+        tk.Button(actions, text="Закладка", command=self._bookmark_intelligence).pack(side="left", padx=(6, 0))
+        tk.Button(actions, text="Открыть запись", command=self._open_intelligence_record).pack(side="left", padx=(6, 0))
+        for extension in ("csv", "json", "markdown", "html", "pdf"):
+            tk.Button(actions, text=extension.upper(), command=lambda value=extension: self._export_intelligence(value)).pack(side="left", padx=(6, 0))
+        tk.Button(actions, text="Закрыть", command=self._close_intelligence_center).pack(side="right")
+        self._run_intelligence_analysis()
+
+    def _run_intelligence_analysis(self):
+        return self._submit_repository_task("Intelligence Center", lambda repository, context: IntelligenceService(repository).analyze(progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None, cancel_callback=context.raise_if_cancelled if context else None), self._set_intelligence_report, on_error=lambda error: self._show_unified_error("Intelligence Center", error), cancellable=True)
+
+    def _set_intelligence_report(self, report):
+        self._intelligence_report = report
+        status = getattr(self, "_intelligence_status", None)
+        if status is not None:
+            status.config(text=f"Предложений: {len(report.suggestions)} | Игнорировано: {report.ignored_count} | Время: {report.duration_seconds:.3f} с | Данные: {report.dataset_size}")
+        self._render_intelligence()
+
+    def _render_intelligence(self):
+        tree = self._intelligence_tree
+        if tree is None or self._intelligence_report is None: return
+        values = self._intelligence_filter_vars
+        def integer(key):
+            try: return int(values[key].get() or 0)
+            except ValueError: return None
+        suggestions = self.intelligence_service.filter(self._intelligence_report, confidence=integer("confidence") or 0, category=values["category"].get(), person_id=integer("person"), family_id=integer("family"), source_id=integer("source"), unresolved_only=bool(values["unresolved"].get()))
+        for item in tree.get_children(): tree.delete(item)
+        for item in suggestions: tree.insert("", "end", iid=item.suggestion_id, values=(item.category, f"{item.confidence}%", ", ".join(item.reason_codes), item.explanation))
+
+    def _selected_intelligence(self):
+        if self._intelligence_tree is None or self._intelligence_report is None or not self._intelligence_tree.selection(): return None
+        selected = self._intelligence_tree.selection()[0]
+        return next((item for item in self._intelligence_report.suggestions if item.suggestion_id == selected), None)
+
+    def _ignore_intelligence(self):
+        item = self._selected_intelligence()
+        if item: self.intelligence_service.ignore(item.suggestion_id); self._render_intelligence()
+
+    def _bookmark_intelligence(self):
+        item = self._selected_intelligence()
+        if item: self.intelligence_service.bookmark(item.suggestion_id)
+
+    def _open_intelligence_record(self):
+        item = self._selected_intelligence()
+        if item and item.person_ids: self.show_person(item.person_ids[0])
+        elif item and item.source_ids: self.open_evidence_manager()
+
+    def _export_intelligence(self, extension):
+        if self._intelligence_report is None: return
+        destination = filedialog.asksaveasfilename(parent=self._intelligence_window, defaultextension=f".{ 'md' if extension == 'markdown' else extension}", filetypes=[(extension.upper(), f"*.{ 'md' if extension == 'markdown' else extension}")])
+        if destination: self.intelligence_service.export(self._intelligence_report, destination, extension)
+
+    def _close_intelligence_center(self):
+        if self._intelligence_window is not None:
+            try: self._intelligence_window.destroy()
+            except Exception: pass
+        self._intelligence_window = self._intelligence_tree = self._intelligence_report = None
+        self._intelligence_status = None
+
+    def open_source_analysis_center(self):
+        if self._source_analysis_window is not None:
+            try:
+                self._source_analysis_window.lift(); self._source_analysis_window.focus_force(); return
+            except Exception:
+                self._source_analysis_window = None
+        dialog = self._create_dialog(); self._source_analysis_window = dialog
+        dialog.title("Source Analysis Center"); dialog.geometry("1280x700"); dialog.minsize(920, 540)
+        dialog.protocol("WM_DELETE_WINDOW", self._close_source_analysis_center)
+        self._source_analysis_filter_vars = {"severity": tk.StringVar(value=""), "source": tk.StringVar(value=""), "repository": tk.StringVar(value=""), "person": tk.StringVar(value=""), "event": tk.StringVar(value=""), "unresolved": tk.BooleanVar(value=True)}
+        controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(12, 6))
+        tk.Button(controls, text="Анализ", command=self._run_source_analysis).pack(side="left")
+        tk.Label(controls, text="Severity").pack(side="left", padx=(10, 3))
+        severity = ttk.Combobox(controls, textvariable=self._source_analysis_filter_vars["severity"], values=("", "critical", "high", "medium", "low"), state="readonly", width=10)
+        severity.pack(side="left"); severity.bind("<<ComboboxSelected>>", lambda _event: self._render_source_analysis())
+        for key, label in (("source", "Источник"), ("repository", "Репозиторий"), ("person", "Человек"), ("event", "Событие")):
+            tk.Label(controls, text=label).pack(side="left", padx=(8, 3))
+            entry = tk.Entry(controls, textvariable=self._source_analysis_filter_vars[key], width=16 if key == "repository" else 7)
+            entry.pack(side="left"); entry.bind("<Return>", lambda _event: self._render_source_analysis())
+        tk.Checkbutton(controls, text="Нерешенные", variable=self._source_analysis_filter_vars["unresolved"], command=self._render_source_analysis).pack(side="left", padx=(8, 0))
+        tree = ttk.Treeview(dialog, columns=("category", "severity", "confidence", "explanation"), show="headings", selectmode="browse")
+        for key, title, width in (("category", "Категория", 220), ("severity", "Severity", 90), ("confidence", "%", 55), ("explanation", "Объяснение", 720)):
+            tree.heading(key, text=title); tree.column(key, width=width, anchor="w")
+        tree.pack(fill="both", expand=True, padx=12, pady=6); self._source_analysis_tree = tree
+        self._source_analysis_status = tk.Label(dialog, anchor="w"); self._source_analysis_status.pack(fill="x", padx=12, pady=(0, 6))
+        actions = tk.Frame(dialog); actions.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Button(actions, text="Игнорировать", command=self._ignore_source_analysis).pack(side="left")
+        tk.Button(actions, text="Открыть запись", command=self._open_source_analysis_record).pack(side="left", padx=(6, 0))
+        tk.Button(actions, text="Evidence Manager", command=self.open_evidence_manager).pack(side="left", padx=(6, 0))
+        tk.Button(actions, text="Research Workspace", command=self.open_research_workspace).pack(side="left", padx=(6, 0))
+        tk.Button(actions, text="Validation Center", command=self.open_validation_center).pack(side="left", padx=(6, 0))
+        tk.Button(actions, text="Release Center", command=self.open_release_center).pack(side="left", padx=(6, 0))
+        for extension in ("csv", "json", "markdown", "html", "pdf"):
+            tk.Button(actions, text=extension.upper(), command=lambda value=extension: self._export_source_analysis(value)).pack(side="left", padx=(6, 0))
+        tk.Button(actions, text="Закрыть", command=self._close_source_analysis_center).pack(side="right")
+        self._run_source_analysis()
+
+    def _run_source_analysis(self):
+        return self._submit_repository_task("Source Analysis", lambda repository, context: SourceAnalysisService(repository).analyze(progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None, cancel_callback=context.raise_if_cancelled if context else None), self._set_source_analysis_report, on_error=lambda error: self._show_unified_error("Source Analysis", error), cancellable=True)
+
+    def _set_source_analysis_report(self, report):
+        self._source_analysis_report = report
+        status = getattr(self, "_source_analysis_status", None)
+        if status is not None:
+            status.config(text=f"Findings: {len(report.findings)} | Ignored: {report.ignored_count} | Duration: {report.duration_seconds:.3f} s | Statistics: {report.statistics}")
+        self._render_source_analysis()
+
+    def _render_source_analysis(self):
+        tree = getattr(self, "_source_analysis_tree", None)
+        report = getattr(self, "_source_analysis_report", None)
+        if tree is None or report is None: return
+        values = self._source_analysis_filter_vars
+        def integer(key):
+            try: return int(values[key].get() or 0)
+            except ValueError: return None
+        findings = self.source_analysis_service.filter(report, severity=values["severity"].get(), source_id=integer("source"), repository=values["repository"].get(), person_id=integer("person"), event_id=integer("event"), unresolved_only=bool(values["unresolved"].get()))
+        for item in tree.get_children(): tree.delete(item)
+        for item in findings: tree.insert("", "end", iid=item.finding_id, values=(item.category, item.severity, f"{item.confidence}%", item.explanation))
+
+    def _selected_source_analysis(self):
+        tree = getattr(self, "_source_analysis_tree", None); report = getattr(self, "_source_analysis_report", None)
+        if tree is None or report is None or not tree.selection(): return None
+        selected = tree.selection()[0]
+        return next((item for item in report.findings if item.finding_id == selected), None)
+
+    def _ignore_source_analysis(self):
+        item = self._selected_source_analysis()
+        if item: self.source_analysis_service.ignore(item.finding_id); self._render_source_analysis()
+
+    def _open_source_analysis_record(self):
+        item = self._selected_source_analysis()
+        if item and item.person_ids: self.show_person(item.person_ids[0])
+        elif item and item.source_ids: self.open_evidence_manager()
+
+    def _export_source_analysis(self, extension):
+        if self._source_analysis_report is None: return
+        suffix = "md" if extension == "markdown" else extension
+        destination = filedialog.asksaveasfilename(parent=self._source_analysis_window, defaultextension=f".{suffix}", filetypes=[(extension.upper(), f"*.{suffix}")])
+        if destination: self.source_analysis_service.export(self._source_analysis_report, destination, extension)
+
+    def _close_source_analysis_center(self):
+        if self._source_analysis_window is not None:
+            try: self._source_analysis_window.destroy()
+            except Exception: pass
+        self._source_analysis_window = self._source_analysis_tree = self._source_analysis_report = None
+        self._source_analysis_status = None
 
     def open_release_center(self):
         dialog = self._create_dialog()
