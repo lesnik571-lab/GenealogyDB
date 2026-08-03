@@ -40,6 +40,7 @@ from batch_operations_service import (
 from beta_stabilization_service import BetaStabilizationService
 from beta_remediation_service import BetaRemediationService
 from collaboration_service import CollaborationService
+from conflict_resolution_service import ConflictResolutionService
 from project_merge_service import ProjectMergeService
 from rc_validation_service import RCValidationService
 from data_quality_service import CATEGORY_DEFINITIONS, DataQualityService
@@ -5036,6 +5037,7 @@ class GenealogyViewer:
         self._plugin_menu_bar.add_cascade(label="Tools", menu=tools_menu)
         tools_menu.add_command(label="Collaboration", command=self.open_collaboration)
         tools_menu.add_command(label="Project Merge", command=self.open_project_merge)
+        tools_menu.add_command(label="Conflict Resolution", command=self.open_conflict_resolution)
         diagnostics_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
         self._plugin_menu_bar.add_cascade(label="Диагностика", menu=diagnostics_menu)
         diagnostics_menu.add_command(label="Производительность", command=self.open_performance_center)
@@ -5754,6 +5756,82 @@ class GenealogyViewer:
         tk.Button(controls, text="Analyze", command=preview).pack(side="left", padx=(6, 0))
         tk.Button(controls, text="Apply", command=apply).pack(side="left", padx=(6, 0))
         tk.Button(controls, text="Export reports", command=export_report).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Close", command=dialog.destroy).pack(side="right")
+
+    def open_conflict_resolution(self):
+        dialog = self._create_dialog(); dialog.title("Conflict Resolution"); dialog.geometry("960x620"); dialog.minsize(700, 460)
+        body = tk.Text(dialog, wrap="word"); body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
+        incoming_path = tk.StringVar(value=""); baseline_path = tk.StringVar(value=""); current_plan = [None]; current_preview = [None]
+        conflict_id = tk.StringVar(value=""); resolution = tk.StringVar(value="Mark unresolved"); custom_value = tk.StringVar(value=""); apply_mode = tk.StringVar(value="Apply to current project")
+        controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Entry(controls, textvariable=incoming_path, width=42).pack(side="left", fill="x", expand=True)
+        tk.Button(controls, text="Incoming project", command=lambda: incoming_path.set(filedialog.askopenfilename(parent=dialog, filetypes=[("GenealogyDB", "*.db")]))).pack(side="left", padx=(6, 0))
+        tk.Entry(controls, textvariable=baseline_path, width=28).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Baseline", command=lambda: baseline_path.set(filedialog.askopenfilename(parent=dialog, filetypes=[("GenealogyDB", "*.db")]))).pack(side="left", padx=(6, 0))
+
+        def render(plan):
+            current_plan[0] = plan
+            body.config(state="normal"); body.delete("1.0", "end")
+            body.insert("1.0", "Read-only conflict review\n\n" + "\n\n".join(
+                f"{item.conflict_id}\n{item.category} | {item.entity_type} | {item.field_name}\n"
+                f"Base: {item.base_value}\nCurrent: {item.current_value}\nIncoming: {item.incoming_value}\n"
+                f"Confidence: {item.confidence} | Risk: {item.risk}\n{item.explanation}\n"
+                f"Related: {', '.join(item.affected_related_records) or '-'}\nResolution: {item.resolution}"
+                for item in plan.conflicts
+            ))
+            body.config(state="disabled")
+
+        def review():
+            if not incoming_path.get(): return
+            return self._submit_repository_task(
+                "Conflict Resolution Review",
+                lambda repository, context: ConflictResolutionService(repository).review(incoming_path.get(), baseline_path=baseline_path.get() or None, cancel_callback=context.raise_if_cancelled if context else None, progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None),
+                render, on_error=lambda error: self._show_unified_error("Conflict Resolution", error), cancellable=True,
+            )
+
+        def preview():
+            if current_plan[0] is None: return
+            result = ConflictResolutionService(self.repository).preview(current_plan[0]); current_preview[0] = result
+            body.config(state="normal"); body.delete("1.0", "end"); body.insert("1.0", ConflictResolutionService._markdown(result)); body.config(state="disabled")
+
+        def save_plan():
+            if current_plan[0] is not None: ConflictResolutionService(self.repository).save_plan(current_plan[0])
+
+        def set_resolution():
+            if current_plan[0] is None or not conflict_id.get(): return
+            try:
+                render(ConflictResolutionService(self.repository).resolve(current_plan[0], conflict_id.get(), resolution.get(), custom_value.get()))
+            except ValueError as error: self._show_unified_error("Conflict Resolution", error)
+
+        def apply():
+            if current_preview[0] is None: return
+            destination = None
+            if apply_mode.get() == "Create resolved project copy":
+                destination = filedialog.asksaveasfilename(parent=dialog, defaultextension=".db", filetypes=[("GenealogyDB", "*.db")])
+                if not destination: return
+            if not messagebox.askyesno("Conflict Resolution", "Apply this reviewed resolution plan? A backup is created first.", parent=dialog): return
+            def execute(repository, context):
+                return ConflictResolutionService(repository).apply(current_preview[0], mode=apply_mode.get(), destination=destination, confirmed_overwrite=True, cancel_callback=context.raise_if_cancelled if context else None, progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None)
+            def complete(result):
+                if apply_mode.get() == "Apply to current project":
+                    self._get_undo_manager().record_applied(AppliedDeltaCommand("Conflict Resolution", self.repository, result.delta, result)); self.refresh_views()
+                messagebox.showinfo("Conflict Resolution", f"Resolution complete. Backup: {result.backup_path}", parent=dialog)
+            return self._submit_repository_task("Conflict Resolution Apply", execute, complete, on_error=lambda error: self._show_unified_error("Conflict Resolution", error), cancellable=True)
+
+        def export_reports():
+            if current_preview[0] is not None: ConflictResolutionService(self.repository).export_all(current_preview[0])
+
+        tk.Button(controls, text="Review", command=review).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Preview", command=preview).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Save plan", command=save_plan).pack(side="left", padx=(6, 0))
+        resolution_controls = tk.Frame(dialog); resolution_controls.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Entry(resolution_controls, textvariable=conflict_id, width=28).pack(side="left", fill="x", expand=True)
+        ttk.Combobox(resolution_controls, textvariable=resolution, values=("Keep current", "Take incoming", "Keep both", "Merge compatible values", "Custom value", "Skip", "Mark unresolved"), state="readonly", width=23).pack(side="left", padx=(6, 0))
+        tk.Entry(resolution_controls, textvariable=custom_value, width=18).pack(side="left", padx=(6, 0))
+        tk.Button(resolution_controls, text="Set resolution", command=set_resolution).pack(side="left", padx=(6, 0))
+        ttk.Combobox(resolution_controls, textvariable=apply_mode, values=("Apply to current project", "Create resolved project copy"), state="readonly", width=26).pack(side="left", padx=(6, 0))
+        tk.Button(resolution_controls, text="Apply", command=apply).pack(side="left", padx=(6, 0))
+        tk.Button(resolution_controls, text="Reports", command=export_reports).pack(side="left", padx=(6, 0))
         tk.Button(controls, text="Close", command=dialog.destroy).pack(side="right")
 
     def open_release_center(self):

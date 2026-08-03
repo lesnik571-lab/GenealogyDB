@@ -3,7 +3,7 @@
     {
       "area": "Menus, toolbar buttons, and keyboard shortcuts",
       "check_id": "viewer.interactions",
-      "evidence": "346 command targets checked",
+      "evidence": "347 command targets checked",
       "reason": "",
       "status": "PASS"
     },
@@ -17,14 +17,14 @@
     {
       "area": "Export entries have handlers",
       "check_id": "viewer.exports",
-      "evidence": "46 export handlers; 38 save dialogs",
+      "evidence": "46 export handlers; 39 save dialogs",
       "reason": "",
       "status": "PASS"
     },
     {
       "area": "Dialog titles are non-empty",
       "check_id": "viewer.dialog-titles",
-      "evidence": "59 title calls",
+      "evidence": "60 title calls",
       "reason": "",
       "status": "PASS"
     },
