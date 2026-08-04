@@ -63,4 +63,4 @@ def test_change_type_validation_and_future_interfaces_are_explicit(tmp_path):
 def test_viewer_registers_collaboration_under_tools_without_opening_tkinter():
     source = Path(GenealogyViewer._create_widgets.__code__.co_filename).read_text(encoding="utf-8")
     assert 'add_cascade(label="Инструменты", menu=tools_menu)' in source
-    assert 'label="Collaboration", command=self.open_collaboration' in source
+    assert 'label="Совместная работа", command=self.open_collaboration' in source
