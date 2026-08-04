@@ -1,15 +1,15 @@
 # Changelog
 
-## [2.1.0-beta2-dev] - Unreleased
+## [2.1.0-beta2] - 2026-08-04
 
 ### Fixed
 - Added horizontal navigation to keep every main-toolbar action accessible at Windows high-DPI scaling.
 - Closed SQLite initialization, audit, statistics, release-center, and test connections deterministically to avoid Python 3.14 finalization warnings.
 - Prevented validation tests from overwriting tracked release reports or leaving the working tree dirty.
-- Verified all 363 tests with warnings treated as errors.
+- Verified all 365 tests with warnings treated as errors.
 
 ### Changed
-- Localized the Viewer menus, secondary commands, and toolbar controls consistently in Russian.
+- Localized the Viewer menus, secondary commands, toolbar controls, dialog titles, actions, and source-analysis statistics consistently in Russian.
 
 ## [2.1.0-beta1] - 2026-08-04
 
