@@ -54,13 +54,21 @@ def test_database_state_classification_and_required_table_reporting(tmp_path):
     assert BetaRemediationService(corrupt_path, data_dir=tmp_path / "data").diagnose_database().classification == "corrupt database"
 
     unsupported_path = tmp_path / "unsupported.db"
-    with sqlite3.connect(unsupported_path) as connection:
+    connection = sqlite3.connect(unsupported_path)
+    try:
         for table in ("people", "families", "family_children", "person_events"):
             connection.execute(f"CREATE TABLE {table} (id INTEGER)")
+        connection.commit()
+    finally:
+        connection.close()
     assert BetaRemediationService(unsupported_path, data_dir=tmp_path / "data").diagnose_database().classification == "unsupported schema"
 
-    with sqlite3.connect(database) as connection:
+    connection = sqlite3.connect(database)
+    try:
         connection.execute("DROP TABLE person_events")
+        connection.commit()
+    finally:
+        connection.close()
     uninitialized = service.diagnose_database()
     assert uninitialized.classification == "uninitialized database"
     assert "person_events" in uninitialized.missing_mandatory
