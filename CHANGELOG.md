@@ -4,6 +4,7 @@
 
 ### Fixed
 - Added horizontal navigation to keep every main-toolbar action accessible at Windows high-DPI scaling.
+- Closed SQLite initialization connections deterministically to avoid Python 3.14 finalization warnings.
 
 ### Changed
 - Localized the primary Viewer menus and toolbar controls consistently in Russian.
