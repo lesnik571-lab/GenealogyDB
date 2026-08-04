@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+from build_info import APP_VERSION
 from database import initialize_database
 from rc_validation_service import BLOCKED, PASS, SKIPPED, WARNING, RCValidationCheck, RCValidationReport, RCValidationService
 
@@ -15,14 +16,22 @@ def test_rc_validation_uses_temporary_workflows_and_preserves_configured_databas
     report = service.validate()
 
     assert report.checksum_before == before == report.checksum_after
-    assert report.recommendation in {"READY FOR RC1", "READY FOR RC1 WITH WARNINGS"}
+    supported_version = APP_VERSION == "2.1.0" or (
+        APP_VERSION.startswith("2.1.0-")
+        and any(marker in APP_VERSION for marker in ("beta", "rc"))
+    )
+    if supported_version:
+        assert report.recommendation in {"READY FOR RC1", "READY FOR RC1 WITH WARNINGS"}
+        assert not report.blockers
+    else:
+        assert report.recommendation == "NOT READY FOR RC1"
+        assert {check.check_id for check in report.blockers} == {"packaging.version"}
     assert all(
         check.cleanup_result == "temporary root removed"
         or check.cleanup_result.startswith("cleanup failed:")
         or check.cleanup_result == "not applicable"
         for check in report.checks
     )
-    assert not report.blockers
     assert {"Startup", "Database", "Import", "CRUD", "Relationships", "Sources", "Attachments", "Undo/Redo", "Backup/Restore", "Analysis", "Visualization", "Persistence", "Export", "Packaging"} <= {check.category for check in report.checks}
 
 
