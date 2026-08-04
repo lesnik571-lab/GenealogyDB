@@ -2,6 +2,10 @@
 
 ## [2.2.0-dev] - 2026-08-04
 
+### Added
+- Added persistent favorite people for quick navigation from the Workspace menu and person card.
+- Stored favorites in the user data directory without modifying the genealogy database.
+
 ### Changed
 - Started the GenealogyDB 2.2 development cycle after the verified 2.1.0 final release.
 - Updated development, build, installer, and user-manual version metadata to 2.2.0-dev.
