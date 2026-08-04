@@ -58,6 +58,7 @@ def test_secondary_viewer_dialogs_use_russian_titles_and_actions():
         "open_intelligence_center",
         "open_source_analysis_center",
         "open_beta_readiness",
+        "_record_beta_scaling",
         "open_rc1_validation",
         "open_21_integration_check",
         "open_collaboration",
@@ -68,6 +69,7 @@ def test_secondary_viewer_dialogs_use_russian_titles_and_actions():
         "open_offline_change_exchange",
         "open_release_center",
         "open_release_notes",
+        "open_performance_center",
         "_show_diagnostics",
     )
     source = "\n".join(
@@ -80,6 +82,7 @@ def test_secondary_viewer_dialogs_use_russian_titles_and_actions():
         "Центр анализа",
         "Центр анализа источников",
         "Готовность Beta",
+        "Проверка масштабирования",
         "Проверка RC1",
         "Проверка интеграции 2.1",
         "Совместная работа",
@@ -90,6 +93,8 @@ def test_secondary_viewer_dialogs_use_russian_titles_and_actions():
         "Офлайн-обмен изменениями",
         "Центр релиза",
         "Примечания к выпуску",
+        "Запустить тест",
+        "Сохранить эталон",
         "Диагностика GenealogyDB",
     ):
         assert label in source
