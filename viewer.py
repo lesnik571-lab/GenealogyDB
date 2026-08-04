@@ -5732,7 +5732,7 @@ class GenealogyViewer:
         status = tk.Label(dialog, anchor="w"); status.pack(fill="x", padx=12, pady=(0, 6))
 
         def run():
-            status.config(text="RC1 validation is running against temporary databases and sidecars.")
+            status.config(text="Проверка RC1 выполняется на временных базах данных и служебных файлах.")
             return self._submit_repository_task(
                 "Проверка RC1",
                 lambda repository, _context: RCValidationService(repository.db_name).validate(),
@@ -5744,10 +5744,10 @@ class GenealogyViewer:
         def render(report):
             body.config(state="normal"); body.delete("1.0", "end")
             body.insert("1.0", RCValidationService._markdown(report)); body.config(state="disabled")
-            status.config(text=f"{report.recommendation}; reports: release/rc1-validation/")
+            recommendation = RCValidationService.recommendation_label(report.recommendation)\n            status.config(text=f"{recommendation}; отчёты: release/rc1-validation/")
 
         controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12))
-        tk.Button(controls, text="Run validation", command=run).pack(side="left")
+        tk.Button(controls, text="Запустить проверку", command=run).pack(side="left")
         tk.Button(controls, text="Закрыть", command=dialog.destroy).pack(side="right")
 
     def open_21_integration_check(self):
@@ -5755,7 +5755,7 @@ class GenealogyViewer:
         body = tk.Text(dialog, wrap="word"); body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
         def run():
             return self._submit_repository_task("Проверка интеграции 2.1", lambda repository, _context: IntegrationStabilizationService(repository.db_name).validate(), lambda report: (body.config(state="normal"), body.delete("1.0", "end"), body.insert("1.0", IntegrationStabilizationService._markdown(report)), body.config(state="disabled")), on_error=lambda error: self._show_unified_error("Проверка интеграции 2.1", error), cancellable=True)
-        controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12)); tk.Button(controls, text="Run check", command=run).pack(side="left"); tk.Button(controls, text="Закрыть", command=dialog.destroy).pack(side="right")
+        controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12)); tk.Button(controls, text="Запустить проверку", command=run).pack(side="left"); tk.Button(controls, text="Закрыть", command=dialog.destroy).pack(side="right")
 
     def open_21_beta_validation(self):
         dialog = self._create_dialog(); dialog.title("Проверка готовности 2.1 Beta"); dialog.geometry("900x600"); dialog.minsize(650, 420)
