@@ -118,3 +118,16 @@ def test_source_analysis_statistics_are_presented_in_russian():
     for technical_name in statistics:
         assert technical_name not in text
 
+def test_rc_and_integration_validation_controls_are_russian():
+    source = "\n".join(
+        (
+            inspect.getsource(GenealogyViewer.open_rc1_validation),
+            inspect.getsource(GenealogyViewer.open_21_integration_check),
+        )
+    )
+
+    assert source.count('text="Запустить проверку"') == 2
+    assert "Проверка RC1 выполняется на временных базах данных" in source
+    assert "Run validation" not in source
+    assert "Run check" not in source
+
