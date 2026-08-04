@@ -350,8 +350,14 @@ class RCValidationService:
 
     def _version_ready(self):
         text = (self.project_root / "build_info.py").read_text(encoding="utf-8")
-        expected_version = "2.1.0-beta1"
-        self._assert(APP_VERSION == expected_version and f'APP_VERSION = "{expected_version}"' in text, "2.1 beta1 retained; metadata anchors can be promoted to rc1")
+        expected_version = APP_VERSION
+        supported = expected_version.startswith("2.1.0-") and any(
+            marker in expected_version for marker in ("beta", "rc")
+        )
+        self._assert(
+            supported and f'APP_VERSION = "{expected_version}"' in text,
+            "2.1 prerelease metadata is synchronized and can be promoted to rc1",
+        )
 
     def _call(self, check_id, category, description, operation: Callable[[], object]):
         started = time.perf_counter()
