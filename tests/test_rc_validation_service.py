@@ -3,7 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from database import initialize_database
-from rc_validation_service import BLOCKED, PASS, WARNING, RCValidationCheck, RCValidationReport, RCValidationService
+from rc_validation_service import BLOCKED, PASS, SKIPPED, WARNING, RCValidationCheck, RCValidationReport, RCValidationService
 
 
 def test_rc_validation_uses_temporary_workflows_and_preserves_configured_database(tmp_path):
@@ -73,6 +73,35 @@ def test_rc_startup_check_accepts_existing_application_root(tmp_path, monkeypatc
     assert headless.status == PASS
     assert headless.evidence == "tk._default_root remained unchanged"
 
+
+
+def test_rc_validation_supports_frozen_installed_executable(tmp_path, monkeypatch):
+    runtime_files = (
+        "assets/app_icon.svg",
+        "USER_MANUAL.md",
+        "schema.sql",
+        "resources/default_config.json",
+        "plugins/statistics.py",
+    )
+    for relative_path in runtime_files:
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("runtime resource", encoding="utf-8")
+    executable = tmp_path / "GenealogyDB.exe"
+    executable.write_bytes(b"packaged executable")
+    existing_root = object()
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(executable))
+    monkeypatch.setitem(sys.modules, "tkinter", SimpleNamespace(_default_root=existing_root))
+    service = RCValidationService(tmp_path / "configured.db", project_root=tmp_path)
+
+    startup = {check.check_id: check for check in service._startup_checks()}
+    packaging = {check.check_id: check for check in service._packaging_checks()}
+
+    assert startup["startup.headless-import"].status == PASS
+    assert startup["startup.viewer-safety"].status == SKIPPED
+    assert packaging["packaging.resources"].status == PASS
+    assert packaging["packaging.version"].status == PASS
 
 def test_rc_markdown_localizes_recommendation_headers_and_standard_values():
     check = RCValidationCheck(
