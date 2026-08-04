@@ -18,6 +18,8 @@ from collaboration_service import CollaborationService
 from config import DATA_DIR
 from database import backup_database, validate_database_file
 from undo_manager import AppliedDeltaCommand, RepositoryDeltaCommand
+from operation_correlation import OperationContext
+from operation_correlation import validate_correlation
 
 
 @dataclass(frozen=True)
@@ -94,6 +96,10 @@ class HistoryBrowserService:
                 key = self._group_key(entry, group_by); groups.setdefault(key, []).append(entry)
             return {key: tuple(value) for key, value in sorted(groups.items())}
         return tuple(filtered)
+
+    def correlation_diagnostics(self):
+        """Validate Audit/Collaboration operation counterparts without mutation."""
+        return validate_correlation(AuditService.for_database(self.target_path).list_records(), self.collaboration.changes())
 
     def bookmark(self, entry_id, *, bookmarked=True, tags=(), note=""):
         metadata = self._metadata(); item = metadata.setdefault("entries", {}).setdefault(str(entry_id), {})
@@ -183,10 +189,12 @@ class HistoryBrowserService:
             finally:
                 source.close()
             raise
-        delta = RepositoryDeltaCommand._build_delta(before, self.repository.capture_command_state()); operation_id = str(uuid4())
-        AuditService.for_database(self.target_path).record_delta("restore", delta, description=f"History restore {operation_id} from {preview.snapshot_path}.", service="history_browser_service")
-        self.collaboration.record_change("merge", references={}, summary=f"History restore provenance: {operation_id}; snapshot {preview.snapshot_path}.")
-        return RestoreResult(operation_id, str(self.target_path), str(backup), delta)
+        delta = RepositoryDeltaCommand._build_delta(before, self.repository.capture_command_state())
+        identity = self.collaboration.identity()
+        context = OperationContext.create(operation_type="restore", project_uuid=identity.project_uuid, dataset_uuid=identity.dataset_uuid, author=identity.editor_identity, session_uuid=self.collaboration.session_id, source_module="history_browser_service", affected_entity_types=delta.keys(), provenance={"snapshot_path": preview.snapshot_path, "backup_path": str(backup)}).transition("running").complete()
+        AuditService.for_database(self.target_path).record_delta("restore", delta, description=f"History restore {context.operation_uuid} from {preview.snapshot_path}.", service="history_browser_service", operation_context=context)
+        self.collaboration.record_change("merge", references={}, summary=f"History restore provenance: {context.operation_uuid}; snapshot {preview.snapshot_path}.", operation_context=context)
+        return RestoreResult(context.operation_uuid, str(self.target_path), str(backup), delta)
 
     def undo_command(self, result): return AppliedDeltaCommand("History Restore", self.repository, result.delta, result)
 
@@ -209,11 +217,13 @@ class HistoryBrowserService:
         result = []
         for record in AuditService.for_database(self.target_path).list_records(sort_order="asc"):
             entity_ids = tuple(value for value in (record.database_id, record.gedcom_id) if value)
-            result.append(HistoryEntry(f"audit:{record.id}", f"audit-{record.id}", record.timestamp, "", "", "", self._category(record.operation_type, record.service), record.operation_type, self._entity_type(record.affected_tables), entity_ids, record.description, f"audit:{record.id}:before", f"audit:{record.id}:after", {"service": record.service, "audit_id": record.id}, record.operation_type if record.operation_type in {"undo", "redo"} else "", record.batch_id, "high" if record.operation_type in {"merge", "restore", "delete_person"} else "medium"))
+            operation_uuid = record.operation_uuid or f"audit-{record.id}"
+            result.append(HistoryEntry(f"audit:{record.id}", operation_uuid, record.timestamp, "", "", record.session_uuid, self._category(record.operation_type, record.service), record.operation_type, self._entity_type(record.affected_tables), entity_ids, record.description, f"audit:{record.id}:before", f"audit:{record.id}:after", {"service": record.service, "audit_id": record.id, "status": record.status, "project_uuid": record.project_uuid, "dataset_uuid": record.dataset_uuid, "parent_operation_uuid": record.parent_operation_uuid, "preview": record.preview}, record.operation_type if record.operation_type in {"undo", "redo"} else "", record.parent_operation_uuid or record.batch_id, "high" if record.operation_type in {"merge", "restore", "delete_person"} else "medium"))
         return result
 
     def _collaboration_entries(self):
-        return [HistoryEntry(f"collaboration:{change.operation_id}", change.operation_id, change.timestamp, change.author, change.machine_identifier, change.session_id, "collaboration", change.change_type, next(iter(change.references), ""), tuple(value for values in change.references.values() for value in values), change.summary, "", "", {"references": change.references}, "", "", "medium") for change in self.collaboration.changes()]
+        audit_operations = {record.operation_uuid for record in AuditService.for_database(self.target_path).list_records() if record.operation_uuid}
+        return [HistoryEntry(f"collaboration:{change.operation_id}", change.operation_uuid or change.operation_id, change.timestamp, change.author, change.machine_identifier, change.session_id, "collaboration", change.change_type, next(iter(change.references), ""), tuple(value for values in change.references.values() for value in values), change.summary, "", "", {"references": change.references, "status": change.status, "project_uuid": change.project_uuid, "dataset_uuid": change.dataset_uuid, "parent_operation_uuid": change.parent_operation_uuid, "preview": change.preview}, "", change.parent_operation_uuid, "medium") for change in self.collaboration.changes() if (change.operation_uuid or change.operation_id) not in audit_operations]
 
     def _state_for(self, point):
         if isinstance(point, HistoricalPreview): return self._read_state(point.temporary_path)

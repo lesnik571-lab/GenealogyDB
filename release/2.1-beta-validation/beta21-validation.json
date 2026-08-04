@@ -9,6 +9,13 @@
       "status": "PASS"
     },
     {
+      "check_id": "audit.correlation",
+      "evidence": "one Audit, Collaboration and History counterpart share the completed operation UUID",
+      "reason": "",
+      "section": "Audit consistency",
+      "status": "PASS"
+    },
+    {
       "check_id": "exchange.security",
       "evidence": "deterministic package, checksum, duplicate operation and unsafe ZIP checks",
       "reason": "",
@@ -51,13 +58,6 @@
       "status": "PASS"
     },
     {
-      "check_id": "audit.correlation",
-      "evidence": "Repository writes, audit records, collaboration changes and history entries lack a shared operation UUID contract",
-      "reason": "Current services cannot prove exactly one correlated Audit, Collaboration and History entry per logical write",
-      "section": "Audit consistency",
-      "status": "BLOCKED"
-    },
-    {
       "check_id": "undo.backup-boundaries",
       "evidence": "preview-only and dry-run paths created no backup",
       "reason": "",
@@ -88,5 +88,5 @@
   ],
   "configured_checksum_after": "31ee103ff72cacd3ae1706a8b29e1c0081b07c8cc9cb933fc67c143f1b658ab4",
   "configured_checksum_before": "31ee103ff72cacd3ae1706a8b29e1c0081b07c8cc9cb933fc67c143f1b658ab4",
-  "recommendation": "NOT READY FOR 2.1.0-BETA1"
+  "recommendation": "READY FOR 2.1.0-BETA1"
 }

@@ -21,6 +21,7 @@ from history_browser_service import HistoryBrowserService
 from project_merge_service import ProjectMergeService
 from repository.person_repository import PersonRepository
 from workflow_automation_service import WorkflowAutomationService
+from operation_correlation import OperationContext
 
 PASS = "PASS"
 WARNING = "WARNING"
@@ -124,11 +125,11 @@ class IntegrationStabilizationService:
     def _temporary_scenario_check(self):
         temporary = Path(tempfile.mkdtemp(prefix="genealogy-integration-")); first = temporary / "a.db"; second = temporary / "b.db"; initialize_database(first); initialize_database(second); left = PersonRepository(first); right = PersonRepository(second)
         try:
-            person = left.create_person({"gedcom_id": "I1", "first_name": "Ada", "last_name": "Lovelace"}); data = temporary / "data"; ledger = CollaborationService(first, data_dir=data); ledger.record_change("edit_person", references={"person": (str(person),)}, summary="exchange")
+            before = left.capture_command_state(); person = left.create_person({"gedcom_id": "I1", "first_name": "Ada", "last_name": "Lovelace"}); data = temporary / "data"; ledger = CollaborationService(first, data_dir=data); identity = ledger.identity(); context = OperationContext.create(operation_type="person_create", project_uuid=identity.project_uuid, dataset_uuid=identity.dataset_uuid, session_uuid=ledger.session_id, source_module="integration_stabilization_service").transition("running").complete(); delta = __import__("undo_manager").RepositoryDeltaCommand._build_delta(before, left.capture_command_state()); AuditService.for_database(first).record_delta("person_create", delta, description="Integration correlation", service="integration_stabilization_service", operation_context=context); ledger.record_change("edit_person", references={"person": (str(person),)}, summary="exchange", operation_context=context)
             exchange = ChangeExchangeService(left, data_dir=data); package = exchange.export(temporary / "exchange.zip"); inspected = ChangeExchangeService(right, data_dir=data).inspect(package)
             history = HistoryBrowserService(left, data_dir=data); snapshot_id, snapshot = history.create_snapshot(); preview = history.historical_preview(type("Entry", (), {"entry_id": "snapshot", "after_snapshot_reference": f"snapshot:{snapshot}"})()); history.close_preview(preview)
             workflow = WorkflowAutomationService(left, data_dir=data).create("dry", step_types=("validation_scan",)); run = WorkflowAutomationService(left, data_dir=data).run(workflow)
-            valid = inspected.status in {"Inspected", "Rejected"} and not Path(preview.temporary_path).exists() and run.status == "dry_run"
+            valid = inspected.status in {"Inspected", "Rejected"} and not Path(preview.temporary_path).exists() and run.status == "dry_run" and HistoryBrowserService(left, data_dir=data).correlation_diagnostics()["complete"]
             return self._check("temporary.end-to-end", "Temporary scenarios", valid, "exchange, history preview, workflow dry run", "Temporary scenario failed")
         except Exception as error:
             return IntegrationCheck("temporary.end-to-end", "Temporary scenarios", BLOCKED, "", str(error))

@@ -1,18 +1,18 @@
 <!doctype html><meta charset="utf-8"><pre># GenealogyDB 2.1 Beta Validation
 
 Candidate: **2.1.0-beta1**
-Recommendation: **NOT READY FOR 2.1.0-BETA1**
+Recommendation: **READY FOR 2.1.0-BETA1**
 
 | Section | Status | Evidence | Reason |
 | --- | --- | --- | --- |
 | Collaboration | PASS | project, dataset, editor/session and operation identities persisted |  |
+| Audit consistency | PASS | one Audit, Collaboration and History counterpart share the completed operation UUID |  |
 | Offline exchange | PASS | deterministic package, checksum, duplicate operation and unsafe ZIP checks |  |
 | Project merge | PASS | read-only preview, duplicate/conflict detection and cancellation |  |
 | Conflict resolution | PASS | atomic plan persistence and conservative relationship blocking |  |
 | History | PASS | audit/collaboration indexing surface and read-only historical preview cleanup |  |
 | Workflow automation | PASS | template validation, dry run, read-only run and confirmation enforcement |  |
 | Combined integration | PASS | package, merge, resolution, workflow and history identities validated |  |
-| Audit consistency | BLOCKED | Repository writes, audit records, collaboration changes and history entries lack a shared operation UUID contract | Current services cannot prove exactly one correlated Audit, Collaboration and History entry per logical write |
 | Undo and backup consistency | PASS | preview-only and dry-run paths created no backup |  |
 | Viewer | PASS | required 2.1 commands have one callback; import has no Tk root |  |
 | Packaging and documentation | PASS | candidate target: 2.1.0-beta1 |  |

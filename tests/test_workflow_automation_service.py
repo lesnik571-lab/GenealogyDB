@@ -5,6 +5,9 @@ import pytest
 from database import initialize_database
 from repository.person_repository import PersonRepository
 from workflow_automation_service import DRY_RUN, FULL_RUN, READ_ONLY_RUN, WorkflowAutomationService
+from audit_service import AuditService
+from collaboration_service import CollaborationService
+from operation_correlation import validate_correlation
 
 
 def repository(tmp_path):
@@ -45,6 +48,9 @@ def test_execution_history_reports_cancel_backup_and_safe_failure(tmp_path):
         service = WorkflowAutomationService(repo, data_dir=tmp_path / "data", backup_dir=tmp_path / "backups")
         workflow = service.create("Run", step_types=("create_backup", "validation_scan", "add_audit_entry", "add_collaboration_change"))
         run = service.run(workflow, mode=FULL_RUN); assert run.status == "completed" and Path(service.history_dir / f"{run.run_uuid}.json").exists() and all(path.exists() for path in service.export_all(run))
+        audit = [record for record in AuditService.for_database(repo.db_name).list_records() if record.operation_uuid == run.run_uuid]
+        changes = [change for change in CollaborationService(repo.db_name, data_dir=tmp_path / "data").changes() if change.operation_uuid == run.run_uuid]
+        assert len(audit) == len(changes) == 1 and validate_correlation(audit, changes)["complete"]
         cancelled = service.run(workflow, mode=FULL_RUN, cancel_callback=lambda: (_ for _ in ()).throw(RuntimeError("cancel"))); assert cancelled.cancelled
         dangerous = service.create("Danger", step_types=("user_confirmation", "gedcom_import")); result = service.run(dangerous, mode=FULL_RUN, confirmations=("gedcom_import",)); assert result.status == "failed" and list((tmp_path / "backups").glob("*.db"))
     finally: repo.close()

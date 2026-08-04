@@ -17,6 +17,7 @@ from collaboration_service import CollaborationService
 from config import DATA_DIR
 from database import backup_database, validate_database_file
 from undo_manager import AppliedDeltaCommand, RepositoryDeltaCommand
+from operation_correlation import OperationContext
 
 KEEP_CURRENT = "Keep current"
 TAKE_INCOMING = "Take incoming"
@@ -224,8 +225,10 @@ class ConflictResolutionService:
                     if progress_callback: progress_callback("Applying resolutions", index, len(preview.plan.conflicts))
         except Exception: raise
         delta = RepositoryDeltaCommand._build_delta(before, self.repository.capture_command_state())
-        AuditService.for_database(target_path).record_delta("merge", delta, description=f"Conflict resolution plan {preview.plan.plan_id}.", service="conflict_resolution_service")
-        self.collaboration.record_change("merge", references={}, summary=f"Conflict resolution provenance: plan {preview.plan.plan_id}; incoming {preview.plan.incoming_path}.")
+        identity = self.collaboration.identity()
+        context = OperationContext.create(operation_type="merge", project_uuid=identity.project_uuid, dataset_uuid=identity.dataset_uuid, operation_uuid=preview.plan.plan_id, author=identity.editor_identity, session_uuid=self.collaboration.session_id, source_module="conflict_resolution_service", affected_entity_types=delta.keys(), provenance={"incoming_path": preview.plan.incoming_path}).transition("running").complete()
+        AuditService.for_database(target_path).record_delta("merge", delta, description=f"Conflict resolution plan {preview.plan.plan_id}.", service="conflict_resolution_service", operation_context=context)
+        self.collaboration.record_change("merge", references={}, summary=f"Conflict resolution provenance: plan {preview.plan.plan_id}; incoming {preview.plan.incoming_path}.", operation_context=context)
         return ResolutionResult(preview.plan.plan_id, str(target_path), str(backup), delta)
 
     def undo_command(self, result): return AppliedDeltaCommand("Conflict Resolution", self.repository, result.delta, result)

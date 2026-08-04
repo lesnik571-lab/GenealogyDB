@@ -11,6 +11,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from config import DATA_DIR
+from operation_correlation import OperationContext
 
 
 CHANGE_TYPES = (
@@ -40,6 +41,13 @@ class CollaborationChange:
     machine_identifier: str
     references: dict[str, tuple[str, ...]]
     summary: str
+    operation_uuid: str = ""
+    project_uuid: str = ""
+    dataset_uuid: str = ""
+    status: str = "completed"
+    parent_operation_uuid: str = ""
+    preview: bool = False
+    reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -79,10 +87,15 @@ class CollaborationService:
         self._write(payload)
         return self.identity()
 
-    def record_change(self, change_type, *, references=None, summary="", author="", timestamp=None, operation_id=None) -> CollaborationChange:
+    def record_change(self, change_type, *, references=None, summary="", author="", timestamp=None, operation_id=None, operation_context: OperationContext | None = None) -> CollaborationChange:
         if change_type not in CHANGE_TYPES:
             raise ValueError(f"Unsupported collaboration change type: {change_type}")
         identity = self.identity()
+        if operation_context:
+            operation_context.validate()
+            if operation_context.project_uuid != identity.project_uuid or operation_context.dataset_uuid != identity.dataset_uuid:
+                raise ValueError("Operation context identity does not match collaboration metadata")
+            operation_id = operation_context.operation_uuid
         change = CollaborationChange(
             operation_id=str(operation_id or uuid4()),
             change_type=change_type,
@@ -92,6 +105,13 @@ class CollaborationService:
             machine_identifier=identity.machine_identifier,
             references=self._references(references),
             summary=str(summary),
+            operation_uuid=str(operation_id or ""),
+            project_uuid=identity.project_uuid,
+            dataset_uuid=identity.dataset_uuid,
+            status=operation_context.status if operation_context else "completed",
+            parent_operation_uuid=operation_context.parent_operation_uuid if operation_context else "",
+            preview=operation_context.preview if operation_context else False,
+            reason=operation_context.reason if operation_context else "",
         )
         self._require_uuid(change.operation_id, "operation_id")
         payload = self._read()
@@ -104,7 +124,7 @@ class CollaborationService:
     def changes(self) -> tuple[CollaborationChange, ...]:
         return tuple(
             CollaborationChange(
-                **{**item, "references": {key: tuple(value) for key, value in item.get("references", {}).items()}},
+                **{**item, "references": {key: tuple(value) for key, value in item.get("references", {}).items()}, "operation_uuid": item.get("operation_uuid", item.get("operation_id", "")), "project_uuid": item.get("project_uuid", ""), "dataset_uuid": item.get("dataset_uuid", ""), "status": item.get("status", "completed"), "parent_operation_uuid": item.get("parent_operation_uuid", ""), "preview": bool(item.get("preview", False)), "reason": item.get("reason", "")},
             )
             for item in sorted(self._read()["changes"], key=lambda item: (item["timestamp"], item["operation_id"]))
         )
@@ -189,6 +209,8 @@ class CollaborationService:
             self._require_uuid(identity.get(field, ""), field)
         for item in payload["changes"]:
             self._require_uuid(item.get("operation_id", ""), "operation_id")
+            if item.get("operation_uuid"):
+                self._require_uuid(item["operation_uuid"], "operation_uuid")
             if item.get("change_type") not in CHANGE_TYPES:
                 raise ValueError("Unsupported collaboration change type")
 

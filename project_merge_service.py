@@ -16,6 +16,7 @@ from collaboration_service import CollaborationService
 from config import DATA_DIR
 from database import backup_database, validate_database_file
 from undo_manager import AppliedDeltaCommand, RepositoryDeltaCommand
+from operation_correlation import OperationContext
 
 
 KEEP_CURRENT = "Keep current"
@@ -58,6 +59,7 @@ class ProjectMergePreview:
     blockers: tuple[str, ...]
     warnings: tuple[str, ...]
     estimated_counts: dict[str, int]
+    parent_operation_uuid: str = ""
 
     @property
     def can_apply(self):
@@ -84,7 +86,7 @@ class ProjectMergeService:
         self.backup_dir = Path(backup_dir or self.data_dir / "backups")
         self.collaboration = CollaborationService(self.target_path, data_dir=self.data_dir)
 
-    def analyze(self, incoming_path, *, mode="Preview only", actions=None, cancel_callback=None, progress_callback=None, incoming_metadata=None):
+    def analyze(self, incoming_path, *, mode="Preview only", actions=None, cancel_callback=None, progress_callback=None, incoming_metadata=None, parent_operation_uuid=""):
         source = Path(incoming_path).expanduser().resolve()
         if source == self.target_path:
             raise ValueError("A project cannot be merged with itself")
@@ -117,7 +119,7 @@ class ProjectMergeService:
         skipped = tuple(item.item_id for item in resolved if actions_or_default(actions, item) in {SKIP, MANUAL_REVIEW})
         blocked = tuple(sorted(item.item_id for item in resolved if item.risk_level == RISK_BLOCKER and actions_or_default(actions, item) not in {SKIP, MANUAL_REVIEW}))
         estimates = {table: len(target_data[table]) + sum(1 for item in resolved if item.category == f"{table}_addition" and actions_or_default(actions, item) != SKIP) for table in ("people", "families", "family_children", "person_events", "sources", "citations")}
-        return ProjectMergePreview(str(source), str(self.target_path), mode, str(uuid4()), tuple(resolved), additions, updates, kept, skipped, blocked, tuple(sorted(warnings)), estimates)
+        return ProjectMergePreview(str(source), str(self.target_path), mode, str(uuid4()), tuple(resolved), additions, updates, kept, skipped, blocked, tuple(sorted(warnings)), estimates, str(parent_operation_uuid))
 
     def apply(self, preview, *, destination=None, confirmed_overwrite=False, cancel_callback=None, progress_callback=None, import_metadata=True):
         if preview.blockers:
@@ -155,13 +157,15 @@ class ProjectMergeService:
             raise
         after = self.repository.capture_command_state()
         delta = RepositoryDeltaCommand._build_delta(before, after)
-        AuditService.for_database(target_path).record_delta("merge", delta, description=f"Project merge {preview.merge_operation_id} from {preview.source_path}.", service="project_merge_service")
+        identity = self.collaboration.identity()
+        context = OperationContext.create(operation_type="merge", project_uuid=identity.project_uuid, dataset_uuid=identity.dataset_uuid, operation_uuid=preview.merge_operation_id, author=identity.editor_identity, session_uuid=self.collaboration.session_id, parent_operation_uuid=preview.parent_operation_uuid, source_module="project_merge_service", affected_entity_types=delta.keys(), provenance={"source_path": preview.source_path}).transition("running").complete()
+        AuditService.for_database(target_path).record_delta("merge", delta, description=f"Project merge {preview.merge_operation_id} from {preview.source_path}.", service="project_merge_service", operation_context=context)
         imported = 0
         if import_metadata:
             source_collaboration = CollaborationService(preview.source_path, data_dir=self.data_dir)
             if source_collaboration.identity().dataset_uuid == self.collaboration.identity().dataset_uuid:
                 imported = self.collaboration.import_metadata(source_collaboration.metadata_path)
-        self.collaboration.record_change("merge", references={}, summary=f"Project merge provenance: {preview.source_path}; operation {preview.merge_operation_id}.")
+        self.collaboration.record_change("merge", references={}, summary=f"Project merge provenance: {preview.source_path}; operation {preview.merge_operation_id}.", operation_context=context)
         return ProjectMergeResult(preview.merge_operation_id, str(target_path), str(backup), delta, imported)
 
     def undo_command(self, result):

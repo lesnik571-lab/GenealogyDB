@@ -20,6 +20,7 @@ from database import backup_database
 from intelligence_service import IntelligenceService
 from source_analysis_service import SourceAnalysisService
 from validation_center_service import ValidationCenterService
+from operation_correlation import OperationContext
 
 
 READ_ONLY = "Read-only"
@@ -199,12 +200,13 @@ class WorkflowAutomationService:
         run_id = str(uuid4()); started = self._now(); before_checksum = self._checksum(); results = []; warnings = []; failures = []; files = []; confirmations = set(confirmations)
         if mode == DRY_RUN:
             return self._finish(run_id, workflow, mode, started, "dry_run", results, warnings, failures, confirmations, False, files, before_checksum, before_checksum)
-        backup = None
+        backup = None; sidecar_requested = False
         for index, item in enumerate(self.preview(workflow, variables=variables), 1):
             if cancel_callback:
                 try: cancel_callback()
                 except Exception: return self._finish(run_id, workflow, mode, started, "cancelled", results, warnings, failures, confirmations, True, files, before_checksum, self._checksum())
             step_type = item["type"]; safety = item["safety"]
+            sidecar_requested = sidecar_requested or step_type in {"add_audit_entry", "add_collaboration_change"}
             if mode == READ_ONLY_RUN and safety != READ_ONLY:
                 results.append({"step": step_type, "status": "blocked", "reason": "read-only mode"}); continue
             if step_type in DANGEROUS and step_type not in confirmations:
@@ -227,7 +229,13 @@ class WorkflowAutomationService:
                 failures.append(f"{step_type}: {error}"); results.append({"step": step_type, "status": "failed", "error": str(error)}); break
             if progress_callback: progress_callback(step_type, index, len(workflow.steps))
             if step_type == "stop": break
-        status = "failed" if failures else "completed"; after_checksum = self._checksum()
+        status = "failed" if failures else "completed"
+        if status == "completed" and sidecar_requested:
+            identity = self.collaboration.identity()
+            context = OperationContext.create(operation_type="batch_operations", project_uuid=identity.project_uuid, dataset_uuid=identity.dataset_uuid, operation_uuid=run_id, author=identity.editor_identity, session_uuid=self.collaboration.session_id, source_module="workflow_automation_service", provenance={"workflow_uuid": workflow.workflow_uuid}).transition("running").complete()
+            AuditService.for_database(self.repository.db_name).record("batch_operations", description="Workflow sidecar audit entry", service="workflow_automation_service", operation_context=context)
+            self.collaboration.record_change("merge", references={}, summary="Workflow collaboration entry", operation_context=context)
+        after_checksum = self._checksum()
         if before_checksum != after_checksum and all(SAFETY[item["type"]] == READ_ONLY for item in self.preview(workflow, variables=variables)):
             failures.append("Read-only workflow changed the database"); status = "failed"
         return self._finish(run_id, workflow, mode, started, status, results, warnings, failures, confirmations, False, files, before_checksum, after_checksum)
@@ -252,8 +260,7 @@ class WorkflowAutomationService:
         if step_type in {"intelligence_analysis", "duplicate_detection"}: return {"suggestions": len(IntelligenceService(self.repository).analyze(cancel_callback=cancel_callback).suggestions)}, ()
         if step_type == "source_analysis": return {"findings": len(SourceAnalysisService(self.repository).analyze(cancel_callback=cancel_callback).findings)}, ()
         if step_type == "create_backup": return {"backup": str(backup_database(self.repository.db_name, self.backup_dir))}, ()
-        if step_type == "add_audit_entry": AuditService.for_database(self.repository.db_name).record("batch_operations", description="Workflow sidecar audit entry", service="workflow_automation_service"); return {}, ()
-        if step_type == "add_collaboration_change": self.collaboration.record_change("merge", references={}, summary="Workflow collaboration entry"); return {}, ()
+        if step_type in {"add_audit_entry", "add_collaboration_change"}: return {"status": "correlated at successful workflow completion"}, ()
         if step_type == "delay": return {"warning": "Delay is a cooperative boundary; no sleep is performed"}, ()
         if step_type in {"user_confirmation", "conditional_branch", "timeline_generation", "tree_generation", "map_preparation", "merge_preview", "conflict_resolution_preview", "gedcom_import_preview", "export_report", "create_snapshot", "stop"}: return {"status": "previewed"}, ()
         raise ValueError(f"Unsupported executable step: {step_type}")

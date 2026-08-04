@@ -23,6 +23,8 @@ from history_browser_service import HistoryBrowserService
 from project_merge_service import ProjectMergeService
 from repository.person_repository import PersonRepository
 from workflow_automation_service import DRY_RUN, READ_ONLY_RUN, WorkflowAutomationService
+from operation_correlation import OperationContext, validate_correlation
+from undo_manager import RepositoryDeltaCommand
 
 PASS = "PASS"
 WARNING = "WARNING"
@@ -88,14 +90,23 @@ class Beta21ValidationService:
         data = root / "sidecars"
         try:
             baseline = self._checksum(first_path)
+            before_write = first.capture_command_state()
             first_person = first.create_person({"gedcom_id": "I1", "first_name": "Ada", "last_name": "Lovelace"})
             second.create_person({"gedcom_id": "I1", "first_name": "Augusta", "last_name": "King"})
             collaboration = CollaborationService(first_path, data_dir=data, editor_identity="Beta validator")
             identity = collaboration.identity()
-            change = collaboration.record_change("edit_person", references={"person": (str(first_person),)}, summary="Beta validation")
+            context = OperationContext.create(operation_type="person_create", project_uuid=identity.project_uuid, dataset_uuid=identity.dataset_uuid, author=identity.editor_identity, session_uuid=collaboration.session_id, source_module="beta21_validation_service", affected_entity_types=("person",), affected_entity_ids=(str(first_person),)).transition("running").complete()
+            delta = RepositoryDeltaCommand._build_delta(before_write, first.capture_command_state())
+            audit = AuditService.for_database(first_path)
+            audit.record_delta("person_create", delta, description="Beta validation synthetic write", service="beta21_validation_service", operation_context=context)
+            change = collaboration.record_change("create_person", references={"person": (str(first_person),)}, summary="Beta validation", operation_context=context)
             reloaded = CollaborationService(first_path, data_dir=data).identity()
             collaboration_ok = all(self._uuid(value) for value in (identity.project_uuid, identity.dataset_uuid, change.operation_id)) and identity == reloaded and not collaboration.diagnostics().orphan_operation_ids
             checks = [self._result("collaboration.identities", "Collaboration", collaboration_ok, "project, dataset, editor/session and operation identities persisted", "Malformed, missing, reused, or orphan collaboration metadata")]
+            history_entries = HistoryBrowserService(first, data_dir=data, backup_dir=root / "backups").entries()
+            correlation = validate_correlation([record for record in audit.list_records() if record.operation_uuid == context.operation_uuid], [item for item in collaboration.changes() if item.operation_uuid == context.operation_uuid])
+            history_matches = [entry for entry in history_entries if entry.operation_uuid == context.operation_uuid]
+            checks.append(self._result("audit.correlation", "Audit consistency", correlation["complete"] and len(history_matches) == 1 and history_matches[0].provenance.get("status") == "completed", "one Audit, Collaboration and History counterpart share the completed operation UUID", "Missing, duplicate, mismatched, or uncorrelated operation counterpart"))
 
             exchange = ChangeExchangeService(first, data_dir=data)
             package = exchange.export(root / "changes.zip", include_snapshot=first_path)
@@ -110,7 +121,7 @@ class Beta21ValidationService:
 
             merge_input = exchange.to_project_merge_input(inspected, root / "merge-input.db")
             second_before = self._checksum(second_path)
-            merge_preview = ProjectMergeService(second, data_dir=data, backup_dir=root / "backups").analyze(merge_input)
+            merge_preview = ProjectMergeService(second, data_dir=data, backup_dir=root / "backups").analyze(merge_input, parent_operation_uuid=inspected.package_uuid)
             cancelled = False
             try:
                 ProjectMergeService(second, data_dir=data).analyze(merge_input, cancel_callback=lambda: (_ for _ in ()).throw(RuntimeError("cancelled")))
@@ -144,8 +155,7 @@ class Beta21ValidationService:
 
             package_uuid = inspected.package_uuid
             identities_ok = all(self._uuid(value) for value in (package_uuid, merge_preview.merge_operation_id, plan.plan_id, dry_run.run_uuid, snapshot_id))
-            checks.append(self._result("combined.identity-chain", "Combined integration", identities_ok, "package, merge, resolution, workflow and history identities validated", "Malformed integration identity"))
-            checks.append(BetaValidationCheck("audit.correlation", "Audit consistency", BLOCKED, "Repository writes, audit records, collaboration changes and history entries lack a shared operation UUID contract", "Current services cannot prove exactly one correlated Audit, Collaboration and History entry per logical write"))
+            checks.append(self._result("combined.identity-chain", "Combined integration", identities_ok and merge_preview.parent_operation_uuid == package_uuid, "package, merge, resolution, workflow and history identities validated", "Malformed or orphaned integration identity"))
             checks.append(self._result("undo.backup-boundaries", "Undo and backup consistency", not (root / "backups").exists(), "preview-only and dry-run paths created no backup", "Preview-only path created a backup"))
             return checks
         except Exception as error:

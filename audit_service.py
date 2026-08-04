@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from config import DATA_DIR, DB_NAME
+from operation_correlation import OperationContext
 
 
 AUDIT_OPERATION_TYPES = (
@@ -33,6 +34,14 @@ class AuditRecord:
     description: str
     service: str
     batch_id: str
+    operation_uuid: str = ""
+    project_uuid: str = ""
+    dataset_uuid: str = ""
+    session_uuid: str = ""
+    status: str = "completed"
+    parent_operation_uuid: str = ""
+    preview: bool = False
+    reason: str = ""
 
 
 class AuditService:
@@ -85,6 +94,16 @@ class AuditService:
                     ON audit_records(batch_id);
                 """
             )
+            existing = {row[1] for row in connection.execute("PRAGMA table_info(audit_records)")}
+            for column, definition in (
+                ("operation_uuid", "TEXT NOT NULL DEFAULT ''"), ("project_uuid", "TEXT NOT NULL DEFAULT ''"),
+                ("dataset_uuid", "TEXT NOT NULL DEFAULT ''"), ("session_uuid", "TEXT NOT NULL DEFAULT ''"),
+                ("status", "TEXT NOT NULL DEFAULT 'completed'"), ("parent_operation_uuid", "TEXT NOT NULL DEFAULT ''"),
+                ("preview", "INTEGER NOT NULL DEFAULT 0"), ("reason", "TEXT NOT NULL DEFAULT ''"),
+            ):
+                if column not in existing:
+                    connection.execute(f"ALTER TABLE audit_records ADD COLUMN {column} {definition}")
+            connection.execute("CREATE INDEX IF NOT EXISTS audit_records_operation_uuid ON audit_records(operation_uuid)")
 
     def record(
         self,
@@ -99,7 +118,14 @@ class AuditService:
         service: str,
         batch_id: Any = "",
         timestamp: str | None = None,
+        operation_context: OperationContext | None = None,
     ) -> AuditRecord:
+        if operation_context:
+            operation_context.validate()
+            if operation_context.status == "completed":
+                existing = self._by_operation_uuid(operation_context.operation_uuid)
+                if existing:
+                    return existing
         recorded_at = timestamp or datetime.now(timezone.utc).isoformat(timespec="microseconds")
         before = self._normalise_snapshot(before_snapshot or {})
         after = self._normalise_snapshot(after_snapshot or {})
@@ -115,6 +141,14 @@ class AuditService:
             str(description),
             str(service),
             self._identity_text(batch_id),
+            operation_context.operation_uuid if operation_context else "",
+            operation_context.project_uuid if operation_context else "",
+            operation_context.dataset_uuid if operation_context else "",
+            operation_context.session_uuid if operation_context else "",
+            operation_context.status if operation_context else "completed",
+            operation_context.parent_operation_uuid if operation_context else "",
+            int(operation_context.preview) if operation_context else 0,
+            operation_context.reason if operation_context else "",
         )
         with self._connect() as connection:
             cursor = connection.execute(
@@ -122,8 +156,9 @@ class AuditService:
                 INSERT INTO audit_records (
                     timestamp, operation_type, database_id, gedcom_id,
                     affected_tables, before_snapshot, after_snapshot,
-                    description, service, batch_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    description, service, batch_id, operation_uuid, project_uuid,
+                    dataset_uuid, session_uuid, status, parent_operation_uuid, preview, reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 values,
             )
@@ -141,6 +176,7 @@ class AuditService:
         service: str,
         batch_id: Any = "",
         reverse: bool = False,
+        operation_context: OperationContext | None = None,
     ) -> AuditRecord:
         before = {}
         after = {}
@@ -164,6 +200,7 @@ class AuditService:
             description=description,
             service=service,
             batch_id=batch_id,
+            operation_context=operation_context,
         )
 
     def record_state_change(
@@ -177,6 +214,7 @@ class AuditService:
         description: str,
         service: str,
         batch_id: Any = "",
+        operation_context: OperationContext | None = None,
     ) -> AuditRecord:
         changed_tables = tuple(
             sorted(
@@ -198,6 +236,7 @@ class AuditService:
             description=description,
             service=service,
             batch_id=batch_id,
+            operation_context=operation_context,
         )
 
     @staticmethod
@@ -222,6 +261,11 @@ class AuditService:
             row = connection.execute(
                 "SELECT * FROM audit_records WHERE id = ?", (int(record_id),)
             ).fetchone()
+        return self._row_to_record(row) if row else None
+
+    def _by_operation_uuid(self, operation_uuid):
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM audit_records WHERE operation_uuid = ? ORDER BY id LIMIT 1", (str(operation_uuid),)).fetchone()
         return self._row_to_record(row) if row else None
 
     def list_records(
@@ -365,4 +409,12 @@ class AuditService:
             description=row["description"],
             service=row["service"],
             batch_id=row["batch_id"],
+            operation_uuid=row["operation_uuid"] if "operation_uuid" in row.keys() else "",
+            project_uuid=row["project_uuid"] if "project_uuid" in row.keys() else "",
+            dataset_uuid=row["dataset_uuid"] if "dataset_uuid" in row.keys() else "",
+            session_uuid=row["session_uuid"] if "session_uuid" in row.keys() else "",
+            status=row["status"] if "status" in row.keys() else "completed",
+            parent_operation_uuid=row["parent_operation_uuid"] if "parent_operation_uuid" in row.keys() else "",
+            preview=bool(row["preview"]) if "preview" in row.keys() else False,
+            reason=row["reason"] if "reason" in row.keys() else "",
         )
