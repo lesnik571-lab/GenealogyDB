@@ -9,6 +9,7 @@ def test_rc_validation_uses_temporary_workflows_and_preserves_configured_databas
     initialize_database(configured)
     before = RCValidationService._checksum(configured)
     service = RCValidationService(configured, project_root=Path.cwd())
+    service.report_dir = tmp_path / "reports"
     report = service.validate()
 
     assert report.checksum_before == before == report.checksum_after
@@ -38,7 +39,9 @@ def test_rc_recommendation_and_deterministic_report_generation(tmp_path):
 def test_rc_validation_orders_complete_workflow_and_checks_exports_and_resources(tmp_path):
     configured = tmp_path / "configured.db"
     initialize_database(configured)
-    report = RCValidationService(configured, project_root=Path.cwd()).validate()
+    service = RCValidationService(configured, project_root=Path.cwd())
+    service.report_dir = tmp_path / "reports"
+    report = service.validate()
     identifiers = [check.check_id for check in report.checks]
     assert identifiers.index("database.initialize") < identifiers.index("import.confirmed") < identifiers.index("crud.person-create-edit") < identifiers.index("backup.restore") < identifiers.index("startup.restart")
     assert next(check for check in report.checks if check.check_id == "export.formats").status in {PASS, WARNING}
@@ -47,6 +50,7 @@ def test_rc_validation_orders_complete_workflow_and_checks_exports_and_resources
 
 def test_missing_configured_database_is_warning_and_cleanup_failure_is_warning(tmp_path, monkeypatch):
     service = RCValidationService(tmp_path / "missing.db", project_root=Path.cwd())
+    service.report_dir = tmp_path / "reports"
     report = service.validate()
     assert next(check for check in report.checks if check.check_id == "database.configured-availability").status == WARNING
 
