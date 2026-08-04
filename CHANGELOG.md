@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.0-beta2-dev] - Unreleased
+
+### Fixed
+- Added horizontal navigation to keep every main-toolbar action accessible at Windows high-DPI scaling.
+
+### Changed
+- Localized the primary Viewer menus and toolbar controls consistently in Russian.
+
 ## [2.1.0-beta1] - 2026-08-04
 
 ### Added
