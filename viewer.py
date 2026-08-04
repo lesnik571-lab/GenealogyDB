@@ -5123,16 +5123,16 @@ class GenealogyViewer:
         )
         tk.Button(
             toolbar_view,
-            text="◀",
+            text="<",
             width=2,
             command=lambda: self._toolbar_canvas.xview_scroll(-5, "units"),
-        ).pack(side="left", padx=(0, 4))
+        ).pack(side="left", padx=(0, 2))
         tk.Button(
             toolbar_view,
-            text="▶",
+            text=">",
             width=2,
             command=lambda: self._toolbar_canvas.xview_scroll(5, "units"),
-        ).pack(side="right", padx=(4, 0))
+        ).pack(side="left", padx=(0, 4))
         self._toolbar_canvas.pack(side="left", fill="x", expand=True)
         toolbar_scrollbar = ttk.Scrollbar(
             toolbar_container,
