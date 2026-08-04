@@ -73,11 +73,11 @@
     {
       "area": "Version is staged for 2.0.0 without changing it",
       "check_id": "packaging.version",
-      "evidence": "current version: 2.0.0-beta1",
-      "reason": "",
-      "status": "PASS"
+      "evidence": "current version: 2.1.0-beta1",
+      "reason": "version anchors are not beta1",
+      "status": "BLOCKED"
     }
   ],
-  "recommendation": "READY FOR 2.0.0",
-  "version": "2.0.0-beta1"
+  "recommendation": "NOT READY",
+  "version": "2.1.0-beta1"
 }

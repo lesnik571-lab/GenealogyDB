@@ -6,7 +6,7 @@
       "cleanup_result": "not applicable",
       "description": "Configured database is available without creation",
       "duration_seconds": 0.0,
-      "evidence": "C:\\Users\\lesni\\AppData\\Local\\Temp\\pytest-of-lesnik\\pytest-536\\test_missing_configured_databa0\\missing.db",
+      "evidence": "C:\\Users\\lesni\\AppData\\Local\\Temp\\pytest-of-lesnik\\pytest-538\\test_missing_configured_databa0\\missing.db",
       "reason": "Configured database does not exist; validation did not create it.",
       "status": "WARNING"
     },
@@ -15,7 +15,7 @@
       "check_id": "startup.headless-import",
       "cleanup_result": "cleanup failed: locked",
       "description": "Viewer imports without a Tkinter window",
-      "duration_seconds": 1.4e-05,
+      "duration_seconds": 1.5e-05,
       "evidence": "tk._default_root remained unset",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -25,7 +25,7 @@
       "check_id": "startup.no-background-task",
       "cleanup_result": "cleanup failed: locked",
       "description": "Import leaves no background task active",
-      "duration_seconds": 4e-06,
+      "duration_seconds": 5e-06,
       "evidence": "new thread ids=[]",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -35,7 +35,7 @@
       "check_id": "startup.viewer-safety",
       "cleanup_result": "cleanup failed: locked",
       "description": "Viewer has no direct SQL or import-time message boxes",
-      "duration_seconds": 0.222566,
+      "duration_seconds": 0.220274,
       "evidence": "static AST scan",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -45,7 +45,7 @@
       "check_id": "database.first-startup",
       "cleanup_result": "cleanup failed: locked",
       "description": "First application database startup",
-      "duration_seconds": 4.2e-05,
+      "duration_seconds": 3.9e-05,
       "evidence": "temporary database path is absent",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -55,7 +55,7 @@
       "check_id": "database.initialize",
       "cleanup_result": "cleanup failed: locked",
       "description": "New database schema initialization",
-      "duration_seconds": 0.217703,
+      "duration_seconds": 0.223141,
       "evidence": "completed",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -65,7 +65,7 @@
       "check_id": "import.preview",
       "cleanup_result": "cleanup failed: locked",
       "description": "GEDCOM import preview",
-      "duration_seconds": 0.000147,
+      "duration_seconds": 0.000154,
       "evidence": "completed",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -75,7 +75,7 @@
       "check_id": "import.confirmed",
       "cleanup_result": "cleanup failed: locked",
       "description": "Confirmed GEDCOM import",
-      "duration_seconds": 0.159938,
+      "duration_seconds": 0.187248,
       "evidence": "completed",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -85,7 +85,7 @@
       "check_id": "crud.person-create-edit",
       "cleanup_result": "cleanup failed: locked",
       "description": "Person creation and editing",
-      "duration_seconds": 0.007164,
+      "duration_seconds": 0.010085,
       "evidence": "completed",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -95,7 +95,7 @@
       "check_id": "relationships.family-parent-child",
       "cleanup_result": "cleanup failed: locked",
       "description": "Family and parent-child relationship creation",
-      "duration_seconds": 0.011293,
+      "duration_seconds": 0.012566,
       "evidence": "completed",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -105,7 +105,7 @@
       "check_id": "relationships.partner",
       "cleanup_result": "cleanup failed: locked",
       "description": "Spouse or partner relationship creation",
-      "duration_seconds": 0.010527,
+      "duration_seconds": 0.011963,
       "evidence": "completed",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -115,7 +115,7 @@
       "check_id": "crud.event",
       "cleanup_result": "cleanup failed: locked",
       "description": "Person event creation",
-      "duration_seconds": 0.009077,
+      "duration_seconds": 0.010856,
       "evidence": "completed",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -125,7 +125,7 @@
       "check_id": "sources.citation",
       "cleanup_result": "cleanup failed: locked",
       "description": "Source and citation attachment",
-      "duration_seconds": 0.030402,
+      "duration_seconds": 0.034247,
       "evidence": "completed",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -135,7 +135,7 @@
       "check_id": "attachments.metadata",
       "cleanup_result": "cleanup failed: locked",
       "description": "Attachment metadata creation",
-      "duration_seconds": 0.008632,
+      "duration_seconds": 0.010311,
       "evidence": "completed",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -145,7 +145,7 @@
       "check_id": "undo-redo.person",
       "cleanup_result": "cleanup failed: locked",
       "description": "Undo and redo person change",
-      "duration_seconds": 0.03407,
+      "duration_seconds": 0.042978,
       "evidence": "completed",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -155,7 +155,7 @@
       "check_id": "analysis.validation",
       "cleanup_result": "cleanup failed: locked",
       "description": "Validation scan",
-      "duration_seconds": 0.001838,
+      "duration_seconds": 0.00483,
       "evidence": "validation report produced",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -165,7 +165,7 @@
       "check_id": "analysis.intelligence",
       "cleanup_result": "cleanup failed: locked",
       "description": "Intelligence analysis and disposition persistence",
-      "duration_seconds": 1.1e-05,
+      "duration_seconds": 3.1e-05,
       "evidence": "intelligence report and disposition sidecar produced",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -175,7 +175,7 @@
       "check_id": "analysis.cancellation",
       "cleanup_result": "cleanup failed: locked",
       "description": "Cancelled headless analysis leaves no background task",
-      "duration_seconds": 0.000221,
+      "duration_seconds": 0.000574,
       "evidence": "cancellation raised without starting a background task",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -185,7 +185,7 @@
       "check_id": "analysis.source",
       "cleanup_result": "cleanup failed: locked",
       "description": "Source analysis and ignore persistence",
-      "duration_seconds": 1.1e-05,
+      "duration_seconds": 3.2e-05,
       "evidence": "source analysis report and disposition sidecar produced",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -195,7 +195,7 @@
       "check_id": "visualization.timeline",
       "cleanup_result": "cleanup failed: locked",
       "description": "Timeline preparation and view persistence",
-      "duration_seconds": 0.000157,
+      "duration_seconds": 0.00031,
       "evidence": "timeline model and view produced",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -205,7 +205,7 @@
       "check_id": "visualization.tree",
       "cleanup_result": "cleanup failed: locked",
       "description": "Tree preparation and layout persistence",
-      "duration_seconds": 5.7e-05,
+      "duration_seconds": 0.000111,
       "evidence": "tree model and layout sidecar produced",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -215,7 +215,7 @@
       "check_id": "visualization.map",
       "cleanup_result": "cleanup failed: locked",
       "description": "Map preparation and view persistence",
-      "duration_seconds": 0.000133,
+      "duration_seconds": 0.000208,
       "evidence": "map model and view produced",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -225,7 +225,7 @@
       "check_id": "persistence.research",
       "cleanup_result": "cleanup failed: locked",
       "description": "Research workspace persistence",
-      "duration_seconds": 7.6e-05,
+      "duration_seconds": 7.7e-05,
       "evidence": "research workspace reloaded",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -235,7 +235,7 @@
       "check_id": "persistence.sidecars",
       "cleanup_result": "cleanup failed: locked",
       "description": "Temporary UI, ignore, and performance sidecars",
-      "duration_seconds": 0.000311,
+      "duration_seconds": 0.000309,
       "evidence": "temporary sidecar JSON files produced",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -245,7 +245,7 @@
       "check_id": "export.formats",
       "cleanup_result": "cleanup failed: locked",
       "description": "CSV, JSON, Markdown, HTML, PDF, SVG, and PNG generation",
-      "duration_seconds": 0.007182,
+      "duration_seconds": 0.007154,
       "evidence": "completed",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -255,7 +255,7 @@
       "check_id": "backup.restore",
       "cleanup_result": "cleanup failed: locked",
       "description": "Online backup and restore to separate temporary file",
-      "duration_seconds": 0.018146,
+      "duration_seconds": 0.021038,
       "evidence": "completed",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -265,7 +265,7 @@
       "check_id": "startup.restart",
       "cleanup_result": "cleanup failed: locked",
       "description": "Application restart simulation",
-      "duration_seconds": 0.000413,
+      "duration_seconds": 0.000435,
       "evidence": "completed",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -275,7 +275,7 @@
       "check_id": "packaging.resources",
       "cleanup_result": "cleanup failed: locked",
       "description": "Build definitions, resources, icons, and release metadata",
-      "duration_seconds": 0.000106,
+      "duration_seconds": 9.9e-05,
       "evidence": "completed",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -285,7 +285,7 @@
       "check_id": "packaging.version",
       "cleanup_result": "cleanup failed: locked",
       "description": "Version remains beta1 and is prepared for RC1",
-      "duration_seconds": 0.000109,
+      "duration_seconds": 0.000107,
       "evidence": "completed",
       "reason": "cleanup failed: locked",
       "status": "WARNING"
@@ -303,7 +303,7 @@
   ],
   "checksum_after": "",
   "checksum_before": "",
-  "configured_database": "C:\\Users\\lesni\\AppData\\Local\\Temp\\pytest-of-lesnik\\pytest-536\\test_missing_configured_databa0\\missing.db",
+  "configured_database": "C:\\Users\\lesni\\AppData\\Local\\Temp\\pytest-of-lesnik\\pytest-538\\test_missing_configured_databa0\\missing.db",
   "recommendation": "READY FOR RC1 WITH WARNINGS",
-  "version": "2.0.0-beta1"
+  "version": "2.1.0-beta1"
 }
