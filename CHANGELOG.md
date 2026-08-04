@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.1.0-beta1] - 2026-08-04
+
+### Added
+- Collaboration identities and deterministic offline change-package exchange.
+- Read-only project-merge previews, conflict-resolution plans, and history browsing.
+- Workflow automation with dry-run, read-only, confirmation, cancellation, and backup boundaries.
+- Shared operation UUID correlation across Audit, Collaboration, and History records.
+- Beta validation reports for collaboration, exchange, merge, conflict resolution, workflows, packaging, and data safety.
+
+### Changed
+- Expanded the viewer with GenealogyDB 2.1 collaboration, research, visualization, automation, and release-center tools.
+- Strengthened integration validation for package, merge, resolution, workflow, and history identities.
+
+### Fixed
+- Closed the Beta audit-consistency blocker by enforcing one correlated operation identity per logical write.
+- Preserved compatibility for legacy records that do not contain the new correlation metadata.
+
 ## [2.0.0-beta1] - 2026-08-03
 
 ### Changed
