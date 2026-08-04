@@ -108,7 +108,8 @@ class GenealogyApplication:
 
     def get_statistics(self):
         """Return basic database counts for the launcher summary."""
-        with sqlite3.connect(DB_NAME) as connection:
+        connection = sqlite3.connect(DB_NAME)
+        try:
             return {
                 "people": connection.execute("SELECT COUNT(*) FROM people").fetchone()[0],
                 "families": connection.execute("SELECT COUNT(*) FROM families").fetchone()[0],
@@ -116,6 +117,8 @@ class GenealogyApplication:
                     "SELECT COUNT(*) FROM family_children"
                 ).fetchone()[0],
             }
+        finally:
+            connection.close()
 
     def show_statistics(self):
         """Print basic database counts."""
