@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.1.0] - 2026-08-04
+
+### Released
+- Promoted the installed and verified 2.1.0 RC2 build to the final GenealogyDB 2.1.0 release.
+- Preserved compatibility with existing GenealogyDB databases, backups, and user-side data directories.
+
+### Validation
+- Installed RC validation reports **READY FOR RC1** without modifying the configured database.
+- Verified all 369 tests with warnings treated as errors.
+- Verified the packaged application startup and Windows installer.
+
 ## [2.1.0-rc2] - 2026-08-04
 
 ### Fixed
