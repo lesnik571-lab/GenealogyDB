@@ -1,6 +1,6 @@
 # GenealogyDB User Manual
 
-Version: 2.0.0-beta1
+Version: 2.1.0-beta1
 
 ## Getting started
 
@@ -21,6 +21,10 @@ Use the person editor to add or update a person. The relationship editor manages
 ## Analysis tools
 
 The viewer includes family tree, relationship path, timeline, life map, integrity report, data quality, recovery, and duplicate-management tools. These tools do not modify records unless an action explicitly asks for confirmation.
+
+## Collaboration and project exchange
+
+GenealogyDB 2.1 Beta supports collaboration identities, offline change packages, project merge previews, conflict-resolution plans, history browsing, and workflow automation. Preview and dry-run actions remain read-only. Completed writes use one shared operation identifier across audit, collaboration, and history records.
 
 ## Plugins and exports
 
