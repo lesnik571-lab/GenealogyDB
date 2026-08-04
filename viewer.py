@@ -4998,9 +4998,9 @@ class GenealogyViewer:
         self._plugin_menu_bar = tk.Menu(self.root)
         self.root.config(menu=self._plugin_menu_bar)
         self._edit_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
-        self._plugin_menu_bar.add_cascade(label="Edit", menu=self._edit_menu)
-        self._edit_menu.add_command(label="Undo", command=self._undo_command, state="disabled")
-        self._edit_menu.add_command(label="Redo", command=self._redo_command, state="disabled")
+        self._plugin_menu_bar.add_cascade(label="Правка", menu=self._edit_menu)
+        self._edit_menu.add_command(label="Отменить", command=self._undo_command, state="disabled")
+        self._edit_menu.add_command(label="Повторить", command=self._redo_command, state="disabled")
         self.root.bind("<Control-z>", self._undo_command)
         self.root.bind("<Control-y>", self._redo_command)
         self._update_undo_menu()
@@ -5031,7 +5031,7 @@ class GenealogyViewer:
         ):
             self.root.bind(sequence, command)
         help_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
-        self._plugin_menu_bar.add_cascade(label="Help", menu=help_menu)
+        self._plugin_menu_bar.add_cascade(label="Справка", menu=help_menu)
         help_menu.add_command(label="User Manual", command=self._show_user_manual)
         help_menu.add_command(label="Release Center", command=self.open_release_center)
         help_menu.add_command(label="Beta Readiness", command=self.open_beta_readiness)
@@ -5041,7 +5041,7 @@ class GenealogyViewer:
         help_menu.add_command(label="Diagnostics", command=self._show_diagnostics)
         help_menu.add_command(label="About", command=self._show_about)
         tools_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
-        self._plugin_menu_bar.add_cascade(label="Tools", menu=tools_menu)
+        self._plugin_menu_bar.add_cascade(label="Инструменты", menu=tools_menu)
         tools_menu.add_command(label="Collaboration", command=self.open_collaboration)
         tools_menu.add_command(label="Project Merge", command=self.open_project_merge)
         tools_menu.add_command(label="Conflict Resolution", command=self.open_conflict_resolution)
@@ -5052,7 +5052,7 @@ class GenealogyViewer:
         self._plugin_menu_bar.add_cascade(label="Диагностика", menu=diagnostics_menu)
         diagnostics_menu.add_command(label="Производительность", command=self.open_performance_center)
         analysis_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
-        self._plugin_menu_bar.add_cascade(label="Analysis", menu=analysis_menu)
+        self._plugin_menu_bar.add_cascade(label="Анализ", menu=analysis_menu)
         analysis_menu.add_command(label="Intelligence Center", command=self.open_intelligence_center)
         analysis_menu.add_command(label="Source Analysis", command=self.open_source_analysis_center)
 
@@ -5164,11 +5164,11 @@ class GenealogyViewer:
         self.workspace_status_label.pack(fill="x")
         self._update_workspace_status()
 
-        self.backup_button = tk.Button(top, text="Backup database", command=self.backup_database)
+        self.backup_button = tk.Button(top, text="Резервная копия", command=self.backup_database)
         self.backup_button.pack(side="left", padx=(10, 5))
-        self.restore_button = tk.Button(top, text="Restore database", command=self.restore_database)
+        self.restore_button = tk.Button(top, text="Восстановить", command=self.restore_database)
         self.restore_button.pack(side="left", padx=(0, 5))
-        self.relationship_button = tk.Button(top, text="Edit relationships", command=self.open_relationship_editor)
+        self.relationship_button = tk.Button(top, text="Связи", command=self.open_relationship_editor)
         self.relationship_button.pack(side="left")
         self.family_tree_button = tk.Button(top, text="Семейное дерево", command=self.open_family_tree)
         self.family_tree_button.pack(side="left", padx=(10, 0))
@@ -5242,11 +5242,11 @@ class GenealogyViewer:
         self.validation_center_button.pack(side="left", padx=(10, 0))
         self.recovery_button = tk.Button(top, text="Мастер восстановления", command=self.open_recovery_wizard)
         self.recovery_button.pack(side="left", padx=(10, 0))
-        self.add_person_button = tk.Button(top, text="Add person", command=lambda: self._show_person_editor(None))
+        self.add_person_button = tk.Button(top, text="Добавить человека", command=lambda: self._show_person_editor(None))
         self.add_person_button.pack(side="left", padx=(10, 5))
-        self.edit_person_button = tk.Button(top, text="Edit person", command=self._edit_selected_person)
+        self.edit_person_button = tk.Button(top, text="Изменить человека", command=self._edit_selected_person)
         self.edit_person_button.pack(side="left")
-        self.delete_person_button = tk.Button(top, text="Delete person", command=self._delete_selected_person)
+        self.delete_person_button = tk.Button(top, text="Удалить человека", command=self._delete_selected_person)
         self.delete_person_button.pack(side="left", padx=(10, 5))
 
         table_frame = tk.Frame(self.root)
@@ -5278,8 +5278,8 @@ class GenealogyViewer:
         if getattr(self, "_edit_menu", None) is None:
             return
         undo_manager = self._get_undo_manager()
-        undo_label = f"Undo {undo_manager.undo_name}" if undo_manager.can_undo else "Undo"
-        redo_label = f"Redo {undo_manager.redo_name}" if undo_manager.can_redo else "Redo"
+        undo_label = f"Отменить: {undo_manager.undo_name}" if undo_manager.can_undo else "Отменить"
+        redo_label = f"Повторить: {undo_manager.redo_name}" if undo_manager.can_redo else "Повторить"
         self._edit_menu.entryconfig(0, label=undo_label, state="normal" if undo_manager.can_undo else "disabled")
         self._edit_menu.entryconfig(1, label=redo_label, state="normal" if undo_manager.can_redo else "disabled")
 
@@ -6160,7 +6160,8 @@ class GenealogyViewer:
         menu = self._plugin_menus.get(menu_name)
         if menu is None:
             menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
-            self._plugin_menu_bar.add_cascade(label=menu_name, menu=menu)
+            display_menu_name = {"Reports": "Отчёты", "Exports": "Экспорт", "Plugins": "Плагины"}.get(menu_name, menu_name)
+            self._plugin_menu_bar.add_cascade(label=display_menu_name, menu=menu)
             self._plugin_menus[menu_name] = menu
         wrapped = lambda: self._run_plugin_action(f"{menu_name} / {label}", command)
         menu.add_command(label=label, command=wrapped)
