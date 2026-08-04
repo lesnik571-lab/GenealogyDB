@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.2.0-dev] - 2026-08-04
+
+### Changed
+- Started the GenealogyDB 2.2 development cycle after the verified 2.1.0 final release.
+- Updated development, build, installer, and user-manual version metadata to 2.2.0-dev.
+
 ## [2.1.0] - 2026-08-04
 
 ### Released
