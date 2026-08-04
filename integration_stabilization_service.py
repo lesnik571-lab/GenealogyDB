@@ -98,7 +98,7 @@ class IntegrationStabilizationService:
                 if isinstance(command, ast.Attribute) and isinstance(command.value, ast.Name) and command.value.id == "self": targets.append(command.attr)
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in {"execute", "executemany"}: direct_sql.append(node.lineno)
         missing = sorted(set(targets) - methods)
-        required = ("Collaboration", "Project Merge", "Conflict Resolution", "History Browser", "Workflow Automation", "Offline Change Exchange", "2.1 Integration Check")
+        required = ("Совместная работа", "Объединение проектов", "Разрешение конфликтов", "Просмотр истории", "Автоматизация процессов", "Автономный обмен изменениями", "Проверка интеграции 2.1")
         absent = [label for label in required if labels.count(label) != 1]
         if absent or missing:
             return self._check("viewer.integration", "Viewer integration", False, f"commands={len(targets)}", "; ".join(absent + missing))
