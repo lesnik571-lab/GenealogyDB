@@ -84,7 +84,7 @@ def test_statistics_are_deterministic_and_filters_work(tmp_path):
 def test_analysis_menu_registers_source_analysis_without_opening_tkinter():
     source = inspect.getsource(GenealogyViewer._create_widgets)
     assert 'label="Анализ"' in source
-    assert 'label="Source Analysis"' in source
+    assert 'label="Анализ источников"' in source
 
 
 def test_ignore_persists_and_exports_all_formats(tmp_path):
