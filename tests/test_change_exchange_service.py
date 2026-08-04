@@ -40,7 +40,9 @@ def test_untrusted_package_rejection_and_inspection_isolation(tmp_path):
         with zipfile.ZipFile(unsafe, "w") as archive: archive.writestr("../bad.exe", b"x")
         assert service.inspect(unsafe).status == "Rejected" and repo.capture_command_state() == before
         package = service.export(tmp_path / "valid.zip")
-        with zipfile.ZipFile(package, "a") as archive: archive.writestr("changes.json", b"[]")
+        with pytest.warns(UserWarning, match=r"Duplicate name.*changes\.json"):
+            with zipfile.ZipFile(package, "a") as archive:
+                archive.writestr("changes.json", b"[]")
         assert service.inspect(package).status == "Rejected"
         unlisted = service.export(tmp_path / "unlisted.zip")
         with zipfile.ZipFile(unlisted, "a") as archive: archive.writestr("notes.txt", "unexpected")
