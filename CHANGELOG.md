@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.1.0-rc1-dev] - Unreleased
+## [2.1.0-rc1] - 2026-08-04
 
 ### Changed
 - Started RC1 stabilization after the verified 2.1.0 Beta 2 release.
