@@ -9,6 +9,7 @@ import json
 import ast
 import shutil
 import sqlite3
+import sys
 import tempfile
 import threading
 import time
@@ -82,6 +83,10 @@ class RCValidationService:
         "GenealogyDB.spec", "installer/GenealogyDB.iss", "assets/app_icon.svg",
         "USER_MANUAL.md", "CHANGELOG.md", "build_info.py", "requirements-build.txt",
         "schema.sql", "resources/default_config.json",
+    )
+    REQUIRED_RUNTIME_FILES = (
+        "assets/app_icon.svg", "USER_MANUAL.md", "schema.sql",
+        "resources/default_config.json", "plugins/statistics.py",
     )
 
     def __init__(self, configured_database, *, project_root: str | Path = Path(__file__).resolve().parent):
@@ -169,10 +174,22 @@ class RCValidationService:
         try:
             import tkinter as tk
             root_before = tk._default_root
-            importlib.import_module("viewer")
-            root_after = tk._default_root
-            status = PASS if root_after is root_before else BLOCKED
-            checks.append(self._check("startup.headless-import", "Startup", "Viewer imports without creating another Tkinter window", status, started, "tk._default_root remained unchanged" if status == PASS else "Tkinter root changed", "" if status == PASS else "Viewer import created or replaced a Tkinter root."))
+            if self._is_frozen():
+                root_after = tk._default_root
+                status = PASS if root_after is root_before and root_after is not None else BLOCKED
+                evidence = "packaged Viewer is already running" if status == PASS else "Tkinter root is unavailable"
+                reason = "" if status == PASS else "Installed Viewer does not have an active Tkinter root."
+            else:
+                importlib.import_module("viewer")
+                root_after = tk._default_root
+                status = PASS if root_after is root_before else BLOCKED
+                evidence = "tk._default_root remained unchanged" if status == PASS else "Tkinter root changed"
+                reason = "" if status == PASS else "Viewer import created or replaced a Tkinter root."
+            checks.append(self._check(
+                "startup.headless-import", "Startup",
+                "Viewer imports without creating another Tkinter window",
+                status, started, evidence, reason,
+            ))
         except Exception as error:
             checks.append(self._check("startup.headless-import", "Startup", "Viewer imports without a Tkinter window", BLOCKED, started, "", str(error)))
         started = time.perf_counter()
@@ -181,14 +198,22 @@ class RCValidationService:
         checks.append(self._check("startup.no-background-task", "Startup", "Import leaves no background task active", PASS if not new_threads else WARNING, started, f"new thread ids={sorted(new_threads)}", "" if not new_threads else "New threads remained after import."))
         started = time.perf_counter()
         viewer_path = self.project_root / "viewer.py"
-        try:
-            tree = ast.parse(viewer_path.read_text(encoding="utf-8"), filename=str(viewer_path))
-            direct_sql = [node.lineno for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in {"execute", "executemany"} and isinstance(node.func.value, ast.Attribute) and node.func.value.attr in {"conn", "cur"}]
-            module_messages = [node.lineno for node in tree.body if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute) and node.value.func.attr.startswith("show")]
-            status = PASS if not direct_sql and not module_messages else BLOCKED
-            checks.append(self._check("startup.viewer-safety", "Startup", "Viewer has no direct SQL or import-time message boxes", status, started, "static AST scan" if status == PASS else f"direct SQL lines={direct_sql}; message lines={module_messages}", "" if status == PASS else "Viewer headless safety contract failed."))
-        except (OSError, SyntaxError) as error:
-            checks.append(self._check("startup.viewer-safety", "Startup", "Viewer has no direct SQL or import-time message boxes", BLOCKED, started, "", str(error)))
+        if self._is_frozen():
+            checks.append(self._check(
+                "startup.viewer-safety", "Startup",
+                "Viewer has no direct SQL or import-time message boxes",
+                SKIPPED, started, "source scan completed before packaging",
+                "Source-only AST scan is not applicable inside the installed executable.",
+            ))
+        else:
+            try:
+                tree = ast.parse(viewer_path.read_text(encoding="utf-8"), filename=str(viewer_path))
+                direct_sql = [node.lineno for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in {"execute", "executemany"} and isinstance(node.func.value, ast.Attribute) and node.func.value.attr in {"conn", "cur"}]
+                module_messages = [node.lineno for node in tree.body if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute) and node.value.func.attr.startswith("show")]
+                status = PASS if not direct_sql and not module_messages else BLOCKED
+                checks.append(self._check("startup.viewer-safety", "Startup", "Viewer has no direct SQL or import-time message boxes", status, started, "static AST scan" if status == PASS else f"direct SQL lines={direct_sql}; message lines={module_messages}", "" if status == PASS else "Viewer headless safety contract failed."))
+            except (OSError, SyntaxError) as error:
+                checks.append(self._check("startup.viewer-safety", "Startup", "Viewer has no direct SQL or import-time message boxes", BLOCKED, started, "", str(error)))
         return checks
 
     def _workflow_checks(self, root: Path):
@@ -345,19 +370,31 @@ class RCValidationService:
             self._assert(path.name.startswith("rc-") and path.is_file() and path.stat().st_size > 0 and path.read_bytes().lstrip().startswith(signatures[kind]), f"{kind} export {path.name} has expected signature")
 
     def _build_resources(self):
-        missing = [path for path in self.REQUIRED_BUILD_FILES if not (self.project_root / path).is_file()]
-        self._assert(not missing, "required build files present" if not missing else f"missing: {', '.join(missing)}")
+        required_files = self.REQUIRED_RUNTIME_FILES if self._is_frozen() else self.REQUIRED_BUILD_FILES
+        missing = [path for path in required_files if not (self.project_root / path).is_file()]
+        evidence = "required packaged resources present" if self._is_frozen() else "required build files present"
+        self._assert(not missing, evidence if not missing else f"missing: {', '.join(missing)}")
 
     def _version_ready(self):
-        text = (self.project_root / "build_info.py").read_text(encoding="utf-8")
         expected_version = APP_VERSION
         supported = expected_version.startswith("2.1.0-") and any(
             marker in expected_version for marker in ("beta", "rc")
         )
+        if self._is_frozen():
+            self._assert(
+                supported and Path(sys.executable).is_file(),
+                f"installed executable reports version {expected_version}",
+            )
+            return
+        text = (self.project_root / "build_info.py").read_text(encoding="utf-8")
         self._assert(
             supported and f'APP_VERSION = "{expected_version}"' in text,
             "2.1 prerelease metadata is synchronized and can be promoted to rc1",
         )
+
+    @staticmethod
+    def _is_frozen():
+        return bool(getattr(sys, "frozen", False))
 
     def _call(self, check_id, category, description, operation: Callable[[], object]):
         started = time.perf_counter()
@@ -429,11 +466,19 @@ class RCValidationService:
             "Export": "Экспорт",
             "Packaging": "Сборка",
         }
-        status_labels = {PASS: "ПРОЙДЕНО", WARNING: "ПРЕДУПРЕЖДЕНИЕ", BLOCKED: "БЛОКИРОВАНО"}
+        status_labels = {
+            PASS: "ПРОЙДЕНО",
+            WARNING: "ПРЕДУПРЕЖДЕНИЕ",
+            BLOCKED: "БЛОКИРОВАНО",
+            SKIPPED: "НЕ ПРИМЕНЯЕТСЯ",
+        }
         evidence_labels = {
             "completed": "выполнено",
             "tk._default_root remained unchanged": "корневое окно Tkinter не изменилось",
             "static AST scan": "статический анализ AST",
+            "packaged Viewer is already running": "установленный Viewer уже запущен",
+            "source scan completed before packaging": "исходный код проверен перед сборкой",
+            "required packaged resources present": "необходимые ресурсы установщика присутствуют",
             "temporary database path is absent": "временная база ещё не создана",
             "validation report produced": "отчёт проверки создан",
         }
