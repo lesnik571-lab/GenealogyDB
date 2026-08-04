@@ -1,39 +1,39 @@
-<!doctype html><html><meta charset="utf-8"><body><pre># GenealogyDB RC1 Validation
+<!doctype html><html><meta charset="utf-8"><body><pre># Проверка GenealogyDB RC1
 
-Recommendation: **READY FOR RC1 WITH WARNINGS**
-Version: `2.1.0-beta1`
-Configured database checksum: `missing` -&gt; `missing`
+Рекомендация: **ГОТОВО К RC1**
+Версия: `2.1.0-rc1-dev`
+Контрольная сумма настроенной базы: `31ee103ff72cacd3ae1706a8b29e1c0081b07c8cc9cb933fc67c143f1b658ab4` -&gt; `31ee103ff72cacd3ae1706a8b29e1c0081b07c8cc9cb933fc67c143f1b658ab4`
 
-| ID | Category | Status | Duration | Evidence | Reason | Cleanup |
+| ID | Категория | Статус | Время | Результат | Причина | Очистка |
 | --- | --- | --- | ---: | --- | --- | --- |
-| database.configured-availability | Database | WARNING | 0.000s | C:\Users\lesni\AppData\Local\Temp\pytest-of-lesnik\pytest-538\test_missing_configured_databa0\missing.db | Configured database does not exist; validation did not create it. | not applicable |
-| startup.headless-import | Startup | WARNING | 0.000s | tk._default_root remained unset | cleanup failed: locked | cleanup failed: locked |
-| startup.no-background-task | Startup | WARNING | 0.000s | new thread ids=[] | cleanup failed: locked | cleanup failed: locked |
-| startup.viewer-safety | Startup | WARNING | 0.220s | static AST scan | cleanup failed: locked | cleanup failed: locked |
-| database.first-startup | Startup | WARNING | 0.000s | temporary database path is absent | cleanup failed: locked | cleanup failed: locked |
-| database.initialize | Database | WARNING | 0.223s | completed | cleanup failed: locked | cleanup failed: locked |
-| import.preview | Import | WARNING | 0.000s | completed | cleanup failed: locked | cleanup failed: locked |
-| import.confirmed | Import | WARNING | 0.187s | completed | cleanup failed: locked | cleanup failed: locked |
-| crud.person-create-edit | CRUD | WARNING | 0.010s | completed | cleanup failed: locked | cleanup failed: locked |
-| relationships.family-parent-child | Relationships | WARNING | 0.013s | completed | cleanup failed: locked | cleanup failed: locked |
-| relationships.partner | Relationships | WARNING | 0.012s | completed | cleanup failed: locked | cleanup failed: locked |
-| crud.event | CRUD | WARNING | 0.011s | completed | cleanup failed: locked | cleanup failed: locked |
-| sources.citation | Sources | WARNING | 0.034s | completed | cleanup failed: locked | cleanup failed: locked |
-| attachments.metadata | Attachments | WARNING | 0.010s | completed | cleanup failed: locked | cleanup failed: locked |
-| undo-redo.person | Undo/Redo | WARNING | 0.043s | completed | cleanup failed: locked | cleanup failed: locked |
-| analysis.validation | Analysis | WARNING | 0.005s | validation report produced | cleanup failed: locked | cleanup failed: locked |
-| analysis.intelligence | Analysis | WARNING | 0.000s | intelligence report and disposition sidecar produced | cleanup failed: locked | cleanup failed: locked |
-| analysis.cancellation | Analysis | WARNING | 0.001s | cancellation raised without starting a background task | cleanup failed: locked | cleanup failed: locked |
-| analysis.source | Analysis | WARNING | 0.000s | source analysis report and disposition sidecar produced | cleanup failed: locked | cleanup failed: locked |
-| visualization.timeline | Visualization | WARNING | 0.000s | timeline model and view produced | cleanup failed: locked | cleanup failed: locked |
-| visualization.tree | Visualization | WARNING | 0.000s | tree model and layout sidecar produced | cleanup failed: locked | cleanup failed: locked |
-| visualization.map | Visualization | WARNING | 0.000s | map model and view produced | cleanup failed: locked | cleanup failed: locked |
-| persistence.research | Persistence | WARNING | 0.000s | research workspace reloaded | cleanup failed: locked | cleanup failed: locked |
-| persistence.sidecars | Persistence | WARNING | 0.000s | temporary sidecar JSON files produced | cleanup failed: locked | cleanup failed: locked |
-| export.formats | Export | WARNING | 0.007s | completed | cleanup failed: locked | cleanup failed: locked |
-| backup.restore | Backup/Restore | WARNING | 0.021s | completed | cleanup failed: locked | cleanup failed: locked |
-| startup.restart | Startup | WARNING | 0.000s | completed | cleanup failed: locked | cleanup failed: locked |
-| packaging.resources | Packaging | WARNING | 0.000s | completed | cleanup failed: locked | cleanup failed: locked |
-| packaging.version | Packaging | WARNING | 0.000s | completed | cleanup failed: locked | cleanup failed: locked |
-| database.configured-checksum | Database | PASS | 0.000s | before=missing; after=missing |  | cleanup failed: locked |
+| database.configured-availability | База данных | ПРОЙДЕНО | 0.000 с | C:\Users\lesni\AppData\Local\GenealogyDB\data\genealogy.db |  | не применимо |
+| startup.headless-import | Запуск | ПРОЙДЕНО | 0.037 с | корневое окно Tkinter не изменилось |  | временная папка удалена |
+| startup.no-background-task | Запуск | ПРОЙДЕНО | 0.000 с | new thread ids=[] |  | временная папка удалена |
+| startup.viewer-safety | Запуск | ПРОЙДЕНО | 0.211 с | статический анализ AST |  | временная папка удалена |
+| database.first-startup | Запуск | ПРОЙДЕНО | 0.000 с | временная база ещё не создана |  | временная папка удалена |
+| database.initialize | База данных | ПРОЙДЕНО | 0.217 с | выполнено |  | временная папка удалена |
+| import.preview | Импорт | ПРОЙДЕНО | 0.000 с | выполнено |  | временная папка удалена |
+| import.confirmed | Импорт | ПРОЙДЕНО | 0.193 с | выполнено |  | временная папка удалена |
+| crud.person-create-edit | Записи | ПРОЙДЕНО | 0.009 с | выполнено |  | временная папка удалена |
+| relationships.family-parent-child | Связи | ПРОЙДЕНО | 0.011 с | выполнено |  | временная папка удалена |
+| relationships.partner | Связи | ПРОЙДЕНО | 0.010 с | выполнено |  | временная папка удалена |
+| crud.event | Записи | ПРОЙДЕНО | 0.009 с | выполнено |  | временная папка удалена |
+| sources.citation | Источники | ПРОЙДЕНО | 0.029 с | выполнено |  | временная папка удалена |
+| attachments.metadata | Вложения | ПРОЙДЕНО | 0.010 с | выполнено |  | временная папка удалена |
+| undo-redo.person | Отмена/повтор | ПРОЙДЕНО | 0.040 с | выполнено |  | временная папка удалена |
+| analysis.validation | Анализ | ПРОЙДЕНО | 0.003 с | отчёт проверки создан |  | временная папка удалена |
+| analysis.intelligence | Анализ | ПРОЙДЕНО | 0.000 с | intelligence report and disposition sidecar produced |  | временная папка удалена |
+| analysis.cancellation | Анализ | ПРОЙДЕНО | 0.000 с | cancellation raised without starting a background task |  | временная папка удалена |
+| analysis.source | Анализ | ПРОЙДЕНО | 0.000 с | source analysis report and disposition sidecar produced |  | временная папка удалена |
+| visualization.timeline | Визуализация | ПРОЙДЕНО | 0.000 с | timeline model and view produced |  | временная папка удалена |
+| visualization.tree | Визуализация | ПРОЙДЕНО | 0.000 с | tree model and layout sidecar produced |  | временная папка удалена |
+| visualization.map | Визуализация | ПРОЙДЕНО | 0.000 с | map model and view produced |  | временная папка удалена |
+| persistence.research | Хранение | ПРОЙДЕНО | 0.000 с | research workspace reloaded |  | временная папка удалена |
+| persistence.sidecars | Хранение | ПРОЙДЕНО | 0.000 с | temporary sidecar JSON files produced |  | временная папка удалена |
+| export.formats | Экспорт | ПРОЙДЕНО | 0.029 с | выполнено |  | временная папка удалена |
+| backup.restore | Резервирование/восстановление | ПРОЙДЕНО | 0.021 с | выполнено |  | временная папка удалена |
+| startup.restart | Запуск | ПРОЙДЕНО | 0.000 с | выполнено |  | временная папка удалена |
+| packaging.resources | Сборка | ПРОЙДЕНО | 0.000 с | выполнено |  | временная папка удалена |
+| packaging.version | Сборка | ПРОЙДЕНО | 0.000 с | выполнено |  | временная папка удалена |
+| database.configured-checksum | База данных | ПРОЙДЕНО | 0.000 с | before=31ee103ff72cacd3ae1706a8b29e1c0081b07c8cc9cb933fc67c143f1b658ab4; after=31ee103ff72cacd3ae1706a8b29e1c0081b07c8cc9cb933fc67c143f1b658ab4 |  | временная папка удалена |
 </pre></body></html>

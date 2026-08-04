@@ -6,304 +6,304 @@
       "cleanup_result": "not applicable",
       "description": "Configured database is available without creation",
       "duration_seconds": 0.0,
-      "evidence": "C:\\Users\\lesni\\AppData\\Local\\Temp\\pytest-of-lesnik\\pytest-538\\test_missing_configured_databa0\\missing.db",
-      "reason": "Configured database does not exist; validation did not create it.",
-      "status": "WARNING"
+      "evidence": "C:\\Users\\lesni\\AppData\\Local\\GenealogyDB\\data\\genealogy.db",
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Startup",
       "check_id": "startup.headless-import",
-      "cleanup_result": "cleanup failed: locked",
-      "description": "Viewer imports without a Tkinter window",
-      "duration_seconds": 1.5e-05,
-      "evidence": "tk._default_root remained unset",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "cleanup_result": "temporary root removed",
+      "description": "Viewer imports without creating another Tkinter window",
+      "duration_seconds": 0.036924,
+      "evidence": "tk._default_root remained unchanged",
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Startup",
       "check_id": "startup.no-background-task",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Import leaves no background task active",
-      "duration_seconds": 5e-06,
+      "duration_seconds": 1.8e-05,
       "evidence": "new thread ids=[]",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Startup",
       "check_id": "startup.viewer-safety",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Viewer has no direct SQL or import-time message boxes",
-      "duration_seconds": 0.220274,
+      "duration_seconds": 0.211123,
       "evidence": "static AST scan",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Startup",
       "check_id": "database.first-startup",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "First application database startup",
-      "duration_seconds": 3.9e-05,
+      "duration_seconds": 4.3e-05,
       "evidence": "temporary database path is absent",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Database",
       "check_id": "database.initialize",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "New database schema initialization",
-      "duration_seconds": 0.223141,
+      "duration_seconds": 0.216574,
       "evidence": "completed",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Import",
       "check_id": "import.preview",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "GEDCOM import preview",
-      "duration_seconds": 0.000154,
+      "duration_seconds": 0.000143,
       "evidence": "completed",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Import",
       "check_id": "import.confirmed",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Confirmed GEDCOM import",
-      "duration_seconds": 0.187248,
+      "duration_seconds": 0.192674,
       "evidence": "completed",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "CRUD",
       "check_id": "crud.person-create-edit",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Person creation and editing",
-      "duration_seconds": 0.010085,
+      "duration_seconds": 0.009398,
       "evidence": "completed",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Relationships",
       "check_id": "relationships.family-parent-child",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Family and parent-child relationship creation",
-      "duration_seconds": 0.012566,
+      "duration_seconds": 0.011059,
       "evidence": "completed",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Relationships",
       "check_id": "relationships.partner",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Spouse or partner relationship creation",
-      "duration_seconds": 0.011963,
+      "duration_seconds": 0.010254,
       "evidence": "completed",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "CRUD",
       "check_id": "crud.event",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Person event creation",
-      "duration_seconds": 0.010856,
+      "duration_seconds": 0.009384,
       "evidence": "completed",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Sources",
       "check_id": "sources.citation",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Source and citation attachment",
-      "duration_seconds": 0.034247,
+      "duration_seconds": 0.029159,
       "evidence": "completed",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Attachments",
       "check_id": "attachments.metadata",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Attachment metadata creation",
-      "duration_seconds": 0.010311,
+      "duration_seconds": 0.009675,
       "evidence": "completed",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Undo/Redo",
       "check_id": "undo-redo.person",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Undo and redo person change",
-      "duration_seconds": 0.042978,
+      "duration_seconds": 0.040337,
       "evidence": "completed",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Analysis",
       "check_id": "analysis.validation",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Validation scan",
-      "duration_seconds": 0.00483,
+      "duration_seconds": 0.003031,
       "evidence": "validation report produced",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Analysis",
       "check_id": "analysis.intelligence",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Intelligence analysis and disposition persistence",
-      "duration_seconds": 3.1e-05,
+      "duration_seconds": 1.3e-05,
       "evidence": "intelligence report and disposition sidecar produced",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Analysis",
       "check_id": "analysis.cancellation",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Cancelled headless analysis leaves no background task",
-      "duration_seconds": 0.000574,
+      "duration_seconds": 0.000239,
       "evidence": "cancellation raised without starting a background task",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Analysis",
       "check_id": "analysis.source",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Source analysis and ignore persistence",
-      "duration_seconds": 3.2e-05,
+      "duration_seconds": 1.1e-05,
       "evidence": "source analysis report and disposition sidecar produced",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Visualization",
       "check_id": "visualization.timeline",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Timeline preparation and view persistence",
-      "duration_seconds": 0.00031,
+      "duration_seconds": 0.000254,
       "evidence": "timeline model and view produced",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Visualization",
       "check_id": "visualization.tree",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Tree preparation and layout persistence",
-      "duration_seconds": 0.000111,
+      "duration_seconds": 6.2e-05,
       "evidence": "tree model and layout sidecar produced",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Visualization",
       "check_id": "visualization.map",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Map preparation and view persistence",
-      "duration_seconds": 0.000208,
+      "duration_seconds": 0.000146,
       "evidence": "map model and view produced",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Persistence",
       "check_id": "persistence.research",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Research workspace persistence",
       "duration_seconds": 7.7e-05,
       "evidence": "research workspace reloaded",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Persistence",
       "check_id": "persistence.sidecars",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Temporary UI, ignore, and performance sidecars",
-      "duration_seconds": 0.000309,
+      "duration_seconds": 0.000293,
       "evidence": "temporary sidecar JSON files produced",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Export",
       "check_id": "export.formats",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "CSV, JSON, Markdown, HTML, PDF, SVG, and PNG generation",
-      "duration_seconds": 0.007154,
+      "duration_seconds": 0.028732,
       "evidence": "completed",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Backup/Restore",
       "check_id": "backup.restore",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Online backup and restore to separate temporary file",
-      "duration_seconds": 0.021038,
+      "duration_seconds": 0.021331,
       "evidence": "completed",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Startup",
       "check_id": "startup.restart",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Application restart simulation",
-      "duration_seconds": 0.000435,
+      "duration_seconds": 0.000406,
       "evidence": "completed",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Packaging",
       "check_id": "packaging.resources",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Build definitions, resources, icons, and release metadata",
       "duration_seconds": 9.9e-05,
       "evidence": "completed",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Packaging",
       "check_id": "packaging.version",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Version remains beta1 and is prepared for RC1",
-      "duration_seconds": 0.000107,
+      "duration_seconds": 0.000114,
       "evidence": "completed",
-      "reason": "cleanup failed: locked",
-      "status": "WARNING"
+      "reason": "",
+      "status": "PASS"
     },
     {
       "category": "Database",
       "check_id": "database.configured-checksum",
-      "cleanup_result": "cleanup failed: locked",
+      "cleanup_result": "temporary root removed",
       "description": "Configured database is unchanged",
       "duration_seconds": 0.0,
-      "evidence": "before=missing; after=missing",
+      "evidence": "before=31ee103ff72cacd3ae1706a8b29e1c0081b07c8cc9cb933fc67c143f1b658ab4; after=31ee103ff72cacd3ae1706a8b29e1c0081b07c8cc9cb933fc67c143f1b658ab4",
       "reason": "",
       "status": "PASS"
     }
   ],
-  "checksum_after": "",
-  "checksum_before": "",
-  "configured_database": "C:\\Users\\lesni\\AppData\\Local\\Temp\\pytest-of-lesnik\\pytest-538\\test_missing_configured_databa0\\missing.db",
-  "recommendation": "READY FOR RC1 WITH WARNINGS",
-  "version": "2.1.0-beta1"
+  "checksum_after": "31ee103ff72cacd3ae1706a8b29e1c0081b07c8cc9cb933fc67c143f1b658ab4",
+  "checksum_before": "31ee103ff72cacd3ae1706a8b29e1c0081b07c8cc9cb933fc67c143f1b658ab4",
+  "configured_database": "C:\\Users\\lesni\\AppData\\Local\\GenealogyDB\\data\\genealogy.db",
+  "recommendation": "READY FOR RC1",
+  "version": "2.1.0-rc1-dev"
 }
