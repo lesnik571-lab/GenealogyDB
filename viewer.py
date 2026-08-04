@@ -5744,7 +5744,8 @@ class GenealogyViewer:
         def render(report):
             body.config(state="normal"); body.delete("1.0", "end")
             body.insert("1.0", RCValidationService._markdown(report)); body.config(state="disabled")
-            recommendation = RCValidationService.recommendation_label(report.recommendation)\n            status.config(text=f"{recommendation}; отчёты: release/rc1-validation/")
+            recommendation = RCValidationService.recommendation_label(report.recommendation)
+            status.config(text=f"{recommendation}; отчёты: release/rc1-validation/")
 
         controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12))
         tk.Button(controls, text="Запустить проверку", command=run).pack(side="left")
