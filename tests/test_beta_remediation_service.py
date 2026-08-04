@@ -107,8 +107,8 @@ def test_version_sync_and_drift_detection(tmp_path):
     changed = service.synchronize_version_metadata()
     assert changed
     assert service._version_check().status == "passed"
-    assert "2.0.0-beta1" in (root / "build_info.py").read_text(encoding="utf-8")
-    assert "2.0.0-beta1" in (root / "installer/GenealogyDB.iss").read_text(encoding="utf-8")
+    assert BetaRemediationService.VERSION in (root / "build_info.py").read_text(encoding="utf-8")
+    assert BetaRemediationService.VERSION in (root / "installer/GenealogyDB.iss").read_text(encoding="utf-8")
 
 
 def test_log_archive_baseline_scaling_and_report_generation(tmp_path):
