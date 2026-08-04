@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.1.0-beta2] - 2026-08-04
+## [2.1.0-rc1-dev] - Unreleased\n\n### Changed\n- Started RC1 stabilization after the verified 2.1.0 Beta 2 release.\n\n## [2.1.0-beta2] - 2026-08-04
 
 ### Fixed
 - Added horizontal navigation to keep every main-toolbar action accessible at Windows high-DPI scaling.
