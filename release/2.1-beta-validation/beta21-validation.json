@@ -1,0 +1,92 @@
+{
+  "candidate_version": "2.1.0-beta1",
+  "checks": [
+    {
+      "check_id": "collaboration.identities",
+      "evidence": "project, dataset, editor/session and operation identities persisted",
+      "reason": "",
+      "section": "Collaboration",
+      "status": "PASS"
+    },
+    {
+      "check_id": "exchange.security",
+      "evidence": "deterministic package, checksum, duplicate operation and unsafe ZIP checks",
+      "reason": "",
+      "section": "Offline exchange",
+      "status": "PASS"
+    },
+    {
+      "check_id": "merge.preview",
+      "evidence": "read-only preview, duplicate/conflict detection and cancellation",
+      "reason": "",
+      "section": "Project merge",
+      "status": "PASS"
+    },
+    {
+      "check_id": "conflict.preview",
+      "evidence": "atomic plan persistence and conservative relationship blocking",
+      "reason": "",
+      "section": "Conflict resolution",
+      "status": "PASS"
+    },
+    {
+      "check_id": "history.preview",
+      "evidence": "audit/collaboration indexing surface and read-only historical preview cleanup",
+      "reason": "",
+      "section": "History",
+      "status": "PASS"
+    },
+    {
+      "check_id": "workflow.safety",
+      "evidence": "template validation, dry run, read-only run and confirmation enforcement",
+      "reason": "",
+      "section": "Workflow automation",
+      "status": "PASS"
+    },
+    {
+      "check_id": "combined.identity-chain",
+      "evidence": "package, merge, resolution, workflow and history identities validated",
+      "reason": "",
+      "section": "Combined integration",
+      "status": "PASS"
+    },
+    {
+      "check_id": "audit.correlation",
+      "evidence": "Repository writes, audit records, collaboration changes and history entries lack a shared operation UUID contract",
+      "reason": "Current services cannot prove exactly one correlated Audit, Collaboration and History entry per logical write",
+      "section": "Audit consistency",
+      "status": "BLOCKED"
+    },
+    {
+      "check_id": "undo.backup-boundaries",
+      "evidence": "preview-only and dry-run paths created no backup",
+      "reason": "",
+      "section": "Undo and backup consistency",
+      "status": "PASS"
+    },
+    {
+      "check_id": "viewer.commands",
+      "evidence": "required 2.1 commands have one callback; import has no Tk root",
+      "reason": "",
+      "section": "Viewer",
+      "status": "PASS"
+    },
+    {
+      "check_id": "packaging.metadata",
+      "evidence": "candidate target: 2.1.0-beta1",
+      "reason": "",
+      "section": "Packaging and documentation",
+      "status": "PASS"
+    },
+    {
+      "check_id": "data.configured-database",
+      "evidence": "configured database checksum stable",
+      "reason": "",
+      "section": "Data safety",
+      "status": "PASS"
+    }
+  ],
+  "configured_checksum_after": "31ee103ff72cacd3ae1706a8b29e1c0081b07c8cc9cb933fc67c143f1b658ab4",
+  "configured_checksum_before": "31ee103ff72cacd3ae1706a8b29e1c0081b07c8cc9cb933fc67c143f1b658ab4",
+  "recommendation": "NOT READY FOR 2.1.0-BETA1"
+}

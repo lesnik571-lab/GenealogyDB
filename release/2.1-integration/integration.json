@@ -9,8 +9,8 @@
     },
     {
       "check_id": "viewer.integration",
-      "evidence": "commands=32",
-      "reason": "Legacy direct SQL at lines: 1240, 1476, 1767, 2051, 4465, 4860, 8415, 8769, 10107, 10116, 10132, 7793",
+      "evidence": "commands=33",
+      "reason": "Legacy direct SQL at lines: 1241, 1477, 1768, 2052, 4466, 4861, 8426, 8780, 10118, 10127, 10143, 7804",
       "section": "Viewer integration",
       "status": "WARNING"
     },

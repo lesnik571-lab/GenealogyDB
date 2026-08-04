@@ -63,6 +63,7 @@ from graph_editor_service import GraphEditorService, GraphModification
 from integrity_service import IntegrityCheckService
 from intelligence_service import IntelligenceService
 from integration_stabilization_service import IntegrationStabilizationService
+from beta21_validation_service import Beta21ValidationService
 from kinship_service import KinshipAnalysis, KinshipService
 from logging_service import (
     configure_logging,
@@ -5036,6 +5037,7 @@ class GenealogyViewer:
         help_menu.add_command(label="Beta Readiness", command=self.open_beta_readiness)
         help_menu.add_command(label="RC1 Validation", command=self.open_rc1_validation)
         help_menu.add_command(label="2.1 Integration Check", command=self.open_21_integration_check)
+        help_menu.add_command(label="Проверка готовности 2.1 Beta", command=self.open_21_beta_validation)
         help_menu.add_command(label="Diagnostics", command=self._show_diagnostics)
         help_menu.add_command(label="About", command=self._show_about)
         tools_menu = tk.Menu(self._plugin_menu_bar, tearoff=False)
@@ -5691,6 +5693,15 @@ class GenealogyViewer:
         def run():
             return self._submit_repository_task("2.1 Integration Check", lambda repository, _context: IntegrationStabilizationService(repository.db_name).validate(), lambda report: (body.config(state="normal"), body.delete("1.0", "end"), body.insert("1.0", IntegrationStabilizationService._markdown(report)), body.config(state="disabled")), on_error=lambda error: self._show_unified_error("2.1 Integration Check", error), cancellable=True)
         controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12)); tk.Button(controls, text="Run check", command=run).pack(side="left"); tk.Button(controls, text="Close", command=dialog.destroy).pack(side="right")
+
+    def open_21_beta_validation(self):
+        dialog = self._create_dialog(); dialog.title("Проверка готовности 2.1 Beta"); dialog.geometry("900x600"); dialog.minsize(650, 420)
+        body = tk.Text(dialog, wrap="word"); body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
+        def run():
+            def render(report):
+                body.config(state="normal"); body.delete("1.0", "end"); body.insert("1.0", Beta21ValidationService._markdown(report)); body.config(state="disabled")
+            return self._submit_repository_task("Проверка готовности 2.1 Beta", lambda repository, _context: Beta21ValidationService(repository.db_name).validate(), render, on_error=lambda error: self._show_unified_error("Проверка готовности 2.1 Beta", error), cancellable=True)
+        controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12)); tk.Button(controls, text="Запустить", command=run).pack(side="left"); tk.Button(controls, text="Закрыть", command=dialog.destroy).pack(side="right")
 
     def open_collaboration(self):
         dialog = self._create_dialog()

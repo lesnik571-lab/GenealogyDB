@@ -5,7 +5,7 @@ Recommendation: **READY WITH WARNINGS**
 | Section | Status | Evidence | Reason |
 | --- | --- | --- | --- |
 | Service availability | PASS | 12/12 services anchored |  |
-| Viewer integration | WARNING | commands=32 | Legacy direct SQL at lines: 1240, 1476, 1767, 2051, 4465, 4860, 8415, 8769, 10107, 10116, 10132, 7793 |
+| Viewer integration | WARNING | commands=33 | Legacy direct SQL at lines: 1241, 1477, 1768, 2052, 4466, 4861, 8426, 8780, 10118, 10127, 10143, 7804 |
 | Identity consistency | PASS | project, dataset, operation UUIDs validated |  |
 | Lifecycle consistency | PASS | 5 lifecycle models |  |
 | Temporary scenarios | PASS | exchange, history preview, workflow dry run |  |
