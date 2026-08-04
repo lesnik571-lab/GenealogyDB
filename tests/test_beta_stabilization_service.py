@@ -132,7 +132,7 @@ def test_reports_are_atomic_deterministic_and_database_is_unchanged(tmp_path):
 
 def test_beta_readiness_menu_and_real_viewer_static_scan_are_headless():
     source = inspect.getsource(GenealogyViewer._create_widgets)
-    assert 'label="Beta Readiness"' in source
+    assert 'label="Готовность Beta"' in source
     checks = {
         item.name: item
         for item in BetaStabilizationService.viewer_checks(Path(__file__).parents[1] / "viewer.py")
