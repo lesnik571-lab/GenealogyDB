@@ -7,6 +7,7 @@ from integration_stabilization_service import IntegrationStabilizationService
 def test_integration_report_is_deterministic_and_preserves_configured_database(tmp_path):
     configured = tmp_path / "configured.db"; initialize_database(configured)
     service = IntegrationStabilizationService(configured, project_root=Path(__file__).resolve().parents[1])
+    service.report_dir = tmp_path / "reports"
     before = configured.read_bytes(); report = service.validate(); first = [path.read_bytes() for path in service.export_all(report)]
     assert configured.read_bytes() == before and report.configured_checksum_before == report.configured_checksum_after
     assert not report.blockers and report.recommendation == "READY WITH WARNINGS"
