@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.1.0-rc2] - 2026-08-04
+
+### Fixed
+- Made RC validation work from the installed PyInstaller executable without requiring source-only files.
+- Validated embedded runtime resources and packaged version metadata separately from source-tree build definitions.
+- Marked the source-only Viewer AST scan as not applicable inside the installed executable instead of blocking RC readiness.
+
+### Validation
+- Verified all 369 tests with warnings treated as errors.
+
 ## [2.1.0-rc1] - 2026-08-04
 
 ### Changed
