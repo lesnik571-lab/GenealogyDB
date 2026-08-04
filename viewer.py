@@ -5110,8 +5110,53 @@ class GenealogyViewer:
         self.status_label = tk.Label(search_actions, text="Найдено: 0")
         self.status_label.pack(side="left", padx=16)
 
-        top = tk.Frame(self.root)
-        top.pack(fill="x", padx=10, pady=(4, 10))
+        toolbar_container = tk.Frame(self.root)
+        toolbar_container.pack(fill="x", padx=10, pady=(4, 10))
+        toolbar_view = tk.Frame(toolbar_container)
+        toolbar_view.pack(fill="x")
+        self._toolbar_canvas = tk.Canvas(
+            toolbar_view,
+            height=1,
+            borderwidth=0,
+            highlightthickness=0,
+            background=toolbar_view.cget("background"),
+        )
+        tk.Button(
+            toolbar_view,
+            text="◀",
+            width=2,
+            command=lambda: self._toolbar_canvas.xview_scroll(-5, "units"),
+        ).pack(side="left", padx=(0, 4))
+        tk.Button(
+            toolbar_view,
+            text="▶",
+            width=2,
+            command=lambda: self._toolbar_canvas.xview_scroll(5, "units"),
+        ).pack(side="right", padx=(4, 0))
+        self._toolbar_canvas.pack(side="left", fill="x", expand=True)
+        toolbar_scrollbar = ttk.Scrollbar(
+            toolbar_container,
+            orient="horizontal",
+            command=self._toolbar_canvas.xview,
+        )
+        toolbar_scrollbar.pack(fill="x", pady=(3, 0))
+        self._toolbar_canvas.configure(xscrollcommand=toolbar_scrollbar.set)
+
+        top = tk.Frame(self._toolbar_canvas, background=toolbar_view.cget("background"))
+        toolbar_window = self._toolbar_canvas.create_window((0, 0), window=top, anchor="nw")
+
+        def sync_toolbar_scrollregion(_event=None):
+            requested_height = max(1, top.winfo_reqheight())
+            self._toolbar_canvas.itemconfigure(toolbar_window, height=requested_height)
+            self._toolbar_canvas.configure(
+                height=requested_height,
+                scrollregion=self._toolbar_canvas.bbox("all"),
+            )
+            if top.winfo_reqwidth() <= self._toolbar_canvas.winfo_width():
+                self._toolbar_canvas.xview_moveto(0)
+
+        top.bind("<Configure>", sync_toolbar_scrollregion)
+        self._toolbar_canvas.bind("<Configure>", sync_toolbar_scrollregion)
         self._plugin_button_frame = top
         workspace_status = tk.Frame(self.root)
         workspace_status.pack(side="bottom", fill="x", padx=10, pady=(0, 6))
