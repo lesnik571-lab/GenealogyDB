@@ -74,7 +74,7 @@ class FinalAuditService:
 
     @staticmethod
     def recommendation(checks) -> str:
-        return "NOT READY" if any(check.status == BLOCKED for check in checks) else "READY FOR 2.0.0"
+        return "NOT READY" if any(check.status == BLOCKED for check in checks) else "READY FOR 2.1.0"
 
     def export_all(self, report: FinalAuditReport) -> tuple[Path, Path, Path]:
         self.report_dir.mkdir(parents=True, exist_ok=True)
@@ -218,8 +218,18 @@ class FinalAuditService:
     def _version_check(self):
         build_info = (self.project_root / "build_info.py").read_text(encoding="utf-8")
         installer = (self.project_root / "installer" / "GenealogyDB.iss").read_text(encoding="utf-8")
-        valid = APP_VERSION == "2.0.0-beta1" and 'APP_VERSION = "2.0.0-beta1"' in build_info and 'MyAppVersion "2.0.0-beta1"' in installer
-        return self._result("packaging.version", "Version is staged for 2.0.0 without changing it", valid, f"current version: {APP_VERSION}", "version anchors are not beta1")
+        valid = (
+            APP_VERSION == "2.1.0"
+            and 'APP_VERSION = "2.1.0"' in build_info
+            and 'MyAppVersion "2.1.0"' in installer
+        )
+        return self._result(
+            "packaging.version",
+            "Version metadata is synchronized for the 2.1.0 final release",
+            valid,
+            f"current version: {APP_VERSION}",
+            "version anchors are not 2.1.0",
+        )
 
     def _production_python_files(self):
         return tuple(path for path in self.project_root.rglob("*.py") if not any(part in self.PRODUCTION_EXCLUSIONS for part in path.relative_to(self.project_root).parts))
