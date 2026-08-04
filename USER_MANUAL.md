@@ -1,6 +1,6 @@
 # GenealogyDB User Manual
 
-Version: 2.1.0-rc1-dev
+Version: 2.1.0-rc1
 
 ## Getting started
 
