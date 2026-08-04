@@ -5522,11 +5522,29 @@ class GenealogyViewer:
     def _run_source_analysis(self):
         return self._submit_repository_task("Анализ источников", lambda repository, context: SourceAnalysisService(repository).analyze(progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None, cancel_callback=context.raise_if_cancelled if context else None), self._set_source_analysis_report, on_error=lambda error: self._show_unified_error("Анализ источников", error), cancellable=True)
 
+    @staticmethod
+    def _format_source_analysis_statistics(statistics):
+        labels = {
+            "total_sources": "источники",
+            "citations": "цитаты",
+            "average_citations_per_person": "среднее на человека",
+            "evidence_coverage": "покрытие доказательствами",
+            "unsupported_records": "без источников",
+            "duplicate_rate": "дубликаты",
+        }
+        return "; ".join(f"{labels.get(key, key)}: {value}" for key, value in statistics.items())
+
     def _set_source_analysis_report(self, report):
         self._source_analysis_report = report
         status = getattr(self, "_source_analysis_status", None)
         if status is not None:
-            status.config(text=f"Найдено: {len(report.findings)} | Игнорировано: {report.ignored_count} | Время: {report.duration_seconds:.3f} с | Статистика: {report.statistics}")
+            statistics = self._format_source_analysis_statistics(report.statistics)
+            status.config(
+                text=(
+                    f"Найдено: {len(report.findings)} | Игнорировано: {report.ignored_count} | "
+                    f"Время: {report.duration_seconds:.3f} с\nСтатистика: {statistics}"
+                )
+            )
         self._render_source_analysis()
 
     def _render_source_analysis(self):
