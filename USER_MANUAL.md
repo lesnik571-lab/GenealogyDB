@@ -14,6 +14,12 @@ Start the application, choose the GEDCOM import action, and select a `.ged` file
 
 Use the search fields at the top of the viewer to filter by name, dates, places, occupation, notes, GEDCOM ID, or database ID. Double-click a result to open its person card.
 
+## Favorite people
+
+Select a person and use **Workspace > Add/remove selected** to keep a quick link to that person. Open **Workspace > Favorite people** to review the list, open a person card, or remove an entry. The same toggle is available directly from the person card.
+
+Favorites are stored in the user data folder, outside the genealogy database, and remain available after application upgrades.
+
 ## People and relationships
 
 Use the person editor to add or update a person. The relationship editor manages parents, spouses, and children. Undo and Redo are available from the Edit menu.
