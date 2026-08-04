@@ -288,7 +288,7 @@ class RCValidationService:
         return checks
 
     def _packaging_checks(self):
-        return [self._call("packaging.resources", "Packaging", "Build definitions, resources, icons, and release metadata", self._build_resources)] + [self._call("packaging.version", "Packaging", "Version remains beta1 and is prepared for RC1", self._version_ready)]
+        return [self._call("packaging.resources", "Packaging", "Build definitions, resources, icons, and release metadata", self._build_resources)] + [self._call("packaging.version", "Packaging", "Version metadata is synchronized for the 2.1 release", self._version_ready)]
 
     def _initialize(self, database):
         created = initialize_database(database)
@@ -377,8 +377,9 @@ class RCValidationService:
 
     def _version_ready(self):
         expected_version = APP_VERSION
-        supported = expected_version.startswith("2.1.0-") and any(
-            marker in expected_version for marker in ("beta", "rc")
+        supported = expected_version == "2.1.0" or (
+            expected_version.startswith("2.1.0-")
+            and any(marker in expected_version for marker in ("beta", "rc"))
         )
         if self._is_frozen():
             self._assert(
@@ -389,7 +390,7 @@ class RCValidationService:
         text = (self.project_root / "build_info.py").read_text(encoding="utf-8")
         self._assert(
             supported and f'APP_VERSION = "{expected_version}"' in text,
-            "2.1 prerelease metadata is synchronized and can be promoted to rc1",
+            "GenealogyDB 2.1 version metadata is synchronized",
         )
 
     @staticmethod
