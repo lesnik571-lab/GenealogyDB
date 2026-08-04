@@ -174,7 +174,7 @@ class Beta21ValidationService:
             command = next((item.value for item in node.keywords if item.arg == "command"), None)
             target = command.attr if isinstance(command, ast.Attribute) and isinstance(command.value, ast.Name) and command.value.id == "self" else ""
             commands.append((label, target))
-        required = {"Collaboration", "Project Merge", "Conflict Resolution", "History Browser", "Workflow Automation", "Offline Change Exchange", "2.1 Integration Check", "Проверка готовности 2.1 Beta"}
+        required = {"Совместная работа", "Объединение проектов", "Разрешение конфликтов", "Просмотр истории", "Автоматизация процессов", "Автономный обмен изменениями", "Проверка интеграции 2.1", "Проверка готовности 2.1 Beta"}
         matches = {label: [target for current, target in commands if current == label] for label in required}
         valid = all(len(targets) == 1 and targets[0] in methods for targets in matches.values())
         import_tk = any(
