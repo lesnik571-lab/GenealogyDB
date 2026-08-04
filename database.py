@@ -115,7 +115,8 @@ def initialize_database(database_name=DB_NAME, schema_path=SCHEMA_PATH):
     database_path = Path(database_name)
     database_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with sqlite3.connect(database_path) as connection:
+    connection = sqlite3.connect(database_path)
+    try:
         connection.execute("PRAGMA foreign_keys = ON")
         if _core_database_is_initialized(connection):
             _ensure_family_relationship_type_column(connection)
@@ -123,6 +124,7 @@ def initialize_database(database_name=DB_NAME, schema_path=SCHEMA_PATH):
             _ensure_person_media_and_sources_tables(connection)
             _ensure_source_management_tables(connection)
             _ensure_geocoding_cache_table(connection)
+            connection.commit()
             return False
 
         connection.executescript(load_schema(schema_path))
@@ -131,7 +133,10 @@ def initialize_database(database_name=DB_NAME, schema_path=SCHEMA_PATH):
         _ensure_person_media_and_sources_tables(connection)
         _ensure_source_management_tables(connection)
         _ensure_geocoding_cache_table(connection)
+        connection.commit()
         return True
+    finally:
+        connection.close()
 
 
 def _ensure_family_relationship_type_column(connection):
