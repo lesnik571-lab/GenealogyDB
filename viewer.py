@@ -5342,7 +5342,7 @@ class GenealogyViewer:
             return callback()
         except Exception as error:
             self.plugin_manager.log_runtime_error(context, error)
-            messagebox.showerror("Plugin error", f"{context}: {error}")
+            messagebox.showerror("Ошибка плагина", f"{context}: {error}")
             return None
 
     def _register_plugin_button(self, label, command):
@@ -5661,7 +5661,7 @@ class GenealogyViewer:
         return self._submit_beta_remediation_task("Создание базовой линии", lambda _context: self._beta_remediation().create_performance_baseline(), lambda _path: self._run_beta_readiness())
 
     def _record_beta_scaling(self):
-        dialog = self._create_dialog(self._beta_readiness_window); dialog.title("Scaling checklist")
+        dialog = self._create_dialog(self._beta_readiness_window); dialog.title("Проверка масштабирования")
         scale = tk.StringVar(value="125"); toolbar = tk.BooleanVar(value=False); menus = tk.BooleanVar(value=False); dialogs = tk.BooleanVar(value=False); notes = tk.StringVar(value="")
         for row, (label, variable) in enumerate((("Scale", scale), ("Главная панель помещается", toolbar), ("Меню читаемы", menus), ("Диалоги usable", dialogs), ("Заметки", notes))):
             tk.Label(dialog, text=label).grid(row=row, column=0, sticky="w", padx=12, pady=4)
@@ -5676,7 +5676,7 @@ class GenealogyViewer:
         if report is None: return self._verify_beta_integrity()
         try:
             path = self._beta_remediation().export(report, report_format)
-            messagebox.showinfo("Готовность Beta", f"Remediation report сохранён: {path}", parent=self._beta_readiness_window)
+            messagebox.showinfo("Готовность Beta", f"Отчёт об исправлениях сохранён: {path}", parent=self._beta_readiness_window)
         except Exception as error:
             self._show_unified_error("Экспорт remediation", error)
 
@@ -5694,7 +5694,7 @@ class GenealogyViewer:
         if report is None:
             return
         return self._submit_repository_task(
-            "Экспорт Beta Readiness",
+            "Экспорт отчёта готовности Beta",
             lambda repository, _context: BetaStabilizationService(repository).export(report, report_format),
             lambda path: messagebox.showinfo("Готовность Beta", f"Отчёт сохранён: {path}", parent=self._beta_readiness_window),
             on_error=lambda error: self._show_unified_error("Готовность Beta", error),
@@ -6090,10 +6090,10 @@ class GenealogyViewer:
         benchmark_name = tk.StringVar(value="person_search")
         tk.Button(controls, text="Обновить", command=refresh).pack(side="left")
         ttk.Combobox(controls, textvariable=benchmark_name, values=("person_search", "surname_filter", "pagination", "timeline_ordering", "map_clustering", "sidecar_json"), state="readonly", width=18).pack(side="left", padx=(6, 0))
-        tk.Button(controls, text="Запустить benchmark", command=lambda: self._submit_repository_task("Performance benchmark", lambda _repo, context: self.performance_service.run_benchmark(benchmark_name.get(), 1000, context.raise_if_cancelled if context else None), lambda _result: refresh(), on_error=lambda error: self._show_unified_error("Производительность", error), cancellable=True)).pack(side="left", padx=(6, 0))
-        tk.Button(controls, text="Быстрый benchmark", command=lambda: self._submit_repository_task("Performance quick benchmark", lambda _repo, context: self.performance_service.run_quick_benchmarks(context.raise_if_cancelled if context else None), lambda _result: refresh(), on_error=lambda error: self._show_unified_error("Производительность", error), cancellable=True)).pack(side="left", padx=(6, 0))
-        tk.Button(controls, text="Сохранить baseline", command=lambda: self.performance_service.save_baseline()).pack(side="left", padx=(6, 0))
-        tk.Button(controls, text="Сравнить baseline", command=lambda: messagebox.showinfo("Производительность", "Регрессий: " + str(len(self.performance_service.compare_baseline())), parent=dialog)).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Запустить тест", command=lambda: self._submit_repository_task("Тест производительности", lambda _repo, context: self.performance_service.run_benchmark(benchmark_name.get(), 1000, context.raise_if_cancelled if context else None), lambda _result: refresh(), on_error=lambda error: self._show_unified_error("Производительность", error), cancellable=True)).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Быстрый тест", command=lambda: self._submit_repository_task("Быстрый тест производительности", lambda _repo, context: self.performance_service.run_quick_benchmarks(context.raise_if_cancelled if context else None), lambda _result: refresh(), on_error=lambda error: self._show_unified_error("Производительность", error), cancellable=True)).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Сохранить эталон", command=lambda: self.performance_service.save_baseline()).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Сравнить с эталоном", command=lambda: messagebox.showinfo("Производительность", "Регрессий: " + str(len(self.performance_service.compare_baseline())), parent=dialog)).pack(side="left", padx=(6, 0))
         tk.Button(controls, text="CSV", command=lambda: self._export_performance("csv", dialog)).pack(side="left", padx=(6, 0))
         tk.Button(controls, text="JSON", command=lambda: self._export_performance("json", dialog)).pack(side="left", padx=(6, 0))
         tk.Button(controls, text="Очистить", command=lambda: (self.performance_service.clear_metrics(), refresh())).pack(side="left", padx=(6, 0))
@@ -6109,16 +6109,16 @@ class GenealogyViewer:
         """Show runtime diagnostics and offer a privacy-safe ZIP export."""
         snapshot = self._diagnostics_snapshot()
         lines = (
-            f"Application version: {snapshot['application_version']}",
-            f"Database path: {snapshot['database_path']}",
-            f"Log folder: {snapshot['log_folder']}",
-            f"Python version: {snapshot['python_version']}",
-            f"SQLite version: {snapshot['sqlite_version']}",
+            f"Версия приложения: {snapshot['application_version']}",
+            f"Путь к базе данных: {snapshot['database_path']}",
+            f"Папка журналов: {snapshot['log_folder']}",
+            f"Версия Python: {snapshot['python_version']}",
+            f"Версия SQLite: {snapshot['sqlite_version']}",
             "",
-            "Plugins:",
+            "Плагины:",
             *(f"  {name}" for name in snapshot["plugins"]),
             "",
-            "Loaded services:",
+            "Загруженные службы:",
             *(f"  {name}" for name in snapshot["loaded_services"]),
         )
         dialog = self._create_dialog()
@@ -6152,9 +6152,9 @@ class GenealogyViewer:
             output = export_diagnostics(destination, snapshot)
         except Exception:
             get_logger("diagnostics").exception("Diagnostics export failed")
-            messagebox.showerror("Diagnostics", "Не удалось экспортировать диагностику.", parent=parent)
+            messagebox.showerror("Диагностика", "Не удалось экспортировать диагностику.", parent=parent)
             return
-        messagebox.showinfo("Diagnostics", f"Диагностика экспортирована в:\n{output}", parent=parent)
+        messagebox.showinfo("Диагностика", f"Диагностика экспортирована в:\n{output}", parent=parent)
 
     def _register_plugin_menu_item(self, menu_name, label, command):
         menu = self._plugin_menus.get(menu_name)
