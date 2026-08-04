@@ -1,6 +1,19 @@
 # Changelog
 
-## [2.1.0-rc1-dev] - Unreleased\n\n### Changed\n- Started RC1 stabilization after the verified 2.1.0 Beta 2 release.\n\n## [2.1.0-beta2] - 2026-08-04
+## [2.1.0-rc1-dev] - Unreleased
+
+### Changed
+- Started RC1 stabilization after the verified 2.1.0 Beta 2 release.
+- Localized the RC1 validation report, status, categories, and validation controls in Russian.
+
+### Fixed
+- Allowed RC1 validation to run from the open Viewer without treating the existing Tkinter root as an import-time window leak.
+
+### Validation
+- RC1 workflow validation reports **READY FOR RC1** while preserving the configured database checksum.
+- Verified all 368 tests with warnings treated as errors.
+
+## [2.1.0-beta2] - 2026-08-04
 
 ### Fixed
 - Added horizontal navigation to keep every main-toolbar action accessible at Windows high-DPI scaling.
