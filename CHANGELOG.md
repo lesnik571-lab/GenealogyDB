@@ -9,7 +9,7 @@
 - Verified all 363 tests with warnings treated as errors.
 
 ### Changed
-- Localized the primary Viewer menus and toolbar controls consistently in Russian.
+- Localized the Viewer menus, secondary commands, and toolbar controls consistently in Russian.
 
 ## [2.1.0-beta1] - 2026-08-04
 
