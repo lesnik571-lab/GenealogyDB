@@ -75,6 +75,7 @@ from logging_service import (
 from merge_service import MergeService
 from plugin_manager import PluginApp, PluginManager, ReadOnlyPluginData
 from performance_service import PerformanceService
+from person_favorites_service import PersonFavoritesService
 from recovery_wizard_service import RecoveryRecord, RecoveryWizardService
 from release_center_service import ReleaseCenterService
 from research_workspace_service import TASK_STATUSES, ResearchWorkspaceService
@@ -535,6 +536,13 @@ class GenealogyViewer:
         self.advanced_search_service = AdvancedSearchService(
             self.repository, DATA_DIR / "advanced_search_last.json"
         )
+        self.person_favorites_service = PersonFavoritesService(
+            DATA_DIR / "person_favorites.json"
+        )
+        self._favorites_window = None
+        self._favorites_listbox = None
+        self._favorite_person_ids = []
+        self._favorites_status_label = None
         self._advanced_search_vars = {}
         self._advanced_search_results = ()
         self._advanced_search_after_id = None
@@ -5022,6 +5030,12 @@ class GenealogyViewer:
         workspace_menu.add_command(label="Вперёд", accelerator="Alt+Right", command=self._workspace_forward)
         workspace_menu.add_separator()
         workspace_menu.add_command(label="Диагностика интеграции", command=self.open_integration_diagnostics)
+        workspace_menu.add_separator()
+        workspace_menu.add_command(label="Избранные люди", command=self.open_favorites)
+        workspace_menu.add_command(
+            label="Добавить/убрать выбранного",
+            command=self.toggle_selected_favorite,
+        )
         for sequence, command in (
             ("<Alt-Left>", self._workspace_back), ("<Alt-Right>", self._workspace_forward),
             ("<Control-1>", self._workspace_open_main), ("<Control-2>", lambda event: self._workspace_open(self.open_tree_canvas, event)),
@@ -6226,6 +6240,140 @@ class GenealogyViewer:
         )
         if destination:
             self._plugin_exports[name](Path(destination))
+
+    def _favorite_service(self):
+        service = getattr(self, "person_favorites_service", None)
+        if service is None:
+            service = PersonFavoritesService(DATA_DIR / "person_favorites.json")
+            self.person_favorites_service = service
+        return service
+
+    def _favorite_person_label(self, person_id):
+        person = self.repository.get_person(person_id)
+        if not person:
+            return None
+        name = self.format_name(person[1], person[2]) or "(без имени)"
+        years = " — ".join(value for value in (person[4], person[6]) if value)
+        lifespan = f", {years}" if years else ""
+        return f"{name}{lifespan} (ID {person_id})"
+
+    def _refresh_favorites_window(self):
+        listbox = getattr(self, "_favorites_listbox", None)
+        if listbox is None:
+            return
+        listbox.delete(0, "end")
+        self._favorite_person_ids = []
+        for person_id in self._favorite_service().list_ids():
+            label = self._favorite_person_label(person_id)
+            if label is None:
+                continue
+            self._favorite_person_ids.append(person_id)
+            listbox.insert("end", label)
+        status = getattr(self, "_favorites_status_label", None)
+        if status is not None:
+            status.config(text=f"Избранных людей: {len(self._favorite_person_ids)}")
+
+    def _close_favorites(self):
+        window = getattr(self, "_favorites_window", None)
+        self._favorites_window = None
+        self._favorites_listbox = None
+        self._favorite_person_ids = []
+        self._favorites_status_label = None
+        if window is not None:
+            try:
+                window.destroy()
+            except Exception:
+                pass
+
+    def open_favorites(self):
+        window = getattr(self, "_favorites_window", None)
+        if window is not None:
+            self._refresh_favorites_window()
+            for method_name in ("lift", "focus_set"):
+                method = getattr(window, method_name, None)
+                if callable(method):
+                    method()
+            return window
+
+        window = self._create_dialog()
+        window.title("Избранные люди")
+        window.geometry("620x440")
+        window.protocol("WM_DELETE_WINDOW", self._close_favorites)
+        self._favorites_window = window
+
+        tk.Label(
+            window,
+            text="Быстрый доступ к важным людям",
+            font=("default", 13, "bold"),
+        ).pack(anchor="w", padx=12, pady=(12, 6))
+        listbox = tk.Listbox(window)
+        listbox.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        listbox.bind("<Double-1>", lambda _event: self._open_selected_favorite())
+        self._favorites_listbox = listbox
+
+        self._favorites_status_label = tk.Label(window, anchor="w")
+        self._favorites_status_label.pack(fill="x", padx=12)
+
+        actions = tk.Frame(window)
+        actions.pack(fill="x", padx=12, pady=12)
+        tk.Button(
+            actions,
+            text="Открыть карточку",
+            command=self._open_selected_favorite,
+        ).pack(side="left")
+        tk.Button(
+            actions,
+            text="Убрать из избранного",
+            command=self._remove_selected_favorite,
+        ).pack(side="left", padx=(8, 0))
+        tk.Button(actions, text="Закрыть", command=self._close_favorites).pack(side="right")
+        self._refresh_favorites_window()
+        return window
+
+    def _selected_favorite_person_id(self):
+        listbox = getattr(self, "_favorites_listbox", None)
+        if listbox is None:
+            return None
+        selection = listbox.curselection()
+        if not selection:
+            return None
+        index = int(selection[0])
+        if index >= len(self._favorite_person_ids):
+            return None
+        return self._favorite_person_ids[index]
+
+    def _open_selected_favorite(self):
+        person_id = self._selected_favorite_person_id()
+        if person_id is None:
+            messagebox.showwarning("Избранные люди", "Сначала выберите человека.")
+            return
+        self.show_person(person_id)
+
+    def _remove_selected_favorite(self):
+        person_id = self._selected_favorite_person_id()
+        if person_id is None:
+            messagebox.showwarning("Избранные люди", "Сначала выберите человека.")
+            return
+        self._favorite_service().remove(person_id)
+        self._refresh_favorites_window()
+
+    def _toggle_person_favorite(self, person_id, *, refresh_card=False):
+        is_favorite = self._favorite_service().toggle(person_id)
+        status = getattr(self, "status_label", None)
+        if status is not None:
+            action = "добавлен в избранное" if is_favorite else "удалён из избранного"
+            status.config(text=f"Человек {action}.")
+        self._refresh_favorites_window()
+        if refresh_card and getattr(self, "current_person_id", None) == person_id:
+            self.show_person(person_id, add_to_history=False)
+        return is_favorite
+
+    def toggle_selected_favorite(self):
+        person_id = self._selected_person_id()
+        if person_id is None:
+            messagebox.showwarning("Избранные люди", "Сначала выберите человека.")
+            return
+        return self._toggle_person_favorite(person_id)
 
     def _clear_tree(self):
         for item in self.tree.get_children():
@@ -9670,6 +9818,16 @@ class GenealogyViewer:
         tk.Button(nav, text="Вперёд", command=lambda: self._navigate_person_history(1)).pack(side="left", padx=(8, 0))
         tk.Button(nav, text="События", command=lambda: self._show_person_events(person_id)).pack(side="left", padx=(12, 0))
         tk.Button(nav, text="Редактировать семью", command=self.open_relationship_editor).pack(side="left", padx=(8, 0))
+        favorite_label = (
+            "Убрать из избранного"
+            if self._favorite_service().contains(person_id)
+            else "Добавить в избранное"
+        )
+        tk.Button(
+            nav,
+            text=favorite_label,
+            command=lambda: self._toggle_person_favorite(person_id, refresh_card=True),
+        ).pack(side="left", padx=(8, 0))
         tk.Button(nav, text="Закрыть", command=self._close_person_card).pack(side="right")
 
         details_tab = None
