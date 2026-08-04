@@ -171,8 +171,8 @@ class RCValidationService:
             root_before = tk._default_root
             importlib.import_module("viewer")
             root_after = tk._default_root
-            status = PASS if root_before is root_after is None else BLOCKED
-            checks.append(self._check("startup.headless-import", "Startup", "Viewer imports without a Tkinter window", status, started, "tk._default_root remained unset" if status == PASS else "Tkinter root exists", "" if status == PASS else "Headless import created or retained a Tkinter root."))
+            status = PASS if root_after is root_before else BLOCKED
+            checks.append(self._check("startup.headless-import", "Startup", "Viewer imports without creating another Tkinter window", status, started, "tk._default_root remained unchanged" if status == PASS else "Tkinter root changed", "" if status == PASS else "Viewer import created or replaced a Tkinter root."))
         except Exception as error:
             checks.append(self._check("startup.headless-import", "Startup", "Viewer imports without a Tkinter window", BLOCKED, started, "", str(error)))
         started = time.perf_counter()
@@ -404,7 +404,61 @@ class RCValidationService:
         return {"version": report.version, "recommendation": report.recommendation, "configured_database": report.configured_database, "checksum_before": report.checksum_before, "checksum_after": report.checksum_after, "checks": [asdict(check) for check in report.checks]}
 
     @staticmethod
+    def recommendation_label(value):
+        return {
+            "READY FOR RC1": "ГОТОВО К RC1",
+            "READY FOR RC1 WITH WARNINGS": "ГОТОВО К RC1 С ПРЕДУПРЕЖДЕНИЯМИ",
+            "NOT READY FOR RC1": "НЕ ГОТОВО К RC1",
+        }.get(value, value)
+
+    @staticmethod
     def _markdown(report):
-        lines = ["# GenealogyDB RC1 Validation", "", f"Recommendation: **{report.recommendation}**", f"Version: `{report.version}`", f"Configured database checksum: `{report.checksum_before or 'missing'}` -> `{report.checksum_after or 'missing'}`", "", "| ID | Category | Status | Duration | Evidence | Reason | Cleanup |", "| --- | --- | --- | ---: | --- | --- | --- |"]
-        lines.extend(f"| {check.check_id} | {check.category} | {check.status} | {check.duration_seconds:.3f}s | {check.evidence} | {check.reason} | {check.cleanup_result} |" for check in report.checks)
+        category_labels = {
+            "Startup": "Запуск",
+            "Database": "База данных",
+            "Import": "Импорт",
+            "CRUD": "Записи",
+            "Relationships": "Связи",
+            "Sources": "Источники",
+            "Attachments": "Вложения",
+            "Undo/Redo": "Отмена/повтор",
+            "Backup/Restore": "Резервирование/восстановление",
+            "Analysis": "Анализ",
+            "Visualization": "Визуализация",
+            "Persistence": "Хранение",
+            "Export": "Экспорт",
+            "Packaging": "Сборка",
+        }
+        status_labels = {PASS: "ПРОЙДЕНО", WARNING: "ПРЕДУПРЕЖДЕНИЕ", BLOCKED: "БЛОКИРОВАНО"}
+        evidence_labels = {
+            "completed": "выполнено",
+            "tk._default_root remained unchanged": "корневое окно Tkinter не изменилось",
+            "static AST scan": "статический анализ AST",
+            "temporary database path is absent": "временная база ещё не создана",
+            "validation report produced": "отчёт проверки создан",
+        }
+        cleanup_labels = {
+            "temporary root removed": "временная папка удалена",
+            "not applicable": "не применимо",
+        }
+        recommendation = RCValidationService.recommendation_label(report.recommendation)
+        lines = [
+            "# Проверка GenealogyDB RC1",
+            "",
+            f"Рекомендация: **{recommendation}**",
+            f"Версия: `{report.version}`",
+            f"Контрольная сумма настроенной базы: `{report.checksum_before or 'отсутствует'}` -> `{report.checksum_after or 'отсутствует'}`",
+            "",
+            "| ID | Категория | Статус | Время | Результат | Причина | Очистка |",
+            "| --- | --- | --- | ---: | --- | --- | --- |",
+        ]
+        for check in report.checks:
+            cleanup = cleanup_labels.get(check.cleanup_result, check.cleanup_result)
+            if cleanup.startswith("cleanup failed:"):
+                cleanup = cleanup.replace("cleanup failed:", "ошибка очистки:", 1)
+            lines.append(
+                f"| {check.check_id} | {category_labels.get(check.category, check.category)} | "
+                f"{status_labels.get(check.status, check.status)} | {check.duration_seconds:.3f} с | "
+                f"{evidence_labels.get(check.evidence, check.evidence)} | {check.reason} | {cleanup} |"
+            )
         return "\n".join(lines) + "\n"
