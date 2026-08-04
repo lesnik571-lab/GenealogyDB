@@ -6,6 +6,19 @@ from repository import PersonRepository
 from viewer import GenealogyViewer
 
 
+_OPEN_VIEWERS = []
+
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def close_viewer_repositories():
+    yield
+    while _OPEN_VIEWERS:
+        _OPEN_VIEWERS.pop().repository.close()
+
+
 def build_viewer(tmp_path):
     db_path = tmp_path / "person_management.db"
     conn = sqlite3.connect(db_path)
@@ -27,6 +40,7 @@ def build_viewer(tmp_path):
     viewer.event_service = type("EventService", (), {"list_events": lambda self, person_id: []})()
     viewer._clear_tree = lambda: None
     viewer.search_people = lambda: None
+    _OPEN_VIEWERS.append(viewer)
     return viewer
 
 
