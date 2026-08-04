@@ -1,5 +1,6 @@
 import sqlite3
 
+import app
 import database
 from audit_service import AuditService
 
@@ -50,3 +51,33 @@ def test_audit_service_closes_every_temporary_connection(tmp_path, monkeypatch):
 
     assert opened
     assert sorted(opened) == sorted(closed)
+
+
+def test_application_statistics_closes_connection(tmp_path, monkeypatch):
+    database_path = tmp_path / "statistics.db"
+    database.initialize_database(database_path)
+    monkeypatch.setattr(app, "DB_NAME", database_path)
+
+    original_connect = sqlite3.connect
+    opened = []
+    closed = []
+
+    class TrackingConnection(sqlite3.Connection):
+        def close(self):
+            closed.append(id(self))
+            super().close()
+
+    def connect(*args, **kwargs):
+        kwargs["factory"] = TrackingConnection
+        connection = original_connect(*args, **kwargs)
+        opened.append(id(connection))
+        return connection
+
+    monkeypatch.setattr(app.sqlite3, "connect", connect)
+
+    assert app.GenealogyApplication().get_statistics() == {
+        "people": 0,
+        "families": 0,
+        "family_children": 0,
+    }
+    assert opened == closed
