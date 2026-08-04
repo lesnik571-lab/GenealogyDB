@@ -1,7 +1,9 @@
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from database import initialize_database
-from rc_validation_service import BLOCKED, PASS, WARNING, RCValidationCheck, RCValidationService
+from rc_validation_service import BLOCKED, PASS, WARNING, RCValidationCheck, RCValidationReport, RCValidationService
 
 
 def test_rc_validation_uses_temporary_workflows_and_preserves_configured_database(tmp_path):
@@ -57,3 +59,45 @@ def test_missing_configured_database_is_warning_and_cleanup_failure_is_warning(t
     monkeypatch.setattr("rc_validation_service.shutil.rmtree", lambda _path: (_ for _ in ()).throw(OSError("locked")))
     report = service.validate()
     assert any(check.status == WARNING and "cleanup failed" in check.reason for check in report.checks)
+
+def test_rc_startup_check_accepts_existing_application_root(tmp_path, monkeypatch):
+    existing_root = object()
+    monkeypatch.setitem(sys.modules, "tkinter", SimpleNamespace(_default_root=existing_root))
+    monkeypatch.setattr("rc_validation_service.importlib.import_module", lambda _name: None)
+    (tmp_path / "viewer.py").write_text("", encoding="utf-8")
+    service = RCValidationService(tmp_path / "configured.db", project_root=tmp_path)
+
+    checks = service._startup_checks()
+    headless = next(check for check in checks if check.check_id == "startup.headless-import")
+
+    assert headless.status == PASS
+    assert headless.evidence == "tk._default_root remained unchanged"
+
+
+def test_rc_markdown_localizes_recommendation_headers_and_standard_values():
+    check = RCValidationCheck(
+        "database.initialize",
+        "Database",
+        "initialize",
+        PASS,
+        0.125,
+        "completed",
+        cleanup_result="temporary root removed",
+    )
+    report = RCValidationReport(
+        "2.1.0-rc1-dev",
+        (check,),
+        "READY FOR RC1",
+        "configured.db",
+        "before",
+        "after",
+    )
+
+    text = RCValidationService._markdown(report)
+
+    assert "# Проверка GenealogyDB RC1" in text
+    assert "Рекомендация: **ГОТОВО К RC1**" in text
+    assert "| ID | Категория | Статус | Время | Результат | Причина | Очистка |" in text
+    assert "| База данных | ПРОЙДЕНО | 0.125 с | выполнено |" in text
+    assert "временная папка удалена" in text
+
