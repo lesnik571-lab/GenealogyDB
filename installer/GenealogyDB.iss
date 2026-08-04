@@ -1,6 +1,6 @@
 #define MyAppName "GenealogyDB"
 #ifndef MyAppVersion
-#define MyAppVersion "2.1.0-rc1"
+#define MyAppVersion "2.1.0-rc2"
 #endif
 #define MyAppPublisher "GenealogyDB"
 #define MyAppExeName "GenealogyDB.exe"
