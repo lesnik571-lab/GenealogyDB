@@ -98,3 +98,23 @@ def test_secondary_viewer_dialogs_use_russian_titles_and_actions():
         "Диагностика GenealogyDB",
     ):
         assert label in source
+
+def test_source_analysis_statistics_are_presented_in_russian():
+    statistics = {
+        "total_sources": 3,
+        "citations": 7,
+        "average_citations_per_person": 1.5,
+        "evidence_coverage": 80,
+        "unsupported_records": 2,
+        "duplicate_rate": 0,
+    }
+
+    text = GenealogyViewer._format_source_analysis_statistics(statistics)
+
+    assert text == (
+        "источники: 3; цитаты: 7; среднее на человека: 1.5; "
+        "покрытие доказательствами: 80; без источников: 2; дубликаты: 0"
+    )
+    for technical_name in statistics:
+        assert technical_name not in text
+
