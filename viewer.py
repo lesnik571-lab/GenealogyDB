@@ -5354,10 +5354,10 @@ class GenealogyViewer:
     def _show_about(self):
         """Show release and runtime version information."""
         messagebox.showinfo(
-            "About GenealogyDB",
+            "О GenealogyDB",
             "\n".join((
                 f"GenealogyDB {APP_VERSION}",
-                f"Build date: {BUILD_DATE}",
+                f"Дата сборки: {BUILD_DATE}",
                 f"Python: {sys.version.split()[0]}",
                 f"SQLite: {sqlite3.sqlite_version}",
             )),
@@ -5370,20 +5370,20 @@ class GenealogyViewer:
             manual = USER_MANUAL_PATH.read_text(encoding="utf-8")
         except OSError as error:
             messagebox.showerror(
-                "User Manual",
-                f"Unable to open the user manual: {error}",
+                "Руководство пользователя",
+                f"Не удалось открыть руководство пользователя: {error}",
                 parent=self.root,
             )
             return
 
         dialog = self._create_dialog()
-        dialog.title("GenealogyDB User Manual")
+        dialog.title("Руководство пользователя GenealogyDB")
         dialog.geometry("760x620")
         body = tk.Text(dialog, wrap="word")
         body.pack(fill="both", expand=True, padx=12, pady=(12, 8))
         body.insert("end", manual)
         body.config(state="disabled")
-        tk.Button(dialog, text="Close", command=dialog.destroy).pack(
+        tk.Button(dialog, text="Закрыть", command=dialog.destroy).pack(
             anchor="e", padx=12, pady=(0, 12)
         )
 
@@ -5406,7 +5406,7 @@ class GenealogyViewer:
             except Exception:
                 self._intelligence_window = None
         dialog = self._create_dialog(); self._intelligence_window = dialog
-        dialog.title("Intelligence Center"); dialog.geometry("1260x700"); dialog.minsize(900, 540)
+        dialog.title("Центр анализа"); dialog.geometry("1260x700"); dialog.minsize(900, 540)
         dialog.protocol("WM_DELETE_WINDOW", self._close_intelligence_center)
         self._intelligence_filter_vars = {"confidence": tk.StringVar(value="0"), "category": tk.StringVar(value=""), "person": tk.StringVar(value=""), "family": tk.StringVar(value=""), "source": tk.StringVar(value=""), "unresolved": tk.BooleanVar(value=True)}
         controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(12, 6))
@@ -5432,7 +5432,7 @@ class GenealogyViewer:
         self._run_intelligence_analysis()
 
     def _run_intelligence_analysis(self):
-        return self._submit_repository_task("Intelligence Center", lambda repository, context: IntelligenceService(repository).analyze(progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None, cancel_callback=context.raise_if_cancelled if context else None), self._set_intelligence_report, on_error=lambda error: self._show_unified_error("Intelligence Center", error), cancellable=True)
+        return self._submit_repository_task("Центр анализа", lambda repository, context: IntelligenceService(repository).analyze(progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None, cancel_callback=context.raise_if_cancelled if context else None), self._set_intelligence_report, on_error=lambda error: self._show_unified_error("Центр анализа", error), cancellable=True)
 
     def _set_intelligence_report(self, report):
         self._intelligence_report = report
@@ -5489,12 +5489,12 @@ class GenealogyViewer:
             except Exception:
                 self._source_analysis_window = None
         dialog = self._create_dialog(); self._source_analysis_window = dialog
-        dialog.title("Source Analysis Center"); dialog.geometry("1280x700"); dialog.minsize(920, 540)
+        dialog.title("Центр анализа источников"); dialog.geometry("1280x700"); dialog.minsize(920, 540)
         dialog.protocol("WM_DELETE_WINDOW", self._close_source_analysis_center)
         self._source_analysis_filter_vars = {"severity": tk.StringVar(value=""), "source": tk.StringVar(value=""), "repository": tk.StringVar(value=""), "person": tk.StringVar(value=""), "event": tk.StringVar(value=""), "unresolved": tk.BooleanVar(value=True)}
         controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(12, 6))
         tk.Button(controls, text="Анализ", command=self._run_source_analysis).pack(side="left")
-        tk.Label(controls, text="Severity").pack(side="left", padx=(10, 3))
+        tk.Label(controls, text="Важность").pack(side="left", padx=(10, 3))
         severity = ttk.Combobox(controls, textvariable=self._source_analysis_filter_vars["severity"], values=("", "critical", "high", "medium", "low"), state="readonly", width=10)
         severity.pack(side="left"); severity.bind("<<ComboboxSelected>>", lambda _event: self._render_source_analysis())
         for key, label in (("source", "Источник"), ("repository", "Репозиторий"), ("person", "Человек"), ("event", "Событие")):
@@ -5503,30 +5503,30 @@ class GenealogyViewer:
             entry.pack(side="left"); entry.bind("<Return>", lambda _event: self._render_source_analysis())
         tk.Checkbutton(controls, text="Нерешенные", variable=self._source_analysis_filter_vars["unresolved"], command=self._render_source_analysis).pack(side="left", padx=(8, 0))
         tree = ttk.Treeview(dialog, columns=("category", "severity", "confidence", "explanation"), show="headings", selectmode="browse")
-        for key, title, width in (("category", "Категория", 220), ("severity", "Severity", 90), ("confidence", "%", 55), ("explanation", "Объяснение", 720)):
+        for key, title, width in (("category", "Категория", 220), ("severity", "Важность", 90), ("confidence", "%", 55), ("explanation", "Объяснение", 720)):
             tree.heading(key, text=title); tree.column(key, width=width, anchor="w")
         tree.pack(fill="both", expand=True, padx=12, pady=6); self._source_analysis_tree = tree
         self._source_analysis_status = tk.Label(dialog, anchor="w"); self._source_analysis_status.pack(fill="x", padx=12, pady=(0, 6))
         actions = tk.Frame(dialog); actions.pack(fill="x", padx=12, pady=(0, 12))
         tk.Button(actions, text="Игнорировать", command=self._ignore_source_analysis).pack(side="left")
         tk.Button(actions, text="Открыть запись", command=self._open_source_analysis_record).pack(side="left", padx=(6, 0))
-        tk.Button(actions, text="Evidence Manager", command=self.open_evidence_manager).pack(side="left", padx=(6, 0))
-        tk.Button(actions, text="Research Workspace", command=self.open_research_workspace).pack(side="left", padx=(6, 0))
-        tk.Button(actions, text="Validation Center", command=self.open_validation_center).pack(side="left", padx=(6, 0))
-        tk.Button(actions, text="Release Center", command=self.open_release_center).pack(side="left", padx=(6, 0))
+        tk.Button(actions, text="Источники и доказательства", command=self.open_evidence_manager).pack(side="left", padx=(6, 0))
+        tk.Button(actions, text="Исследование", command=self.open_research_workspace).pack(side="left", padx=(6, 0))
+        tk.Button(actions, text="Проверка данных", command=self.open_validation_center).pack(side="left", padx=(6, 0))
+        tk.Button(actions, text="Центр релиза", command=self.open_release_center).pack(side="left", padx=(6, 0))
         for extension in ("csv", "json", "markdown", "html", "pdf"):
             tk.Button(actions, text=extension.upper(), command=lambda value=extension: self._export_source_analysis(value)).pack(side="left", padx=(6, 0))
         tk.Button(actions, text="Закрыть", command=self._close_source_analysis_center).pack(side="right")
         self._run_source_analysis()
 
     def _run_source_analysis(self):
-        return self._submit_repository_task("Source Analysis", lambda repository, context: SourceAnalysisService(repository).analyze(progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None, cancel_callback=context.raise_if_cancelled if context else None), self._set_source_analysis_report, on_error=lambda error: self._show_unified_error("Source Analysis", error), cancellable=True)
+        return self._submit_repository_task("Анализ источников", lambda repository, context: SourceAnalysisService(repository).analyze(progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None, cancel_callback=context.raise_if_cancelled if context else None), self._set_source_analysis_report, on_error=lambda error: self._show_unified_error("Анализ источников", error), cancellable=True)
 
     def _set_source_analysis_report(self, report):
         self._source_analysis_report = report
         status = getattr(self, "_source_analysis_status", None)
         if status is not None:
-            status.config(text=f"Findings: {len(report.findings)} | Ignored: {report.ignored_count} | Duration: {report.duration_seconds:.3f} s | Statistics: {report.statistics}")
+            status.config(text=f"Найдено: {len(report.findings)} | Игнорировано: {report.ignored_count} | Время: {report.duration_seconds:.3f} с | Статистика: {report.statistics}")
         self._render_source_analysis()
 
     def _render_source_analysis(self):
@@ -5576,7 +5576,7 @@ class GenealogyViewer:
             except Exception:
                 self._beta_readiness_window = None
         dialog = self._create_dialog(); self._beta_readiness_window = dialog
-        dialog.title("Beta Readiness"); dialog.geometry("1180x760"); dialog.minsize(820, 540)
+        dialog.title("Готовность Beta"); dialog.geometry("1180x760"); dialog.minsize(820, 540)
         dialog.protocol("WM_DELETE_WINDOW", self._close_beta_readiness)
         body = tk.Text(dialog, wrap="word"); body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
         self._beta_readiness_body = body
@@ -5599,10 +5599,10 @@ class GenealogyViewer:
 
     def _run_beta_readiness(self):
         return self._submit_repository_task(
-            "Beta Readiness",
+            "Готовность Beta",
             lambda repository, _context: BetaStabilizationService(repository).analyze(),
             self._set_beta_readiness_report,
-            on_error=lambda error: self._show_unified_error("Beta Readiness", error),
+            on_error=lambda error: self._show_unified_error("Готовность Beta", error),
             cancellable=True,
         )
 
@@ -5676,7 +5676,7 @@ class GenealogyViewer:
         if report is None: return self._verify_beta_integrity()
         try:
             path = self._beta_remediation().export(report, report_format)
-            messagebox.showinfo("Beta Readiness", f"Remediation report сохранён: {path}", parent=self._beta_readiness_window)
+            messagebox.showinfo("Готовность Beta", f"Remediation report сохранён: {path}", parent=self._beta_readiness_window)
         except Exception as error:
             self._show_unified_error("Экспорт remediation", error)
 
@@ -5696,8 +5696,8 @@ class GenealogyViewer:
         return self._submit_repository_task(
             "Экспорт Beta Readiness",
             lambda repository, _context: BetaStabilizationService(repository).export(report, report_format),
-            lambda path: messagebox.showinfo("Beta Readiness", f"Отчёт сохранён: {path}", parent=self._beta_readiness_window),
-            on_error=lambda error: self._show_unified_error("Beta Readiness", error),
+            lambda path: messagebox.showinfo("Готовность Beta", f"Отчёт сохранён: {path}", parent=self._beta_readiness_window),
+            on_error=lambda error: self._show_unified_error("Готовность Beta", error),
         )
 
     def _close_beta_readiness(self):
@@ -5709,17 +5709,17 @@ class GenealogyViewer:
 
     def open_rc1_validation(self):
         dialog = self._create_dialog()
-        dialog.title("RC1 Validation"); dialog.geometry("1100x700"); dialog.minsize(800, 500)
+        dialog.title("Проверка RC1"); dialog.geometry("1100x700"); dialog.minsize(800, 500)
         body = tk.Text(dialog, wrap="word"); body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
         status = tk.Label(dialog, anchor="w"); status.pack(fill="x", padx=12, pady=(0, 6))
 
         def run():
             status.config(text="RC1 validation is running against temporary databases and sidecars.")
             return self._submit_repository_task(
-                "RC1 Validation",
+                "Проверка RC1",
                 lambda repository, _context: RCValidationService(repository.db_name).validate(),
                 lambda report: render(report),
-                on_error=lambda error: self._show_unified_error("RC1 Validation", error),
+                on_error=lambda error: self._show_unified_error("Проверка RC1", error),
                 cancellable=True,
             )
 
@@ -5730,14 +5730,14 @@ class GenealogyViewer:
 
         controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12))
         tk.Button(controls, text="Run validation", command=run).pack(side="left")
-        tk.Button(controls, text="Close", command=dialog.destroy).pack(side="right")
+        tk.Button(controls, text="Закрыть", command=dialog.destroy).pack(side="right")
 
     def open_21_integration_check(self):
-        dialog = self._create_dialog(); dialog.title("2.1 Integration Check"); dialog.geometry("900x600"); dialog.minsize(650, 420)
+        dialog = self._create_dialog(); dialog.title("Проверка интеграции 2.1"); dialog.geometry("900x600"); dialog.minsize(650, 420)
         body = tk.Text(dialog, wrap="word"); body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
         def run():
-            return self._submit_repository_task("2.1 Integration Check", lambda repository, _context: IntegrationStabilizationService(repository.db_name).validate(), lambda report: (body.config(state="normal"), body.delete("1.0", "end"), body.insert("1.0", IntegrationStabilizationService._markdown(report)), body.config(state="disabled")), on_error=lambda error: self._show_unified_error("2.1 Integration Check", error), cancellable=True)
-        controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12)); tk.Button(controls, text="Run check", command=run).pack(side="left"); tk.Button(controls, text="Close", command=dialog.destroy).pack(side="right")
+            return self._submit_repository_task("Проверка интеграции 2.1", lambda repository, _context: IntegrationStabilizationService(repository.db_name).validate(), lambda report: (body.config(state="normal"), body.delete("1.0", "end"), body.insert("1.0", IntegrationStabilizationService._markdown(report)), body.config(state="disabled")), on_error=lambda error: self._show_unified_error("Проверка интеграции 2.1", error), cancellable=True)
+        controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12)); tk.Button(controls, text="Run check", command=run).pack(side="left"); tk.Button(controls, text="Закрыть", command=dialog.destroy).pack(side="right")
 
     def open_21_beta_validation(self):
         dialog = self._create_dialog(); dialog.title("Проверка готовности 2.1 Beta"); dialog.geometry("900x600"); dialog.minsize(650, 420)
@@ -5750,7 +5750,7 @@ class GenealogyViewer:
 
     def open_collaboration(self):
         dialog = self._create_dialog()
-        dialog.title("Collaboration"); dialog.geometry("760x460"); dialog.minsize(600, 360)
+        dialog.title("Совместная работа"); dialog.geometry("760x460"); dialog.minsize(600, 360)
         body = tk.Text(dialog, wrap="word"); body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
 
         def refresh():
@@ -5769,11 +5769,11 @@ class GenealogyViewer:
 
         controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12))
         tk.Button(controls, text="Refresh", command=refresh).pack(side="left")
-        tk.Button(controls, text="Close", command=dialog.destroy).pack(side="right")
+        tk.Button(controls, text="Закрыть", command=dialog.destroy).pack(side="right")
         refresh()
 
     def open_project_merge(self):
-        dialog = self._create_dialog(); dialog.title("Project Merge"); dialog.geometry("860x560"); dialog.minsize(650, 420)
+        dialog = self._create_dialog(); dialog.title("Объединение проектов"); dialog.geometry("860x560"); dialog.minsize(650, 420)
         body = tk.Text(dialog, wrap="word"); body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
         source = tk.StringVar(value=""); mode = tk.StringVar(value="Preview only")
         current_preview = [None]
@@ -5786,7 +5786,7 @@ class GenealogyViewer:
             def render(result):
                 current_preview[0] = result
                 body.config(state="normal"); body.delete("1.0", "end"); body.insert("1.0", ProjectMergeService._markdown(result)); body.config(state="disabled")
-            return self._submit_repository_task("Project Merge", lambda repository, context: ProjectMergeService(repository).analyze(source.get(), mode=mode.get(), cancel_callback=context.raise_if_cancelled if context else None, progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None), render, on_error=lambda error: self._show_unified_error("Project Merge", error), cancellable=True)
+            return self._submit_repository_task("Объединение проектов", lambda repository, context: ProjectMergeService(repository).analyze(source.get(), mode=mode.get(), cancel_callback=context.raise_if_cancelled if context else None, progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None), render, on_error=lambda error: self._show_unified_error("Объединение проектов", error), cancellable=True)
 
         def apply():
             merge_preview = current_preview[0]
@@ -5797,7 +5797,7 @@ class GenealogyViewer:
                 destination = filedialog.asksaveasfilename(parent=dialog, defaultextension=".db", filetypes=[("GenealogyDB", "*.db")])
                 if not destination:
                     return
-            if not messagebox.askyesno("Project Merge", "Apply the reviewed project merge? A backup will be created before any current-project change.", parent=dialog):
+            if not messagebox.askyesno("Объединение проектов", "Применить проверенный план объединения? Перед изменением текущего проекта будет создана резервная копия.", parent=dialog):
                 return
             def execute(repository, context):
                 return ProjectMergeService(repository).apply(
@@ -5809,10 +5809,10 @@ class GenealogyViewer:
                 )
             def complete(result):
                 if merge_preview.mode == "Merge into current project":
-                    self._get_undo_manager().record_applied(AppliedDeltaCommand("Project Merge", self.repository, result.delta, result))
+                    self._get_undo_manager().record_applied(AppliedDeltaCommand("Объединение проектов", self.repository, result.delta, result))
                     self.refresh_views()
-                messagebox.showinfo("Project Merge", f"Merge complete. Backup: {result.backup_path}", parent=dialog)
-            return self._submit_repository_task("Project Merge Apply", execute, complete, on_error=lambda error: self._show_unified_error("Project Merge", error), cancellable=True)
+                messagebox.showinfo("Объединение проектов", f"Объединение завершено. Резервная копия: {result.backup_path}", parent=dialog)
+            return self._submit_repository_task("Применение объединения проектов", execute, complete, on_error=lambda error: self._show_unified_error("Объединение проектов", error), cancellable=True)
 
         def export_report():
             merge_preview = current_preview[0]
@@ -5827,10 +5827,10 @@ class GenealogyViewer:
         tk.Button(controls, text="Analyze", command=preview).pack(side="left", padx=(6, 0))
         tk.Button(controls, text="Apply", command=apply).pack(side="left", padx=(6, 0))
         tk.Button(controls, text="Export reports", command=export_report).pack(side="left", padx=(6, 0))
-        tk.Button(controls, text="Close", command=dialog.destroy).pack(side="right")
+        tk.Button(controls, text="Закрыть", command=dialog.destroy).pack(side="right")
 
     def open_conflict_resolution(self):
-        dialog = self._create_dialog(); dialog.title("Conflict Resolution"); dialog.geometry("960x620"); dialog.minsize(700, 460)
+        dialog = self._create_dialog(); dialog.title("Разрешение конфликтов"); dialog.geometry("960x620"); dialog.minsize(700, 460)
         body = tk.Text(dialog, wrap="word"); body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
         incoming_path = tk.StringVar(value=""); baseline_path = tk.StringVar(value=""); current_plan = [None]; current_preview = [None]
         conflict_id = tk.StringVar(value=""); resolution = tk.StringVar(value="Mark unresolved"); custom_value = tk.StringVar(value=""); apply_mode = tk.StringVar(value="Apply to current project")
@@ -5855,9 +5855,9 @@ class GenealogyViewer:
         def review():
             if not incoming_path.get(): return
             return self._submit_repository_task(
-                "Conflict Resolution Review",
+                "Проверка разрешения конфликтов",
                 lambda repository, context: ConflictResolutionService(repository).review(incoming_path.get(), baseline_path=baseline_path.get() or None, cancel_callback=context.raise_if_cancelled if context else None, progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None),
-                render, on_error=lambda error: self._show_unified_error("Conflict Resolution", error), cancellable=True,
+                render, on_error=lambda error: self._show_unified_error("Разрешение конфликтов", error), cancellable=True,
             )
 
         def preview():
@@ -5872,7 +5872,7 @@ class GenealogyViewer:
             if current_plan[0] is None or not conflict_id.get(): return
             try:
                 render(ConflictResolutionService(self.repository).resolve(current_plan[0], conflict_id.get(), resolution.get(), custom_value.get()))
-            except ValueError as error: self._show_unified_error("Conflict Resolution", error)
+            except ValueError as error: self._show_unified_error("Разрешение конфликтов", error)
 
         def apply():
             if current_preview[0] is None: return
@@ -5880,14 +5880,14 @@ class GenealogyViewer:
             if apply_mode.get() == "Create resolved project copy":
                 destination = filedialog.asksaveasfilename(parent=dialog, defaultextension=".db", filetypes=[("GenealogyDB", "*.db")])
                 if not destination: return
-            if not messagebox.askyesno("Conflict Resolution", "Apply this reviewed resolution plan? A backup is created first.", parent=dialog): return
+            if not messagebox.askyesno("Разрешение конфликтов", "Применить проверенный план разрешения конфликтов? Сначала будет создана резервная копия.", parent=dialog): return
             def execute(repository, context):
                 return ConflictResolutionService(repository).apply(current_preview[0], mode=apply_mode.get(), destination=destination, confirmed_overwrite=True, cancel_callback=context.raise_if_cancelled if context else None, progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None)
             def complete(result):
                 if apply_mode.get() == "Apply to current project":
-                    self._get_undo_manager().record_applied(AppliedDeltaCommand("Conflict Resolution", self.repository, result.delta, result)); self.refresh_views()
-                messagebox.showinfo("Conflict Resolution", f"Resolution complete. Backup: {result.backup_path}", parent=dialog)
-            return self._submit_repository_task("Conflict Resolution Apply", execute, complete, on_error=lambda error: self._show_unified_error("Conflict Resolution", error), cancellable=True)
+                    self._get_undo_manager().record_applied(AppliedDeltaCommand("Разрешение конфликтов", self.repository, result.delta, result)); self.refresh_views()
+                messagebox.showinfo("Разрешение конфликтов", f"Разрешение завершено. Резервная копия: {result.backup_path}", parent=dialog)
+            return self._submit_repository_task("Применение разрешения конфликтов", execute, complete, on_error=lambda error: self._show_unified_error("Разрешение конфликтов", error), cancellable=True)
 
         def export_reports():
             if current_preview[0] is not None: ConflictResolutionService(self.repository).export_all(current_preview[0])
@@ -5902,11 +5902,11 @@ class GenealogyViewer:
         tk.Button(resolution_controls, text="Set resolution", command=set_resolution).pack(side="left", padx=(6, 0))
         ttk.Combobox(resolution_controls, textvariable=apply_mode, values=("Apply to current project", "Create resolved project copy"), state="readonly", width=26).pack(side="left", padx=(6, 0))
         tk.Button(resolution_controls, text="Apply", command=apply).pack(side="left", padx=(6, 0))
-        tk.Button(resolution_controls, text="Reports", command=export_reports).pack(side="left", padx=(6, 0))
-        tk.Button(controls, text="Close", command=dialog.destroy).pack(side="right")
+        tk.Button(resolution_controls, text="Отчёты", command=export_reports).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Закрыть", command=dialog.destroy).pack(side="right")
 
     def open_history_browser(self):
-        dialog = self._create_dialog(); dialog.title("History Browser"); dialog.geometry("980x620"); dialog.minsize(700, 460)
+        dialog = self._create_dialog(); dialog.title("Просмотр истории"); dialog.geometry("980x620"); dialog.minsize(700, 460)
         body = tk.Text(dialog, wrap="word"); body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
         query = tk.StringVar(value=""); group = tk.StringVar(value="timeline"); selected = [None]; entries = [()]; preview = [None]
         controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12))
@@ -5923,23 +5923,23 @@ class GenealogyViewer:
             body.config(state="disabled")
 
         def index_history():
-            return self._submit_repository_task("History Browser", lambda repository, context: HistoryBrowserService(repository).entries(filters={"search": query.get()}, group_by=None if group.get() == "timeline" else group.get(), cancel_callback=context.raise_if_cancelled if context else None, progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None), render, on_error=lambda error: self._show_unified_error("History Browser", error), cancellable=True)
+            return self._submit_repository_task("Просмотр истории", lambda repository, context: HistoryBrowserService(repository).entries(filters={"search": query.get()}, group_by=None if group.get() == "timeline" else group.get(), cancel_callback=context.raise_if_cancelled if context else None, progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None), render, on_error=lambda error: self._show_unified_error("Просмотр истории", error), cancellable=True)
 
         def build_preview():
             if selected[0] is None: return
             try:
                 preview[0] = HistoryBrowserService(self.repository).historical_preview(selected[0])
-                messagebox.showinfo("History Browser", f"Read-only historical view created: {preview[0].temporary_path}", parent=dialog)
-            except ValueError as error: self._show_unified_error("History Browser", error)
+                messagebox.showinfo("Просмотр истории", f"Создан исторический просмотр только для чтения: {preview[0].temporary_path}", parent=dialog)
+            except ValueError as error: self._show_unified_error("Просмотр истории", error)
 
         def close():
             if preview[0] is not None: HistoryBrowserService(self.repository).close_preview(preview[0])
             dialog.destroy()
 
-        tk.Button(controls, text="Index", command=index_history).pack(side="left", padx=(6, 0))
-        tk.Button(controls, text="Historical preview", command=build_preview).pack(side="left", padx=(6, 0))
-        tk.Button(controls, text="Reports", command=lambda: HistoryBrowserService(self.repository).export_all(entries[0])).pack(side="left", padx=(6, 0))
-        tk.Button(controls, text="Close", command=close).pack(side="right")
+        tk.Button(controls, text="Индексировать", command=index_history).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Исторический просмотр", command=build_preview).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Отчёты", command=lambda: HistoryBrowserService(self.repository).export_all(entries[0])).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Закрыть", command=close).pack(side="right")
 
     def open_workflow_automation(self):
         dialog = self._create_dialog(); dialog.title("Автоматизация workflows"); dialog.geometry("980x620"); dialog.minsize(700, 460)
@@ -5962,8 +5962,8 @@ class GenealogyViewer:
             def execute(repository, context):
                 return WorkflowAutomationService(repository).run(selected[0], mode=mode.get(), cancel_callback=context.raise_if_cancelled if context else None, progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None)
             def complete(result):
-                body.config(state="normal"); body.insert("end", f"\n\nRun {result.run_uuid}: {result.status}"); body.config(state="disabled")
-            return self._submit_repository_task("Workflow Automation", execute, complete, on_error=lambda error: self._show_unified_error("Workflow Automation", error), cancellable=True)
+                body.config(state="normal"); body.insert("end", f"\n\nЗапуск {result.run_uuid}: {result.status}"); body.config(state="disabled")
+            return self._submit_repository_task("Автоматизация процессов", execute, complete, on_error=lambda error: self._show_unified_error("Автоматизация процессов", error), cancellable=True)
 
         tk.Button(controls, text="Шаблон", command=load_template).pack(side="left")
         ttk.Combobox(controls, textvariable=mode, values=(DRY_RUN, READ_ONLY_RUN, FULL_RUN), state="readonly", width=28).pack(side="left", padx=(6, 0))
@@ -5987,12 +5987,12 @@ class GenealogyViewer:
 
         def inspect_package():
             if not package_path.get(): return
-            return self._submit_repository_task("Offline Change Exchange", lambda repository, context: ChangeExchangeService(repository).inspect(package_path.get(), cancel_callback=context.raise_if_cancelled if context else None), render, on_error=lambda error: self._show_unified_error("Офлайн-обмен", error), cancellable=True)
+            return self._submit_repository_task("Автономный обмен изменениями", lambda repository, context: ChangeExchangeService(repository).inspect(package_path.get(), cancel_callback=context.raise_if_cancelled if context else None), render, on_error=lambda error: self._show_unified_error("Офлайн-обмен", error), cancellable=True)
 
         def create_package():
             destination = filedialog.asksaveasfilename(parent=dialog, defaultextension=".zip", filetypes=[("ZIP", "*.zip")])
             if not destination: return
-            return self._submit_repository_task("Offline Change Exchange Export", lambda repository, context: ChangeExchangeService(repository).export(destination, cancel_callback=context.raise_if_cancelled if context else None, progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None), lambda path: package_path.set(str(path)), on_error=lambda error: self._show_unified_error("Офлайн-обмен", error), cancellable=True)
+            return self._submit_repository_task("Экспорт автономного обмена изменениями", lambda repository, context: ChangeExchangeService(repository).export(destination, cancel_callback=context.raise_if_cancelled if context else None, progress_callback=(lambda text, done, total: context.report(text, done, total)) if context else None), lambda path: package_path.set(str(path)), on_error=lambda error: self._show_unified_error("Офлайн-обмен", error), cancellable=True)
 
         def preview_package():
             if inspected[0] is None: return
@@ -6008,7 +6008,7 @@ class GenealogyViewer:
 
     def open_release_center(self):
         dialog = self._create_dialog()
-        dialog.title("Release Center")
+        dialog.title("Центр релиза")
         dialog.geometry("1040x700")
         body = tk.Text(dialog, wrap="word")
         body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
@@ -6020,7 +6020,7 @@ class GenealogyViewer:
             )
             body.config(state="normal"); body.delete("1.0", "end")
             environment = report["environment"]
-            body.insert("end", "Release Center\n\n" + "\n".join(f"{key}: {value}" for key, value in environment.items()) + "\n\nSelf-check\n" + "\n".join(f"[{'OK' if item['passed'] else 'FAIL'}] {item['name']}: {item['detail']}" for item in report["checks"]))
+            body.insert("end", "Центр релиза\n\n" + "\n".join(f"{key}: {value}" for key, value in environment.items()) + "\n\nСамопроверка\n" + "\n".join(f"[{'OK' if item['passed'] else 'FAIL'}] {item['name']}: {item['detail']}" for item in report["checks"]))
             body.config(state="disabled")
 
         controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12))
@@ -6028,8 +6028,8 @@ class GenealogyViewer:
         tk.Button(controls, text="Markdown", command=lambda: self._export_release_report("markdown", dialog)).pack(side="left", padx=(6, 0))
         tk.Button(controls, text="HTML", command=lambda: self._export_release_report("html", dialog)).pack(side="left", padx=(6, 0))
         tk.Button(controls, text="ZIP", command=lambda: self._export_release_report("zip", dialog)).pack(side="left", padx=(6, 0))
-        tk.Button(controls, text="Пакет release", command=lambda: self._export_release_package(dialog)).pack(side="left", padx=(6, 0))
-        tk.Button(controls, text="Release Notes", command=self.open_release_notes).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Пакет выпуска", command=lambda: self._export_release_package(dialog)).pack(side="left", padx=(6, 0))
+        tk.Button(controls, text="Примечания к выпуску", command=self.open_release_notes).pack(side="left", padx=(6, 0))
         tk.Button(controls, text="Закрыть", command=dialog.destroy).pack(side="right")
         refresh()
 
@@ -6045,7 +6045,7 @@ class GenealogyViewer:
 
     def open_release_notes(self):
         dialog = self._create_dialog()
-        dialog.title("Release Notes")
+        dialog.title("Примечания к выпуску")
         dialog.geometry("900x660")
         query = tk.StringVar(value="")
         tk.Entry(dialog, textvariable=query).pack(fill="x", padx=12, pady=(12, 6))
@@ -6122,7 +6122,7 @@ class GenealogyViewer:
             *(f"  {name}" for name in snapshot["loaded_services"]),
         )
         dialog = self._create_dialog()
-        dialog.title("GenealogyDB Diagnostics")
+        dialog.title("Диагностика GenealogyDB")
         dialog.geometry("760x560")
         body = tk.Text(dialog, wrap="word")
         body.pack(fill="both", expand=True, padx=12, pady=(12, 8))
@@ -6132,19 +6132,19 @@ class GenealogyViewer:
         controls.pack(fill="x", padx=12, pady=(0, 12))
         tk.Button(
             controls,
-            text="Export diagnostics.zip",
+            text="Экспорт diagnostics.zip",
             command=lambda: self._export_diagnostics(snapshot, dialog),
         ).pack(side="left")
-        tk.Button(controls, text="Close", command=dialog.destroy).pack(side="right")
+        tk.Button(controls, text="Закрыть", command=dialog.destroy).pack(side="right")
 
     def _export_diagnostics(self, snapshot, parent=None):
         destination = filedialog.asksaveasfilename(
             parent=parent or self.root,
-            title="Export diagnostics",
+            title="Экспорт диагностики",
             initialdir=str(EXPORT_DIR),
             initialfile="diagnostics.zip",
             defaultextension=".zip",
-            filetypes=[("ZIP archives", "*.zip")],
+            filetypes=[("ZIP-архивы", "*.zip")],
         )
         if not destination:
             return
@@ -6152,9 +6152,9 @@ class GenealogyViewer:
             output = export_diagnostics(destination, snapshot)
         except Exception:
             get_logger("diagnostics").exception("Diagnostics export failed")
-            messagebox.showerror("Diagnostics", "Diagnostics export failed.", parent=parent)
+            messagebox.showerror("Diagnostics", "Не удалось экспортировать диагностику.", parent=parent)
             return
-        messagebox.showinfo("Diagnostics", f"Diagnostics exported to:\n{output}", parent=parent)
+        messagebox.showinfo("Diagnostics", f"Диагностика экспортирована в:\n{output}", parent=parent)
 
     def _register_plugin_menu_item(self, menu_name, label, command):
         menu = self._plugin_menus.get(menu_name)
