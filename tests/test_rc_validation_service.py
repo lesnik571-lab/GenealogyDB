@@ -101,6 +101,7 @@ def test_rc_validation_supports_frozen_installed_executable(tmp_path, monkeypatc
     existing_root = object()
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "executable", str(executable))
+    monkeypatch.setattr("rc_validation_service.APP_VERSION", "2.1.0")
     monkeypatch.setitem(sys.modules, "tkinter", SimpleNamespace(_default_root=existing_root))
     service = RCValidationService(tmp_path / "configured.db", project_root=tmp_path)
 
