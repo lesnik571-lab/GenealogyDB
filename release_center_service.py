@@ -212,11 +212,15 @@ class ReleaseCenterService:
         return CheckResult("Build verification", not missing, "Required build files exist." if not missing else f"Missing: {', '.join(missing)}")
 
     def _database_version(self) -> str:
+        connection = None
         try:
-            with sqlite3.connect(self.database_path) as connection:
-                return str(connection.execute("PRAGMA user_version").fetchone()[0])
+            connection = sqlite3.connect(self.database_path)
+            return str(connection.execute("PRAGMA user_version").fetchone()[0])
         except sqlite3.Error:
             return "unavailable"
+        finally:
+            if connection is not None:
+                connection.close()
 
     def _git_commit(self) -> str:
         try:
