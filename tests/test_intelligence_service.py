@@ -73,5 +73,5 @@ def test_cancellation_and_filters(tmp_path):
 
 def test_analysis_menu_registers_intelligence_center_without_opening_tkinter():
     source = inspect.getsource(GenealogyViewer._create_widgets)
-    assert 'label="Analysis"' in source
+    assert 'label="Анализ"' in source
     assert 'label="Intelligence Center"' in source
