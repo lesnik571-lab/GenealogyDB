@@ -49,3 +49,47 @@ def test_primary_viewer_navigation_uses_consistent_russian_labels():
     plugin_source = inspect.getsource(GenealogyViewer._register_plugin_menu_item)
     for label in ('"Отчёты"', '"Экспорт"', '"Плагины"'):
         assert label in plugin_source
+
+
+def test_secondary_viewer_dialogs_use_russian_titles_and_actions():
+    method_names = (
+        "_show_about",
+        "_show_user_manual",
+        "open_intelligence_center",
+        "open_source_analysis_center",
+        "open_beta_readiness",
+        "open_rc1_validation",
+        "open_21_integration_check",
+        "open_collaboration",
+        "open_project_merge",
+        "open_conflict_resolution",
+        "open_history_browser",
+        "open_workflow_automation",
+        "open_offline_change_exchange",
+        "open_release_center",
+        "open_release_notes",
+        "_show_diagnostics",
+    )
+    source = "\n".join(
+        inspect.getsource(getattr(GenealogyViewer, name))
+        for name in method_names
+    )
+    for label in (
+        "О GenealogyDB",
+        "Руководство пользователя GenealogyDB",
+        "Центр анализа",
+        "Центр анализа источников",
+        "Готовность Beta",
+        "Проверка RC1",
+        "Проверка интеграции 2.1",
+        "Совместная работа",
+        "Объединение проектов",
+        "Разрешение конфликтов",
+        "Просмотр истории",
+        "Автоматизация процессов",
+        "Офлайн-обмен изменениями",
+        "Центр релиза",
+        "Примечания к выпуску",
+        "Диагностика GenealogyDB",
+    ):
+        assert label in source
