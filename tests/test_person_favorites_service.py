@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from person_favorites_service import PersonFavoritesService
+from viewer import GenealogyViewer
 
 
 def test_favorites_add_remove_and_persist_in_order(tmp_path):
@@ -61,3 +62,25 @@ def test_viewer_registers_favorite_navigation_actions():
     assert "def toggle_selected_favorite(self):" in source
     assert '"Добавить в избранное"' in source
     assert '"Убрать из избранного"' in source
+
+
+class _SingleResultTree:
+    def selection(self):
+        return ()
+
+    def focus(self):
+        return ""
+
+    def get_children(self, _parent=""):
+        return ("person-42",)
+
+    def item(self, item_id):
+        assert item_id == "person-42"
+        return {"values": (42, "Мошэ", "", "")}
+
+
+def test_selected_person_falls_back_to_only_visible_result():
+    viewer = GenealogyViewer.__new__(GenealogyViewer)
+    viewer.tree = _SingleResultTree()
+
+    assert viewer._selected_person_id() == 42
