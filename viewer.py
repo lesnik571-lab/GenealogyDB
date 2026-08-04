@@ -6543,9 +6543,19 @@ class GenealogyViewer:
         if not self.tree:
             return None
         selected = self.tree.selection()
-        if not selected:
+        item_id = selected[0] if selected else self.tree.focus()
+        if not item_id:
+            rows = self.tree.get_children("")
+            if len(rows) != 1:
+                return None
+            item_id = rows[0]
+        values = self.tree.item(item_id).get("values", ())
+        if not values:
             return None
-        return self.tree.item(selected[0])["values"][0]
+        try:
+            return int(values[0])
+        except (TypeError, ValueError):
+            return None
 
     def open_relationship_inspector(self) -> None:
         """Select two people and show their shortest read-only relationship path."""
