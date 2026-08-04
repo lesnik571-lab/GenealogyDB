@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from build_info import APP_VERSION
 from final_audit_service import BLOCKED, PASS, FinalAuditCheck, FinalAuditService
 
 
@@ -14,8 +15,12 @@ def test_final_audit_reports_static_viewer_contracts_and_deterministic_outputs(t
     assert checks["viewer.no-direct-sql"].status == PASS
     assert checks["viewer.imports"].status == PASS
     assert checks["repository.hygiene"].status == PASS
-    assert checks["packaging.version"].status == PASS
-    assert report.recommendation == "READY FOR 2.1.0"
+    if APP_VERSION == "2.1.0":
+        assert checks["packaging.version"].status == PASS
+        assert report.recommendation == "READY FOR 2.1.0"
+    else:
+        assert checks["packaging.version"].status == BLOCKED
+        assert report.recommendation == "NOT READY"
     first = service.export_all(report)
     assert first == service.export_all(report)
     assert all(path.exists() and path.stat().st_size > 0 for path in first)
