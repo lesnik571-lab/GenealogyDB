@@ -10,7 +10,7 @@
     {
       "area": "Help entries have commands",
       "check_id": "viewer.help",
-      "evidence": "entries: User Manual, Release Center, Beta Readiness, RC1 Validation, 2.1 Integration Check, Проверка готовности 2.1 Beta, Diagnostics, About",
+      "evidence": "entries: Руководство пользователя, Центр релиза, Готовность Beta, Проверка RC1, Проверка интеграции 2.1, Проверка готовности 2.1 Beta, Диагностика, О программе",
       "reason": "",
       "status": "PASS"
     },
@@ -31,7 +31,7 @@
     {
       "area": "Russian labels are valid Unicode",
       "check_id": "viewer.russian-labels",
-      "evidence": "1554 Russian labels checked",
+      "evidence": "1700 Russian labels checked",
       "reason": "",
       "status": "PASS"
     },
@@ -71,13 +71,13 @@
       "status": "PASS"
     },
     {
-      "area": "Version is staged for 2.0.0 without changing it",
+      "area": "Version metadata is synchronized for the 2.1.0 final release",
       "check_id": "packaging.version",
-      "evidence": "current version: 2.1.0-beta1",
-      "reason": "version anchors are not beta1",
-      "status": "BLOCKED"
+      "evidence": "current version: 2.1.0",
+      "reason": "",
+      "status": "PASS"
     }
   ],
-  "recommendation": "NOT READY",
-  "version": "2.1.0-beta1"
+  "recommendation": "READY FOR 2.1.0",
+  "version": "2.1.0"
 }
