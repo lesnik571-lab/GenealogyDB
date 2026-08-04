@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -60,10 +61,15 @@ class AuditService:
             return cls(DATA_DIR / "audit_history.sqlite3")
         return cls(database.with_name(f"{database.name}.audit.sqlite3"))
 
+    @contextmanager
     def _connect(self):
         connection = sqlite3.connect(self.audit_path)
         connection.row_factory = sqlite3.Row
-        return connection
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def _initialize(self):
         with self._connect() as connection:
@@ -242,7 +248,8 @@ class AuditService:
     @staticmethod
     def capture_database_state(database_path) -> dict[str, tuple[tuple[Any, ...], ...]]:
         state = {}
-        with sqlite3.connect(database_path) as connection:
+        connection = sqlite3.connect(database_path)
+        try:
             tables = {
                 row[0] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
@@ -254,7 +261,9 @@ class AuditService:
                     f'SELECT * FROM "{quoted_table}" ORDER BY rowid'
                 ).fetchall()
                 state[table] = tuple(tuple(row) for row in rows)
-        return state
+            return state
+        finally:
+            connection.close()
 
     def get(self, record_id: int) -> AuditRecord | None:
         with self._connect() as connection:
