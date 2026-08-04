@@ -1,6 +1,6 @@
 # GenealogyDB User Manual
 
-Version: 2.1.0
+Version: 2.2.0-dev
 
 ## Getting started
 
@@ -24,7 +24,7 @@ The viewer includes family tree, relationship path, timeline, life map, integrit
 
 ## Collaboration and project exchange
 
-GenealogyDB 2.1 Beta supports collaboration identities, offline change packages, project merge previews, conflict-resolution plans, history browsing, and workflow automation. Preview and dry-run actions remain read-only. Completed writes use one shared operation identifier across audit, collaboration, and history records.
+GenealogyDB 2.1 introduced collaboration identities, offline change packages, project merge previews, conflict-resolution plans, history browsing, and workflow automation. Preview and dry-run actions remain read-only. Completed writes use one shared operation identifier across audit, collaboration, and history records.
 
 ## Plugins and exports
 
