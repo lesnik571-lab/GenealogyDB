@@ -68,5 +68,5 @@ def test_invalid_configuration_is_reported_without_mutating_it(tmp_path):
 
 def test_help_menu_registers_release_center_without_opening_tkinter():
     source = inspect.getsource(GenealogyViewer._create_widgets)
-    assert 'label="Release Center"' in source
+    assert 'label="Центр релиза"' in source
     assert "self.open_release_center" in source
