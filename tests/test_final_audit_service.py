@@ -3,8 +3,9 @@ from pathlib import Path
 from final_audit_service import BLOCKED, PASS, FinalAuditCheck, FinalAuditService
 
 
-def test_final_audit_reports_static_viewer_contracts_and_deterministic_outputs():
+def test_final_audit_reports_static_viewer_contracts_and_deterministic_outputs(tmp_path):
     service = FinalAuditService(project_root=Path.cwd())
+    service.report_dir = tmp_path / "reports"
     report = service.audit()
     checks = {check.check_id: check for check in report.checks}
 
