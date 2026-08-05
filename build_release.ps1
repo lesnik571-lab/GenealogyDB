@@ -16,6 +16,12 @@ if (-not (Test-Path $Python)) {
 
 Push-Location $Root
 try {
+    $SourceVersion = (& $Python -c "from build_info import APP_VERSION; print(APP_VERSION)").Trim()
+    if ($LASTEXITCODE -ne 0) { throw "Could not read source version metadata." }
+    if ($SourceVersion -ne $Version) {
+        throw "Requested build version '$Version' does not match source version '$SourceVersion'. Synchronize release metadata first."
+    }
+
     & $Python -m pytest -q
     if ($LASTEXITCODE -ne 0) { throw "Canonical test suite failed." }
 
