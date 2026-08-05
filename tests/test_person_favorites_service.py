@@ -124,6 +124,19 @@ def test_selected_favorite_falls_back_to_only_favorite():
     assert viewer._selected_favorite_person_id() == 42
 
 
+def test_favorite_person_can_be_set_as_home_person():
+    viewer = GenealogyViewer.__new__(GenealogyViewer)
+    viewer._favorites_listbox = _UnselectedFavoritesListbox()
+    viewer._favorite_person_ids = [42]
+    calls = []
+    viewer._set_home_person = lambda person_id, **kwargs: calls.append(
+        (person_id, kwargs)
+    ) or person_id
+
+    assert viewer._set_selected_favorite_as_home() == 42
+    assert calls == [(42, {"refresh_card": True})]
+
+
 class _FavoritesRepository:
     def get_person(self, person_id):
         people = {

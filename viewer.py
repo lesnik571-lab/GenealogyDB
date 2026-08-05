@@ -6356,6 +6356,11 @@ class GenealogyViewer:
             text="Убрать из избранного",
             command=self._remove_selected_favorite,
         ).pack(side="left", padx=(8, 0))
+        tk.Button(
+            actions,
+            text="Сделать главным",
+            command=self._set_selected_favorite_as_home,
+        ).pack(side="left", padx=(8, 0))
         tk.Button(actions, text="Закрыть", command=self._close_favorites).pack(side="right")
         self._refresh_favorites_window()
         return window
@@ -6390,6 +6395,13 @@ class GenealogyViewer:
         self._favorite_service().remove(person_id)
         self._refresh_favorites_window()
         self._refresh_visible_person_navigation_markers()
+
+    def _set_selected_favorite_as_home(self):
+        person_id = self._selected_favorite_person_id()
+        if person_id is None:
+            messagebox.showwarning("Избранные люди", "Сначала выберите человека.")
+            return
+        return self._set_home_person(person_id, refresh_card=True)
 
     def _toggle_person_favorite(self, person_id, *, refresh_card=False):
         is_favorite = self._favorite_service().toggle(person_id)
