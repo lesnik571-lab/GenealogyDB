@@ -5052,6 +5052,7 @@ class GenealogyViewer:
         workspace_menu.add_command(label="Недавние люди", command=self.open_recent_people)
         workspace_menu.add_command(label="Открыть главного человека", command=self.open_home_person)
         workspace_menu.add_command(label="Сделать выбранного главным", command=self.set_selected_home_person)
+        workspace_menu.add_command(label="Снять главного человека", command=self.clear_home_person)
         workspace_menu.add_command(
             label="Добавить/убрать выбранного",
             command=self.toggle_selected_favorite,
@@ -6615,6 +6616,22 @@ class GenealogyViewer:
         if refresh_card and getattr(self, "current_person_id", None) == person_id:
             self.show_person(person_id, add_to_history=False)
         return person_id
+
+    def clear_home_person(self, *, refresh_card=False):
+        service = self._home_service()
+        person_id = service.get_id()
+        status = getattr(self, "status_label", None)
+        if person_id is None:
+            if status is not None:
+                status.config(text="Главный человек не выбран.")
+            return False
+        service.clear()
+        if status is not None:
+            status.config(text="Главный человек снят.")
+        self._refresh_visible_person_navigation_markers()
+        if refresh_card and getattr(self, "current_person_id", None) == person_id:
+            self.show_person(person_id, add_to_history=False)
+        return True
 
     def open_home_person(self):
         service = self._home_service()
@@ -10162,9 +10179,12 @@ class GenealogyViewer:
         is_home_person = self._home_service().get_id() == person_id
         tk.Button(
             nav,
-            text="Главный человек" if is_home_person else "Сделать главным",
-            command=lambda: self._set_home_person(person_id, refresh_card=True),
-            state="disabled" if is_home_person else "normal",
+            text="Снять главного" if is_home_person else "Сделать главным",
+            command=(
+                (lambda: self.clear_home_person(refresh_card=True))
+                if is_home_person
+                else (lambda: self._set_home_person(person_id, refresh_card=True))
+            ),
         ).pack(side="left", padx=(8, 0))
         tk.Button(nav, text="Закрыть", command=self._close_person_card).pack(side="right")
 
