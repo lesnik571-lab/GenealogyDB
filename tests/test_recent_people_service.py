@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from home_person_service import HomePersonService
+from person_favorites_service import PersonFavoritesService
 from recent_people_service import RecentPeopleService
 from viewer import GenealogyViewer
 
@@ -119,6 +121,7 @@ def test_recent_person_can_be_added_to_favorites_without_toggling():
     viewer.person_favorites_service = _FavoriteRecorder()
     viewer.status_label = _StatusLabel()
     viewer._favorites_listbox = None
+    viewer._refresh_recent_people_window = lambda: None
 
     assert viewer._add_selected_recent_to_favorites()
     assert viewer.person_favorites_service.ids == [42]
@@ -140,3 +143,53 @@ def test_recent_person_can_be_set_as_home_person():
 
     assert viewer._set_selected_recent_as_home() == 42
     assert calls == [(42, {"refresh_card": True})]
+
+
+class _NavigationRepository:
+    def get_person(self, person_id):
+        people = {
+            2: ("@I2@", "Коэн", "Анна", "F", "1950", "", "", ""),
+            6: ("@I6@", "Леви", "Давид", "M", "1948", "", "2020", ""),
+        }
+        return people.get(person_id)
+
+
+class _NavigationListbox:
+    def __init__(self):
+        self.rows = []
+
+    def delete(self, _start, _end):
+        self.rows.clear()
+
+    def insert(self, _index, value):
+        self.rows.append(value)
+
+
+def test_recent_people_show_home_and_favorite_markers(tmp_path):
+    recent = RecentPeopleService(
+        tmp_path / "recent.json", database_scope="database-a"
+    )
+    recent.record(2)
+    recent.record(6)
+    favorites = PersonFavoritesService(
+        tmp_path / "favorites.json", database_scope="database-a"
+    )
+    favorites.add(6)
+    home = HomePersonService(tmp_path / "home.json", database_scope="database-a")
+    home.set_id(2)
+
+    viewer = GenealogyViewer.__new__(GenealogyViewer)
+    viewer.repository = _NavigationRepository()
+    viewer.recent_people_service = recent
+    viewer.person_favorites_service = favorites
+    viewer.home_person_service = home
+    viewer._recent_people_listbox = _NavigationListbox()
+    viewer._recent_people_status_label = None
+
+    viewer._refresh_recent_people_window()
+
+    assert viewer._recent_person_ids == [6, 2]
+    assert viewer._recent_people_listbox.rows == [
+        "★ Леви Давид, 1948 — 2020 (ID 6)",
+        "⌂ Коэн Анна, 1950 (ID 2)",
+    ]

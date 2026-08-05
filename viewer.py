@@ -6291,12 +6291,16 @@ class GenealogyViewer:
         self._favorite_person_ids = []
         service = self._favorite_service()
         stored_person_ids = service.list_ids()
+        navigation_state = self._person_navigation_state()
         for person_id in stored_person_ids:
             label = self._favorite_person_label(person_id)
             if label is None:
                 continue
             self._favorite_person_ids.append(person_id)
-            listbox.insert("end", label)
+            listbox.insert(
+                "end",
+                self._person_list_display_name(person_id, label, navigation_state),
+            )
         if len(self._favorite_person_ids) != len(stored_person_ids):
             service.prune(self._favorite_person_ids)
         status = getattr(self, "_favorites_status_label", None)
@@ -6394,8 +6398,7 @@ class GenealogyViewer:
             messagebox.showwarning("Избранные люди", "Сначала выберите человека.")
             return
         self._favorite_service().remove(person_id)
-        self._refresh_favorites_window()
-        self._refresh_visible_person_navigation_markers()
+        self._refresh_person_navigation_views()
 
     def _set_selected_favorite_as_home(self):
         person_id = self._selected_favorite_person_id()
@@ -6410,8 +6413,7 @@ class GenealogyViewer:
         if status is not None:
             action = "добавлен в избранное" if is_favorite else "удалён из избранного"
             status.config(text=f"Человек {action}.")
-        self._refresh_favorites_window()
-        self._refresh_visible_person_navigation_markers()
+        self._refresh_person_navigation_views()
         if refresh_card and getattr(self, "current_person_id", None) == person_id:
             self.show_person(person_id, add_to_history=False)
         return is_favorite
@@ -6443,12 +6445,16 @@ class GenealogyViewer:
         self._recent_person_ids = []
         service = self._recent_service()
         stored_person_ids = service.list_ids()
+        navigation_state = self._person_navigation_state()
         for person_id in stored_person_ids:
             label = self._favorite_person_label(person_id)
             if label is None:
                 continue
             self._recent_person_ids.append(person_id)
-            listbox.insert("end", label)
+            listbox.insert(
+                "end",
+                self._person_list_display_name(person_id, label, navigation_state),
+            )
         if len(self._recent_person_ids) != len(stored_person_ids):
             service.prune(self._recent_person_ids)
         status = getattr(self, "_recent_people_status_label", None)
@@ -6563,8 +6569,7 @@ class GenealogyViewer:
                 if added
                 else "Человек уже в избранном."
             )
-        self._refresh_favorites_window()
-        self._refresh_visible_person_navigation_markers()
+        self._refresh_person_navigation_views()
         return added
 
     def _set_selected_recent_as_home(self):
@@ -6612,7 +6617,7 @@ class GenealogyViewer:
         status = getattr(self, "status_label", None)
         if status is not None:
             status.config(text="Главный человек сохранён.")
-        self._refresh_visible_person_navigation_markers()
+        self._refresh_person_navigation_views()
         if refresh_card and getattr(self, "current_person_id", None) == person_id:
             self.show_person(person_id, add_to_history=False)
         return person_id
@@ -6628,7 +6633,7 @@ class GenealogyViewer:
         service.clear()
         if status is not None:
             status.config(text="Главный человек снят.")
-        self._refresh_visible_person_navigation_markers()
+        self._refresh_person_navigation_views()
         if refresh_card and getattr(self, "current_person_id", None) == person_id:
             self.show_person(person_id, add_to_history=False)
         return True
@@ -6641,7 +6646,7 @@ class GenealogyViewer:
             return
         if not self.repository.get_person(person_id):
             service.clear()
-            self._refresh_visible_person_navigation_markers()
+            self._refresh_person_navigation_views()
             messagebox.showwarning(
                 "Главный человек",
                 "Сохранённая карточка больше не существует. Выберите главного человека заново.",
@@ -6715,6 +6720,11 @@ class GenealogyViewer:
                 person_id, base_name, navigation_state
             )
             tree.item(item_id, values=values)
+
+    def _refresh_person_navigation_views(self):
+        self._refresh_favorites_window()
+        self._refresh_recent_people_window()
+        self._refresh_visible_person_navigation_markers()
 
     @staticmethod
     def _optional_search_integer(value, label):

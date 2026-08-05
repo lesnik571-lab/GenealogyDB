@@ -181,7 +181,7 @@ def test_refresh_favorites_prunes_people_missing_from_database(tmp_path):
     assert service.list_ids() == (2, 6)
     assert viewer._favorite_person_ids == [2, 6]
     assert viewer._favorites_listbox.rows == [
-        "Коэн Анна, 1950 (ID 2)",
-        "Леви Давид, 1948 — 2020 (ID 6)",
+        "★ Коэн Анна, 1950 (ID 2)",
+        "★ Леви Давид, 1948 — 2020 (ID 6)",
     ]
     assert viewer._favorites_status_label.text == "Избранных людей: 2"
