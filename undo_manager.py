@@ -143,11 +143,22 @@ class RecoveryUpdateCommand(RepositoryDeltaCommand):
 class AppliedDeltaCommand:
     """Undo an operation that was already committed by a worker repository."""
 
-    def __init__(self, name: str, repository: Any, delta: dict[str, TableDelta], result: Any = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        repository: Any,
+        delta: dict[str, TableDelta],
+        result: Any = None,
+        *,
+        on_undo: Callable[[], None] | None = None,
+        on_redo: Callable[[], None] | None = None,
+    ) -> None:
         self.name = name
         self.repository = repository
         self.delta = delta
         self.result = result
+        self._on_undo = on_undo
+        self._on_redo = on_redo
 
     @property
     def has_effect(self) -> bool:
@@ -155,9 +166,13 @@ class AppliedDeltaCommand:
 
     def undo(self) -> None:
         self.repository.apply_command_delta(self.delta, use_before=True)
+        if self._on_undo is not None:
+            self._on_undo()
 
     def redo(self) -> None:
         self.repository.apply_command_delta(self.delta, use_before=False)
+        if self._on_redo is not None:
+            self._on_redo()
 
 
 class UndoManager:

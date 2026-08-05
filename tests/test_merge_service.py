@@ -6,7 +6,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from home_person_service import HomePersonService
 from merge_service import MergeSafetyError, MergeService
+from person_favorites_service import PersonFavoritesService
+from recent_people_service import RecentPeopleService
 from repository.person_repository import PersonRepository
 from undo_manager import AppliedDeltaCommand, UndoManager
 from viewer import GenealogyViewer
@@ -402,3 +405,60 @@ def test_viewer_merge_completion_registers_one_undo_refreshes_and_opens_primary(
         ("show", 7),
     ]
     assert calls.count(("undo", "Объединение людей", 7)) == 1
+
+
+def test_viewer_merge_moves_navigation_to_primary_and_restores_it_on_undo(tmp_path, monkeypatch):
+    class NavigationRepository:
+        def apply_command_delta(self, _delta, *, use_before):
+            self.last_use_before = use_before
+
+    class FakeUndoManager:
+        def record_applied(self, command):
+            self.command = command
+
+    viewer = GenealogyViewer.__new__(GenealogyViewer)
+    viewer.repository = NavigationRepository()
+    viewer.root = object()
+    viewer.tree = None
+    viewer._close_merge_wizard = lambda: None
+    viewer.refresh_views = lambda: None
+    viewer.show_person = lambda _person_id: None
+    manager = FakeUndoManager()
+    viewer._get_undo_manager = lambda: manager
+    viewer.person_favorites_service = PersonFavoritesService(
+        tmp_path / "favorites.json", database_scope="merge-db"
+    )
+    viewer.recent_people_service = RecentPeopleService(
+        tmp_path / "recent.json", database_scope="merge-db"
+    )
+    viewer.home_person_service = HomePersonService(
+        tmp_path / "home.json", database_scope="merge-db"
+    )
+    for person_id in (3, 8, 9):
+        viewer.person_favorites_service.add(person_id)
+    for person_id in reversed((10, 8, 11, 7, 12)):
+        viewer.recent_people_service.record(person_id)
+    viewer.home_person_service.set_id(8)
+    monkeypatch.setattr("viewer.messagebox.showinfo", lambda *_args, **_kwargs: None)
+    result = SimpleNamespace(
+        primary_id=7,
+        absorbed_id=8,
+        backup_path=Path("backup.db"),
+        delta={"people": object()},
+    )
+
+    viewer._complete_merge(result)
+
+    assert viewer.person_favorites_service.list_ids() == (3, 7, 9)
+    assert viewer.recent_people_service.list_ids() == (10, 7, 11, 12)
+    assert viewer.home_person_service.get_id() == 7
+
+    manager.command.undo()
+    assert viewer.person_favorites_service.list_ids() == (3, 8, 9)
+    assert viewer.recent_people_service.list_ids() == (10, 8, 11, 7, 12)
+    assert viewer.home_person_service.get_id() == 8
+
+    manager.command.redo()
+    assert viewer.person_favorites_service.list_ids() == (3, 7, 9)
+    assert viewer.recent_people_service.list_ids() == (10, 7, 11, 12)
+    assert viewer.home_person_service.get_id() == 7

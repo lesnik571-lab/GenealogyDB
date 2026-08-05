@@ -1808,10 +1808,26 @@ class GenealogyViewer:
         )
 
     def _complete_merge(self, result):
-        self._get_undo_manager().record_applied(
-            AppliedDeltaCommand("Объединение людей", self.repository, result.delta, result)
-        )
         primary_id = result.primary_id
+        absorbed_id = result.absorbed_id
+        navigation_state = self._capture_merged_person_navigation(
+            primary_id, absorbed_id
+        )
+        self._get_undo_manager().record_applied(
+            AppliedDeltaCommand(
+                "Объединение людей",
+                self.repository,
+                result.delta,
+                result,
+                on_undo=lambda: self._restore_merged_person_navigation(
+                    primary_id, absorbed_id, navigation_state
+                ),
+                on_redo=lambda: self._merge_person_navigation(
+                    primary_id, absorbed_id
+                ),
+            )
+        )
+        self._merge_person_navigation(primary_id, absorbed_id)
         self._close_merge_wizard()
         self.refresh_views()
         self.show_person(primary_id)
@@ -6778,6 +6794,97 @@ class GenealogyViewer:
             and home_service.get_id() is None
         ):
             home_service.set_id(person_id)
+        self._refresh_person_navigation_views()
+
+    def _capture_merged_person_navigation(self, primary_id, absorbed_id):
+        favorites_service = getattr(self, "person_favorites_service", None)
+        recent_service = getattr(self, "recent_people_service", None)
+        home_service = getattr(self, "home_person_service", None)
+        favorite_ids = favorites_service.list_ids() if favorites_service is not None else ()
+        recent_ids = recent_service.list_ids() if recent_service is not None else ()
+
+        def position(person_ids, person_id):
+            return person_ids.index(person_id) if person_id in person_ids else None
+
+        return {
+            "primary_favorite_index": position(favorite_ids, primary_id),
+            "absorbed_favorite_index": position(favorite_ids, absorbed_id),
+            "primary_recent_index": position(recent_ids, primary_id),
+            "absorbed_recent_index": position(recent_ids, absorbed_id),
+            "home_person_id": home_service.get_id() if home_service is not None else None,
+        }
+
+    def _merge_person_navigation(self, primary_id, absorbed_id):
+        favorites_service = getattr(self, "person_favorites_service", None)
+        if favorites_service is not None:
+            favorite_ids = favorites_service.list_ids()
+            if absorbed_id in favorite_ids:
+                absorbed_index = favorite_ids.index(absorbed_id)
+                primary_was_favorite = primary_id in favorite_ids
+                favorites_service.remove(absorbed_id)
+                if not primary_was_favorite:
+                    favorites_service.restore(primary_id, absorbed_index)
+
+        recent_service = getattr(self, "recent_people_service", None)
+        if recent_service is not None:
+            recent_ids = recent_service.list_ids()
+            if absorbed_id in recent_ids:
+                absorbed_index = recent_ids.index(absorbed_id)
+                primary_index = (
+                    recent_ids.index(primary_id) if primary_id in recent_ids else None
+                )
+                recent_service.remove(absorbed_id)
+                if primary_index is None:
+                    recent_service.restore(primary_id, absorbed_index)
+                elif absorbed_index < primary_index:
+                    recent_service.remove(primary_id)
+                    recent_service.restore(primary_id, absorbed_index)
+
+        home_service = getattr(self, "home_person_service", None)
+        if home_service is not None and home_service.get_id() == absorbed_id:
+            home_service.set_id(primary_id)
+        self._refresh_person_navigation_views()
+
+    def _restore_merged_person_navigation(
+        self, primary_id, absorbed_id, navigation_state
+    ):
+        favorites_service = getattr(self, "person_favorites_service", None)
+        absorbed_favorite_index = navigation_state.get("absorbed_favorite_index")
+        if favorites_service is not None and absorbed_favorite_index is not None:
+            favorites_service.remove(primary_id)
+            favorites_service.remove(absorbed_id)
+            favorite_positions = (
+                (navigation_state.get("primary_favorite_index"), primary_id),
+                (absorbed_favorite_index, absorbed_id),
+            )
+            for index, person_id in sorted(
+                (item for item in favorite_positions if item[0] is not None),
+                key=lambda item: item[0],
+            ):
+                favorites_service.restore(person_id, index)
+
+        recent_service = getattr(self, "recent_people_service", None)
+        absorbed_recent_index = navigation_state.get("absorbed_recent_index")
+        if recent_service is not None and absorbed_recent_index is not None:
+            recent_service.remove(primary_id)
+            recent_service.remove(absorbed_id)
+            recent_positions = (
+                (navigation_state.get("primary_recent_index"), primary_id),
+                (absorbed_recent_index, absorbed_id),
+            )
+            for index, person_id in sorted(
+                (item for item in recent_positions if item[0] is not None),
+                key=lambda item: item[0],
+            ):
+                recent_service.restore(person_id, index)
+
+        home_service = getattr(self, "home_person_service", None)
+        if (
+            home_service is not None
+            and navigation_state.get("home_person_id") == absorbed_id
+            and home_service.get_id() == primary_id
+        ):
+            home_service.set_id(absorbed_id)
         self._refresh_person_navigation_views()
 
     @staticmethod
