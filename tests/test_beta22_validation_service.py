@@ -23,11 +23,11 @@ def test_beta22_validation_covers_navigation_and_preserves_configured_database(t
     assert checks["navigation.persistence"].status == PASS
     assert checks["viewer.navigation-2.2"].status == PASS
     assert checks["packaging.metadata-2.2"].status == PASS
-    assert report.recommendation == "READY FOR 2.2.0-BETA1"
+    assert report.recommendation == "READY FOR 2.2.0-BETA2"
     assert all(path.is_file() for path in service.export_all(report))
 
 
 def test_beta22_recommendation_blocks_on_failed_check():
     checks = (BetaValidationCheck("blocked", "Navigation", BLOCKED, "", "failed"),)
 
-    assert Beta22ValidationService.recommendation(checks) == "NOT READY FOR 2.2.0-BETA1"
+    assert Beta22ValidationService.recommendation(checks) == "NOT READY FOR 2.2.0-BETA2"

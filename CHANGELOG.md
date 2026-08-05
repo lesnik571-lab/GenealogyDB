@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.0-beta2-dev] - 2026-08-05
+
+### Changed
+- Started Beta2 development after the verified and packaged `2.2.0-beta1` release.
+- PyInstaller now writes intermediate build state to a disposable temporary directory, so release builds no longer dirty the tracked `build/GenealogyDB` files.
+- Advanced development, build, installer, and user-manual version metadata to `2.2.0-beta2-dev`.
+
 ## [2.2.0-beta1] - 2026-08-05
 
 ### Added

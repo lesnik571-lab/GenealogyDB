@@ -19,8 +19,8 @@ from person_favorites_service import PersonFavoritesService
 from recent_people_service import RecentPeopleService
 
 
-CANDIDATE_VERSION = "2.2.0-beta1"
-DEVELOPMENT_VERSION = "2.2.0-dev"
+CANDIDATE_VERSION = "2.2.0-beta2"
+DEVELOPMENT_VERSION = "2.2.0-beta2-dev"
 
 
 class Beta22ValidationService(Beta21ValidationService):
@@ -166,10 +166,10 @@ class Beta22ValidationService(Beta21ValidationService):
     @staticmethod
     def recommendation(checks):
         if any(check.status == BLOCKED for check in checks):
-            return "NOT READY FOR 2.2.0-BETA1"
+            return "NOT READY FOR 2.2.0-BETA2"
         if any(check.status == WARNING for check in checks):
-            return "READY FOR 2.2.0-BETA1 WITH WARNINGS"
-        return "READY FOR 2.2.0-BETA1"
+            return "READY FOR 2.2.0-BETA2 WITH WARNINGS"
+        return "READY FOR 2.2.0-BETA2"
 
     def export_all(self, report):
         self.report_dir.mkdir(parents=True, exist_ok=True)

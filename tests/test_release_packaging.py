@@ -1,5 +1,6 @@
 import sqlite3
 import sys
+from pathlib import Path
 
 import config
 import viewer
@@ -44,3 +45,11 @@ def test_about_reports_release_and_runtime_versions(monkeypatch):
     assert viewer.BUILD_DATE in captured["body"]
     assert sys.version.split()[0] in captured["body"]
     assert sqlite3.sqlite_version in captured["body"]
+
+
+def test_release_build_uses_disposable_pyinstaller_workpath():
+    source = Path("build_release.ps1").read_text(encoding="utf-8")
+
+    assert '$PyInstallerWorkPath = Join-Path $env:TEMP' in source
+    assert "--workpath $PyInstallerWorkPath" in source
+    assert "Remove-Item -Recurse -Force $PyInstallerWorkPath" in source

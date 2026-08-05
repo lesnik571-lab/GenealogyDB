@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.2.0-beta1",
+    [string]$Version = "2.2.0-beta2-dev",
     [switch]$SkipInstaller,
     [switch]$AllowBlockedStartupTest
 )
@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Python = Join-Path $Root ".venv\Scripts\python.exe"
 $BuildDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd")
+$PyInstallerWorkPath = Join-Path $env:TEMP ("GenealogyDB-pyinstaller-" + [guid]::NewGuid().ToString("N"))
 
 if (-not (Test-Path $Python)) {
     throw "Python environment not found: $Python"
@@ -28,7 +29,7 @@ BUILD_DATE = `"$BuildDate`"
     & $Python (Join-Path $Root "tools\generate_icon.py")
     if ($LASTEXITCODE -ne 0) { throw "Icon generation failed." }
 
-    & $Python -m PyInstaller --clean --noconfirm (Join-Path $Root "GenealogyDB.spec")
+    & $Python -m PyInstaller --clean --noconfirm --workpath $PyInstallerWorkPath (Join-Path $Root "GenealogyDB.spec")
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed." }
 
     $SmokeHome = Join-Path $env:TEMP ("GenealogyDB-smoke-" + [guid]::NewGuid().ToString("N"))
@@ -78,5 +79,6 @@ BUILD_DATE = `"$BuildDate`"
     Write-Host "Startup test: $StartupStatus"
 }
 finally {
+    Remove-Item -Recurse -Force $PyInstallerWorkPath -ErrorAction SilentlyContinue
     Pop-Location
 }
