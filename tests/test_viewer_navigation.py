@@ -138,3 +138,60 @@ def test_search_people_populates_all_visible_columns():
 
     row = viewer.tree.item(viewer.tree.get_children()[0])["values"]
     assert row == [7, "Jane Smith", "1980", "2020"]
+
+
+def test_search_people_marks_home_and_favorite_people():
+    viewer = GenealogyViewer.__new__(GenealogyViewer)
+    viewer.repository = type("Repo", (), {
+        "list_people": lambda self, surname=None, first_name=None, last_name=None, birth_year=None, death_year=None, sex=None, limit=500: [(7, "Smith", "Jane", "1980", "2020")],
+    })()
+    viewer.person_favorites_service = type("Favorites", (), {
+        "list_ids": lambda self: (7,),
+    })()
+    viewer.home_person_service = type("Home", (), {
+        "get_id": lambda self: 7,
+    })()
+
+    class FakeRoot:
+        def update_idletasks(self):
+            return None
+
+    class FakeEntry:
+        def get(self):
+            return ""
+
+    class FakeLabel:
+        def config(self, *args, **kwargs):
+            return None
+
+    class FakeTree:
+        def __init__(self):
+            self.rows = {}
+            self.order = []
+
+        def insert(self, _parent, _index, values=None, **_kwargs):
+            item_id = str(len(self.order) + 1)
+            self.rows[item_id] = {"values": list(values or [])}
+            self.order.append(item_id)
+            return item_id
+
+        def get_children(self):
+            return list(self.order)
+
+        def item(self, item_id):
+            return self.rows[item_id]
+
+        def delete(self, item_id):
+            self.rows.pop(item_id, None)
+            self.order = [item for item in self.order if item != item_id]
+
+    viewer.root = FakeRoot()
+    viewer.search_entry = FakeEntry()
+    viewer.status_label = FakeLabel()
+    viewer.tree = FakeTree()
+    viewer._clear_tree = lambda: [viewer.tree.delete(item) for item in viewer.tree.get_children()]
+
+    viewer.search_people()
+
+    row = viewer.tree.item(viewer.tree.get_children()[0])["values"]
+    assert row == [7, "⌂ ★ Jane Smith", "1980", "2020"]
