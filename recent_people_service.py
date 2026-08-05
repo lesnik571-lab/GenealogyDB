@@ -41,6 +41,17 @@ class RecentPeopleService:
         self._save(recent)
         return True
 
+    def restore(self, person_id, index) -> bool:
+        """Restore a removed recent person without moving it to the front."""
+        identifier = self._person_id(person_id)
+        recent = list(self.list_ids())
+        if identifier in recent:
+            return False
+        position = max(0, min(int(index), len(recent)))
+        recent.insert(position, identifier)
+        self._save(recent[: self.limit])
+        return True
+
     def prune(self, valid_person_ids) -> tuple[int, ...]:
         valid = {
             self._person_id(person_id)

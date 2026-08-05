@@ -6737,6 +6737,49 @@ class GenealogyViewer:
         self._refresh_recent_people_window()
         self._refresh_visible_person_navigation_markers()
 
+    def _capture_deleted_person_navigation(self, person_id):
+        favorites_service = getattr(self, "person_favorites_service", None)
+        recent_service = getattr(self, "recent_people_service", None)
+        home_service = getattr(self, "home_person_service", None)
+
+        favorite_ids = favorites_service.list_ids() if favorites_service is not None else ()
+        recent_ids = recent_service.list_ids() if recent_service is not None else ()
+        return {
+            "favorite_index": favorite_ids.index(person_id) if person_id in favorite_ids else None,
+            "recent_index": recent_ids.index(person_id) if person_id in recent_ids else None,
+            "was_home": home_service is not None and home_service.get_id() == person_id,
+        }
+
+    def _remove_deleted_person_navigation(self, person_id):
+        favorites_service = getattr(self, "person_favorites_service", None)
+        recent_service = getattr(self, "recent_people_service", None)
+        home_service = getattr(self, "home_person_service", None)
+        if favorites_service is not None:
+            favorites_service.remove(person_id)
+        if recent_service is not None:
+            recent_service.remove(person_id)
+        if home_service is not None and home_service.get_id() == person_id:
+            home_service.clear()
+        self._refresh_person_navigation_views()
+
+    def _restore_deleted_person_navigation(self, person_id, navigation_state):
+        favorites_service = getattr(self, "person_favorites_service", None)
+        recent_service = getattr(self, "recent_people_service", None)
+        home_service = getattr(self, "home_person_service", None)
+        favorite_index = navigation_state.get("favorite_index")
+        recent_index = navigation_state.get("recent_index")
+        if favorites_service is not None and favorite_index is not None:
+            favorites_service.restore(person_id, favorite_index)
+        if recent_service is not None and recent_index is not None:
+            recent_service.restore(person_id, recent_index)
+        if (
+            navigation_state.get("was_home")
+            and home_service is not None
+            and home_service.get_id() is None
+        ):
+            home_service.set_id(person_id)
+        self._refresh_person_navigation_views()
+
     @staticmethod
     def _optional_search_integer(value, label):
         text = str(value or "").strip()
@@ -10741,7 +10784,15 @@ class GenealogyViewer:
             return False
         if messagebox.askyesno("Удаление", "Удалить выбранного человека?"):
             person = self.repository.get_person_record(person_id)
-            command = DeletePersonCommand(self.repository, person_id)
+            navigation_state = self._capture_deleted_person_navigation(person_id)
+            command = DeletePersonCommand(
+                self.repository,
+                person_id,
+                on_delete=lambda: self._remove_deleted_person_navigation(person_id),
+                on_restore=lambda: self._restore_deleted_person_navigation(
+                    person_id, navigation_state
+                ),
+            )
             deleted = self._get_undo_manager().execute(command)
             self._record_audit_command(
                 "person_delete", command, database_id=person_id,

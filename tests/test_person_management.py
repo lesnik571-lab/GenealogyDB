@@ -2,6 +2,9 @@ import sqlite3
 from pathlib import Path
 
 import viewer as viewer_module
+from home_person_service import HomePersonService
+from person_favorites_service import PersonFavoritesService
+from recent_people_service import RecentPeopleService
 from repository import PersonRepository
 from viewer import GenealogyViewer
 
@@ -273,6 +276,51 @@ def test_viewer_can_delete_person(tmp_path, monkeypatch):
 
     assert deleted is True
     assert viewer.repository.get_person(person_id) is None
+
+
+def test_person_delete_undo_redo_preserves_navigation_state(tmp_path, monkeypatch):
+    viewer = build_viewer(tmp_path)
+    person_id = viewer.repository.create_person({
+        "gedcom_id": "I2",
+        "first_name": "Bob",
+        "last_name": "Brown",
+    })
+    scope = str(viewer.repository.db_name)
+    viewer.person_favorites_service = PersonFavoritesService(
+        tmp_path / "favorites.json", database_scope=scope
+    )
+    viewer.recent_people_service = RecentPeopleService(
+        tmp_path / "recent.json", database_scope=scope
+    )
+    viewer.home_person_service = HomePersonService(
+        tmp_path / "home.json", database_scope=scope
+    )
+    viewer.person_favorites_service.add(7)
+    viewer.person_favorites_service.add(person_id)
+    viewer.person_favorites_service.add(9)
+    viewer.recent_people_service.record(7)
+    viewer.recent_people_service.record(person_id)
+    viewer.recent_people_service.record(9)
+    viewer.home_person_service.set_id(person_id)
+    viewer._record_audit_command = lambda *args, **kwargs: None
+    monkeypatch.setattr(viewer_module.messagebox, "askyesno", lambda *args, **kwargs: True)
+
+    assert viewer._delete_person(person_id) is True
+    assert viewer.person_favorites_service.list_ids() == (7, 9)
+    assert viewer.recent_people_service.list_ids() == (9, 7)
+    assert viewer.home_person_service.get_id() is None
+
+    assert viewer._undo_command() == "break"
+    assert viewer.repository.get_person(person_id) is not None
+    assert viewer.person_favorites_service.list_ids() == (7, person_id, 9)
+    assert viewer.recent_people_service.list_ids() == (9, person_id, 7)
+    assert viewer.home_person_service.get_id() == person_id
+
+    assert viewer._redo_command() == "break"
+    assert viewer.repository.get_person(person_id) is None
+    assert viewer.person_favorites_service.list_ids() == (7, 9)
+    assert viewer.recent_people_service.list_ids() == (9, 7)
+    assert viewer.home_person_service.get_id() is None
 
 
 def test_double_click_opens_person_card(tmp_path):

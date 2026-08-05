@@ -89,8 +89,33 @@ class EditPersonCommand(RepositoryDeltaCommand):
 
 class DeletePersonCommand(RepositoryDeltaCommand):
     """Undoable command for deleting a person."""
-    def __init__(self, repository: Any, person_id: int) -> None:
+    def __init__(
+        self,
+        repository: Any,
+        person_id: int,
+        *,
+        on_delete: Callable[[], None] | None = None,
+        on_restore: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__("Delete person", repository, lambda: repository.delete_person(person_id))
+        self._on_delete = on_delete
+        self._on_restore = on_restore
+
+    def execute(self) -> Any:
+        result = super().execute()
+        if self.has_effect and self._on_delete is not None:
+            self._on_delete()
+        return result
+
+    def undo(self) -> None:
+        super().undo()
+        if self._on_restore is not None:
+            self._on_restore()
+
+    def redo(self) -> None:
+        super().redo()
+        if self._on_delete is not None:
+            self._on_delete()
 
 
 class RelationshipEditCommand(RepositoryDeltaCommand):

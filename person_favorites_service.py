@@ -40,6 +40,17 @@ class PersonFavoritesService:
         self._save(favorites)
         return True
 
+    def restore(self, person_id, index) -> bool:
+        """Restore a removed favorite near its previous ordered position."""
+        identifier = self._person_id(person_id)
+        favorites = list(self._load())
+        if identifier in favorites:
+            return False
+        position = max(0, min(int(index), len(favorites)))
+        favorites.insert(position, identifier)
+        self._save(favorites)
+        return True
+
     def toggle(self, person_id) -> bool:
         identifier = self._person_id(person_id)
         if self.contains(identifier):
