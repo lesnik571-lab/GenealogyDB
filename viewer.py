@@ -6313,6 +6313,7 @@ class GenealogyViewer:
         listbox = tk.Listbox(window)
         listbox.pack(fill="both", expand=True, padx=12, pady=(0, 8))
         listbox.bind("<Double-1>", lambda _event: self._open_selected_favorite())
+        listbox.bind("<Return>", lambda _event: self._open_selected_favorite())
         self._favorites_listbox = listbox
 
         self._favorites_status_label = tk.Label(window, anchor="w")
@@ -6340,8 +6341,11 @@ class GenealogyViewer:
             return None
         selection = listbox.curselection()
         if not selection:
-            return None
-        index = int(selection[0])
+            if len(self._favorite_person_ids) != 1:
+                return None
+            index = 0
+        else:
+            index = int(selection[0])
         if index >= len(self._favorite_person_ids):
             return None
         return self._favorite_person_ids[index]
