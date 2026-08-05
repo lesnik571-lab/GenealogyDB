@@ -6575,10 +6575,15 @@ class GenealogyViewer:
         if person_id is None:
             messagebox.showwarning("Главный человек", "Сначала выберите человека.")
             return
+        return self._set_home_person(person_id)
+
+    def _set_home_person(self, person_id, *, refresh_card=False):
         self._home_service().set_id(person_id)
         status = getattr(self, "status_label", None)
         if status is not None:
             status.config(text="Главный человек сохранён.")
+        if refresh_card and getattr(self, "current_person_id", None) == person_id:
+            self.show_person(person_id, add_to_history=False)
         return person_id
 
     def open_home_person(self):
@@ -10061,6 +10066,13 @@ class GenealogyViewer:
             nav,
             text=favorite_label,
             command=lambda: self._toggle_person_favorite(person_id, refresh_card=True),
+        ).pack(side="left", padx=(8, 0))
+        is_home_person = self._home_service().get_id() == person_id
+        tk.Button(
+            nav,
+            text="Главный человек" if is_home_person else "Сделать главным",
+            command=lambda: self._set_home_person(person_id, refresh_card=True),
+            state="disabled" if is_home_person else "normal",
         ).pack(side="left", padx=(8, 0))
         tk.Button(nav, text="Закрыть", command=self._close_person_card).pack(side="right")
 

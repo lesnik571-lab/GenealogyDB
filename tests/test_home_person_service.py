@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from home_person_service import HomePersonService
+from viewer import GenealogyViewer
 
 
 def test_home_person_set_reload_and_clear(tmp_path):
@@ -48,3 +49,30 @@ def test_viewer_registers_home_person_navigation():
     assert 'label="Сделать выбранного главным"' in source
     assert "def open_home_person(self):" in source
     assert "def set_selected_home_person(self):" in source
+    assert "is_home_person = self._home_service().get_id() == person_id" in source
+
+
+class _HomeRecorder:
+    def __init__(self):
+        self.person_id = None
+
+    def set_id(self, person_id):
+        self.person_id = person_id
+
+
+class _StatusLabel:
+    def __init__(self):
+        self.text = ""
+
+    def config(self, *, text):
+        self.text = text
+
+
+def test_open_card_person_can_be_set_as_exact_home_person():
+    viewer = GenealogyViewer.__new__(GenealogyViewer)
+    viewer.home_person_service = _HomeRecorder()
+    viewer.status_label = _StatusLabel()
+
+    assert viewer._set_home_person(42) == 42
+    assert viewer.home_person_service.person_id == 42
+    assert viewer.status_label.text == "Главный человек сохранён."
