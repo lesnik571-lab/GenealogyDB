@@ -70,6 +70,34 @@ def test_restore_database_replaces_target_and_creates_safety_backup(populated_db
     assert people == [("I2", "Jane", "Smith")]
 
 
+def test_restore_database_is_visible_to_an_open_target_connection(populated_db, tmp_path):
+    source_backup = tmp_path / "source-open.db"
+    conn = sqlite3.connect(source_backup)
+    conn.executescript(Path("schema.sql").read_text(encoding="utf-8"))
+    conn.execute(
+        "INSERT INTO people (gedcom_id, first_name, last_name) VALUES (?, ?, ?)",
+        ("I2", "Jane", "Smith"),
+    )
+    conn.commit()
+    conn.close()
+
+    open_connection = sqlite3.connect(populated_db)
+    try:
+        before = open_connection.execute(
+            "SELECT gedcom_id FROM people ORDER BY gedcom_id"
+        ).fetchall()
+        assert before == [("I1",)]
+
+        restore_database(source_backup, populated_db, create_safety_backup=False)
+
+        after = open_connection.execute(
+            "SELECT gedcom_id FROM people ORDER BY gedcom_id"
+        ).fetchall()
+        assert after == [("I2",)]
+    finally:
+        open_connection.close()
+
+
 def test_viewer_restore_discards_stale_undo_and_person_context(monkeypatch):
     calls = []
     viewer = GenealogyViewer.__new__(GenealogyViewer)

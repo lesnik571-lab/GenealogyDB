@@ -1,4 +1,3 @@
-import shutil
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -375,7 +374,7 @@ def backup_database(source_path, destination_path=None):
 
 @log_operation("Database restore")
 def restore_database(source_path, target_path, create_safety_backup=True):
-    """Restore a validated database, optionally preserving the current target."""
+    """Restore a validated database through SQLite's online backup mechanism."""
     source = Path(source_path).expanduser()
     target = Path(target_path).expanduser()
 
@@ -389,7 +388,16 @@ def restore_database(source_path, target_path, create_safety_backup=True):
         backup_path = backup_database(target, target.parent / f"{target.stem}-before-restore{target.suffix}")
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, target)
+    source_connection = sqlite3.connect(
+        f"file:{source.resolve().as_posix()}?mode=ro",
+        uri=True,
+    )
+    target_connection = sqlite3.connect(target)
+    try:
+        source_connection.backup(target_connection)
+    finally:
+        target_connection.close()
+        source_connection.close()
     validate_database_file(target)
     return backup_path
 
