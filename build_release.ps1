@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.2.0-dev",
+    [string]$Version = "2.2.0-beta1",
     [switch]$SkipInstaller,
     [switch]$AllowBlockedStartupTest
 )

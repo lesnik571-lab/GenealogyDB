@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.2.0-beta1] - 2026-08-05
+
+### Added
+- Added persistent recent-person navigation with per-database history, individual removal, clearing, and direct promotion to favorites or home person.
+- Added a persistent per-database home person with quick open, set, clear, person-card actions, and `Ctrl+1` fallback navigation.
+- Added live `⌂` home-person and `★` favorite markers to the main person list, Favorites, and Recent people.
+- Added dedicated 2.2 Beta readiness validation for navigation sidecars, viewer contracts, packaging metadata, and configured-database safety.
+
+### Changed
+- Scoped favorite people by database while preserving migration from the legacy favorites format.
+- Favorites and recent lists now prune missing people and refresh navigation state immediately after user actions.
+- Synchronized application, build, installer, and user-manual version metadata to `2.2.0-beta1`.
+
+### Validation
+- 2.2 Beta readiness validation reports **READY FOR 2.2.0-BETA1** on disposable validation data without modifying the configured genealogy database.
+- Verified 399 automated tests before the Beta1 version promotion.
+
 ## [2.2.0-dev] - 2026-08-04
 
 ### Added

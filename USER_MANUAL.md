@@ -1,6 +1,6 @@
 # GenealogyDB User Manual
 
-Version: 2.2.0-dev
+Version: 2.2.0-beta1
 
 ## Getting started
 
@@ -14,11 +14,17 @@ Start the application, choose the GEDCOM import action, and select a `.ged` file
 
 Use the search fields at the top of the viewer to filter by name, dates, places, occupation, notes, GEDCOM ID, or database ID. Double-click a result to open its person card.
 
-## Favorite people
+## Favorite and quick navigation
 
 Select a person and use **Workspace > Add/remove selected** to keep a quick link to that person. Open **Workspace > Favorite people** to review the list, open a person card, or remove an entry. The same toggle is available directly from the person card.
 
-Favorites are stored in the user data folder, outside the genealogy database, and remain available after application upgrades.
+Use **Workspace > Recent people** to return to recently opened cards. A recent person can also be added to favorites or made the home person.
+
+The home person is a persistent quick-return card for the current database. It can be selected or cleared from the Workspace menu and from the person card. **Ctrl+1 / Main card** opens the current card when one is active and otherwise falls back to the saved home person.
+
+The `⌂` marker identifies the home person and `★` identifies a favorite. These markers update immediately in the main person list, Favorites, and Recent people.
+
+Favorites, recent people, and the home person are stored per database in the user data folder, outside the genealogy database, and remain available after application upgrades.
 
 ## People and relationships
 
