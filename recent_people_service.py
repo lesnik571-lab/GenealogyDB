@@ -32,6 +32,15 @@ class RecentPeopleService:
         self._save(recent)
         return tuple(recent)
 
+    def remove(self, person_id) -> bool:
+        identifier = self._person_id(person_id)
+        recent = list(self.list_ids())
+        if identifier not in recent:
+            return False
+        recent.remove(identifier)
+        self._save(recent)
+        return True
+
     def prune(self, valid_person_ids) -> tuple[int, ...]:
         valid = {
             self._person_id(person_id)

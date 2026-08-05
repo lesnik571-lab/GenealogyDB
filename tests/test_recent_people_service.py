@@ -34,6 +34,21 @@ def test_recent_people_are_isolated_by_database(tmp_path):
     assert payload["databases"] == {"database-a": [7], "database-b": [9]}
 
 
+def test_recent_people_remove_one_entry_without_clearing_others(tmp_path):
+    service = RecentPeopleService(
+        tmp_path / "recent_people.json",
+        database_scope="database-a",
+    )
+    for person_id in (1, 2, 3):
+        service.record(person_id)
+
+    assert service.list_ids() == (3, 2, 1)
+    assert service.remove(2)
+    assert service.list_ids() == (3, 1)
+    assert not service.remove(2)
+    assert service.list_ids() == (3, 1)
+
+
 def test_recent_people_prune_clear_and_ignore_invalid_saved_ids(tmp_path):
     path = tmp_path / "recent_people.json"
     path.write_text(
@@ -58,6 +73,8 @@ def test_viewer_registers_recent_people_navigation():
     assert 'label="Недавние люди"' in source
     assert "def open_recent_people(self):" in source
     assert "def _add_selected_recent_to_favorites(self):" in source
+    assert "def _remove_selected_recent_person(self):" in source
+    assert 'text="Удалить из недавних"' in source
     assert 'listbox.bind("<Return>", lambda _event: self._open_selected_recent_person())' in source
 
 

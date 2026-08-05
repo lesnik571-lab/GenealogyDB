@@ -6487,6 +6487,11 @@ class GenealogyViewer:
         ).pack(side="left", padx=(8, 0))
         tk.Button(
             actions,
+            text="Удалить из недавних",
+            command=self._remove_selected_recent_person,
+        ).pack(side="left", padx=(8, 0))
+        tk.Button(
+            actions,
             text="Очистить список",
             command=self._clear_recent_people,
         ).pack(side="left", padx=(8, 0))
@@ -6531,6 +6536,15 @@ class GenealogyViewer:
             )
         self._refresh_favorites_window()
         return added
+
+    def _remove_selected_recent_person(self):
+        person_id = self._selected_recent_person_id()
+        if person_id is None:
+            messagebox.showwarning("Недавние люди", "Сначала выберите человека.")
+            return
+        removed = self._recent_service().remove(person_id)
+        self._refresh_recent_people_window()
+        return removed
 
     def _clear_recent_people(self):
         if messagebox.askyesno("Недавние люди", "Очистить список недавно просмотренных людей?"):
