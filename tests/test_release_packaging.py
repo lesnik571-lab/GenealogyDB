@@ -47,9 +47,12 @@ def test_about_reports_release_and_runtime_versions(monkeypatch):
     assert sqlite3.sqlite_version in captured["body"]
 
 
-def test_release_build_uses_disposable_pyinstaller_workpath():
+def test_release_build_uses_disposable_workpath_and_writes_sha256_manifest():
     source = Path("build_release.ps1").read_text(encoding="utf-8")
 
     assert '$PyInstallerWorkPath = Join-Path $env:TEMP' in source
     assert "--workpath $PyInstallerWorkPath" in source
     assert "Remove-Item -Recurse -Force $PyInstallerWorkPath" in source
+    assert "$ReleaseArtifacts = @($Executable)" in source
+    assert "Get-FileHash -Path $Artifact.FullName -Algorithm SHA256" in source
+    assert '"GenealogyDB-$Version-SHA256.txt"' in source

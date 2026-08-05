@@ -61,6 +61,7 @@ BUILD_DATE = `"$BuildDate`"
 
     $Executable = Get-Item (Join-Path $Root "dist\GenealogyDB.exe")
     Write-Host ("Executable: {0:N2} MB" -f ($Executable.Length / 1MB))
+    $ReleaseArtifacts = @($Executable)
 
     if (-not $SkipInstaller) {
         $Candidates = @(
@@ -74,8 +75,18 @@ BUILD_DATE = `"$BuildDate`"
         if ($LASTEXITCODE -ne 0) { throw "Installer build failed." }
         $Installer = Get-Item (Join-Path $Root "release\GenealogyDB-$Version-Setup.exe")
         Write-Host ("Installer: {0:N2} MB" -f ($Installer.Length / 1MB))
+        $ReleaseArtifacts += $Installer
     }
 
+    $ReleaseDir = Join-Path $Root "release"
+    New-Item -ItemType Directory -Force -Path $ReleaseDir | Out-Null
+    $ChecksumPath = Join-Path $ReleaseDir "GenealogyDB-$Version-SHA256.txt"
+    $ChecksumLines = foreach ($Artifact in $ReleaseArtifacts) {
+        $Hash = (Get-FileHash -Path $Artifact.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        "$Hash  $($Artifact.Name)"
+    }
+    $ChecksumLines | Set-Content -Path $ChecksumPath -Encoding ascii
+    Write-Host "SHA256 manifest: $ChecksumPath"
     Write-Host "Startup test: $StartupStatus"
 }
 finally {
