@@ -57,6 +57,7 @@ def test_viewer_registers_recent_people_navigation():
     assert "from recent_people_service import RecentPeopleService" in source
     assert 'label="Недавние люди"' in source
     assert "def open_recent_people(self):" in source
+    assert "def _add_selected_recent_to_favorites(self):" in source
     assert 'listbox.bind("<Return>", lambda _event: self._open_selected_recent_person())' in source
 
 
@@ -71,3 +72,39 @@ def test_selected_recent_person_falls_back_to_only_recent_person():
     viewer._recent_person_ids = [42]
 
     assert viewer._selected_recent_person_id() == 42
+
+
+class _FavoriteRecorder:
+    def __init__(self):
+        self.ids = []
+
+    def add(self, person_id):
+        if person_id in self.ids:
+            return False
+        self.ids.append(person_id)
+        return True
+
+
+class _StatusLabel:
+    def __init__(self):
+        self.text = ""
+
+    def config(self, *, text):
+        self.text = text
+
+
+def test_recent_person_can_be_added_to_favorites_without_toggling():
+    viewer = GenealogyViewer.__new__(GenealogyViewer)
+    viewer._recent_people_listbox = _UnselectedRecentListbox()
+    viewer._recent_person_ids = [42]
+    viewer.person_favorites_service = _FavoriteRecorder()
+    viewer.status_label = _StatusLabel()
+    viewer._favorites_listbox = None
+
+    assert viewer._add_selected_recent_to_favorites()
+    assert viewer.person_favorites_service.ids == [42]
+    assert viewer.status_label.text == "Человек добавлен в избранное."
+
+    assert not viewer._add_selected_recent_to_favorites()
+    assert viewer.person_favorites_service.ids == [42]
+    assert viewer.status_label.text == "Человек уже в избранном."
