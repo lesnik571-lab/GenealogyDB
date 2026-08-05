@@ -6387,6 +6387,7 @@ class GenealogyViewer:
             return
         self._favorite_service().remove(person_id)
         self._refresh_favorites_window()
+        self._refresh_visible_person_navigation_markers()
 
     def _toggle_person_favorite(self, person_id, *, refresh_card=False):
         is_favorite = self._favorite_service().toggle(person_id)
@@ -6395,6 +6396,7 @@ class GenealogyViewer:
             action = "добавлен в избранное" if is_favorite else "удалён из избранного"
             status.config(text=f"Человек {action}.")
         self._refresh_favorites_window()
+        self._refresh_visible_person_navigation_markers()
         if refresh_card and getattr(self, "current_person_id", None) == person_id:
             self.show_person(person_id, add_to_history=False)
         return is_favorite
@@ -6542,6 +6544,7 @@ class GenealogyViewer:
                 else "Человек уже в избранном."
             )
         self._refresh_favorites_window()
+        self._refresh_visible_person_navigation_markers()
         return added
 
     def _remove_selected_recent_person(self):
@@ -6582,6 +6585,7 @@ class GenealogyViewer:
         status = getattr(self, "status_label", None)
         if status is not None:
             status.config(text="Главный человек сохранён.")
+        self._refresh_visible_person_navigation_markers()
         if refresh_card and getattr(self, "current_person_id", None) == person_id:
             self.show_person(person_id, add_to_history=False)
         return person_id
@@ -6594,6 +6598,7 @@ class GenealogyViewer:
             return
         if not self.repository.get_person(person_id):
             service.clear()
+            self._refresh_visible_person_navigation_markers()
             messagebox.showwarning(
                 "Главный человек",
                 "Сохранённая карточка больше не существует. Выберите главного человека заново.",
@@ -6636,6 +6641,37 @@ class GenealogyViewer:
             markers.append("★")
         markers.append(str(display_name or ""))
         return " ".join(markers).strip()
+
+    @staticmethod
+    def _strip_person_navigation_markers(display_name):
+        parts = str(display_name or "").split()
+        while parts and parts[0] in {"⌂", "★"}:
+            parts.pop(0)
+        return " ".join(parts)
+
+    def _refresh_visible_person_navigation_markers(self):
+        tree = getattr(self, "tree", None)
+        if tree is None:
+            return
+        try:
+            item_ids = tree.get_children("")
+        except TypeError:
+            item_ids = tree.get_children()
+        navigation_state = self._person_navigation_state()
+        for item_id in item_ids:
+            item = tree.item(item_id)
+            values = list(item.get("values", ()))
+            if len(values) < 2:
+                continue
+            try:
+                person_id = int(values[0])
+            except (TypeError, ValueError):
+                continue
+            base_name = self._strip_person_navigation_markers(values[1])
+            values[1] = self._person_list_display_name(
+                person_id, base_name, navigation_state
+            )
+            tree.item(item_id, values=values)
 
     @staticmethod
     def _optional_search_integer(value, label):

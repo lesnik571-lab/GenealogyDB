@@ -195,3 +195,44 @@ def test_search_people_marks_home_and_favorite_people():
 
     row = viewer.tree.item(viewer.tree.get_children()[0])["values"]
     assert row == [7, "⌂ ★ Jane Smith", "1980", "2020"]
+
+
+def test_visible_navigation_markers_refresh_without_new_search():
+    class Favorites:
+        def __init__(self):
+            self.ids = (7,)
+
+        def list_ids(self):
+            return self.ids
+
+    class Home:
+        def __init__(self):
+            self.person_id = 7
+
+        def get_id(self):
+            return self.person_id
+
+    class Tree:
+        def __init__(self):
+            self.rows = {"row-7": {"values": [7, "Jane Smith", "1980", "2020"]}}
+
+        def get_children(self, _parent=""):
+            return tuple(self.rows)
+
+        def item(self, item_id, **kwargs):
+            if "values" in kwargs:
+                self.rows[item_id]["values"] = list(kwargs["values"])
+            return self.rows[item_id]
+
+    viewer = GenealogyViewer.__new__(GenealogyViewer)
+    viewer.person_favorites_service = Favorites()
+    viewer.home_person_service = Home()
+    viewer.tree = Tree()
+
+    viewer._refresh_visible_person_navigation_markers()
+    assert viewer.tree.item("row-7")["values"][1] == "⌂ ★ Jane Smith"
+
+    viewer.person_favorites_service.ids = ()
+    viewer.home_person_service.person_id = None
+    viewer._refresh_visible_person_navigation_markers()
+    assert viewer.tree.item("row-7")["values"][1] == "Jane Smith"
