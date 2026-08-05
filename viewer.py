@@ -537,7 +537,8 @@ class GenealogyViewer:
             self.repository, DATA_DIR / "advanced_search_last.json"
         )
         self.person_favorites_service = PersonFavoritesService(
-            DATA_DIR / "person_favorites.json"
+            DATA_DIR / "person_favorites.json",
+            database_scope=str(self.repository.db_name),
         )
         self._favorites_window = None
         self._favorites_listbox = None
@@ -6244,7 +6245,12 @@ class GenealogyViewer:
     def _favorite_service(self):
         service = getattr(self, "person_favorites_service", None)
         if service is None:
-            service = PersonFavoritesService(DATA_DIR / "person_favorites.json")
+            repository = getattr(self, "repository", None)
+            database_scope = str(getattr(repository, "db_name", DB_NAME))
+            service = PersonFavoritesService(
+                DATA_DIR / "person_favorites.json",
+                database_scope=database_scope,
+            )
             self.person_favorites_service = service
         return service
 

@@ -52,6 +52,29 @@ def test_favorites_prune_missing_people(tmp_path):
     assert PersonFavoritesService(service.path).list_ids() == (2, 6)
 
 
+def test_favorites_are_isolated_by_database_and_migrate_legacy_file(tmp_path):
+    path = tmp_path / "person_favorites.json"
+    path.write_text(
+        json.dumps({"version": 1, "person_ids": [7, 9]}),
+        encoding="utf-8",
+    )
+
+    first_database = PersonFavoritesService(path, database_scope="database-a")
+    assert first_database.list_ids() == (7, 9)
+
+    migrated = json.loads(path.read_text(encoding="utf-8"))
+    assert migrated == {
+        "version": 2,
+        "databases": {"database-a": [7, 9]},
+    }
+
+    second_database = PersonFavoritesService(path, database_scope="database-b")
+    assert second_database.list_ids() == ()
+    assert second_database.add(4)
+    assert first_database.list_ids() == (7, 9)
+    assert second_database.list_ids() == (4,)
+
+
 def test_viewer_registers_favorite_navigation_actions():
     source = Path("viewer.py").read_text(encoding="utf-8")
 
@@ -62,6 +85,7 @@ def test_viewer_registers_favorite_navigation_actions():
     assert "def toggle_selected_favorite(self):" in source
     assert '"Добавить в избранное"' in source
     assert '"Убрать из избранного"' in source
+    assert "database_scope=str(self.repository.db_name)" in source
     assert 'listbox.bind("<Return>", lambda _event: self._open_selected_favorite())' in source
 
 

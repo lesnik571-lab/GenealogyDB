@@ -10,9 +10,11 @@ class PersonFavoritesService:
     """Store favorite database person identifiers outside the genealogy database."""
 
     FORMAT_VERSION = 1
+    SCOPED_FORMAT_VERSION = 2
 
-    def __init__(self, path):
+    def __init__(self, path, *, database_scope=None):
         self.path = Path(path)
+        self.database_scope = str(database_scope).strip() if database_scope else None
 
     def list_ids(self) -> tuple[int, ...]:
         return self._load()
@@ -59,13 +61,28 @@ class PersonFavoritesService:
         return filtered
 
     def _load(self) -> tuple[int, ...]:
-        if not self.path.is_file():
+        payload = self._read_payload()
+        if payload is None:
             return ()
-        try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError):
-            return ()
+        if self.database_scope and isinstance(payload, dict) and isinstance(payload.get("databases"), dict):
+            values = payload["databases"].get(self.database_scope, ())
+            return self._normalize_ids(values)
+
         values = payload.get("person_ids", ()) if isinstance(payload, dict) else payload
+        favorites = self._normalize_ids(values)
+        if self.database_scope and isinstance(values, list):
+            self._save(favorites)
+        return favorites
+
+    def _read_payload(self):
+        if not self.path.is_file():
+            return None
+        try:
+            return json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return None
+
+    def _normalize_ids(self, values) -> tuple[int, ...]:
         if not isinstance(values, list):
             return ()
         favorites = []
@@ -83,10 +100,30 @@ class PersonFavoritesService:
     def _save(self, person_ids) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
-        payload = {
-            "version": self.FORMAT_VERSION,
-            "person_ids": list(person_ids),
-        }
+        if self.database_scope:
+            current_payload = self._read_payload()
+            databases = {}
+            if isinstance(current_payload, dict) and isinstance(current_payload.get("databases"), dict):
+                databases = {
+                    str(key): list(self._normalize_ids(values))
+                    for key, values in current_payload["databases"].items()
+                }
+            elif isinstance(current_payload, dict) and isinstance(current_payload.get("person_ids"), list):
+                databases[self.database_scope] = list(
+                    self._normalize_ids(current_payload["person_ids"])
+                )
+            elif isinstance(current_payload, list):
+                databases[self.database_scope] = list(self._normalize_ids(current_payload))
+            databases[self.database_scope] = list(person_ids)
+            payload = {
+                "version": self.SCOPED_FORMAT_VERSION,
+                "databases": databases,
+            }
+        else:
+            payload = {
+                "version": self.FORMAT_VERSION,
+                "person_ids": list(person_ids),
+            }
         try:
             temporary.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
