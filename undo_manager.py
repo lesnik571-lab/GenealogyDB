@@ -231,6 +231,15 @@ class UndoManager:
         self._notify()
         return True
 
+    def clear(self) -> bool:
+        """Discard history that no longer belongs to the active database state."""
+        had_history = bool(self._undo_stack or self._redo_stack)
+        self._undo_stack.clear()
+        self._redo_stack.clear()
+        if had_history:
+            self._notify()
+        return had_history
+
     def _notify(self) -> None:
         if self._on_change is not None:
             self._on_change()

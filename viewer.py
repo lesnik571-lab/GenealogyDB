@@ -11085,10 +11085,20 @@ class GenealogyViewer:
             ):
                 return
             restore_database(restore_path, DB_NAME)
+            self._reset_after_database_restore()
             self.refresh_views()
             messagebox.showinfo("Восстановлено", "База данных восстановлена и список обновлён.")
         except (FileNotFoundError, ValueError, OSError) as error:
             messagebox.showerror("Ошибка восстановления", str(error))
+
+    def _reset_after_database_restore(self):
+        self._get_undo_manager().clear()
+        self._close_person_card()
+        self.current_person_id = None
+        self.current_person_gedcom_id = None
+        self._person_history = []
+        self._person_history_index = -1
+        self._refresh_person_navigation_views()
 
     def refresh_views(self):
         self.search_people()

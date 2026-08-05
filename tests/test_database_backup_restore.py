@@ -4,6 +4,9 @@ import sqlite3
 import pytest
 
 from database import backup_database, restore_database, validate_database_file
+from undo_manager import UndoManager
+import viewer as viewer_module
+from viewer import GenealogyViewer
 
 
 @pytest.fixture
@@ -65,3 +68,44 @@ def test_restore_database_replaces_target_and_creates_safety_backup(populated_db
     people = conn.execute("SELECT gedcom_id, first_name, last_name FROM people ORDER BY gedcom_id").fetchall()
     conn.close()
     assert people == [("I2", "Jane", "Smith")]
+
+
+def test_viewer_restore_discards_stale_undo_and_person_context(monkeypatch):
+    calls = []
+    viewer = GenealogyViewer.__new__(GenealogyViewer)
+    viewer.undo_manager = UndoManager()
+    viewer.undo_manager._undo_stack.append(object())
+    viewer.undo_manager._redo_stack.append(object())
+    viewer.current_person_id = 7
+    viewer.current_person_gedcom_id = "I7"
+    viewer._person_history = [3, 7]
+    viewer._person_history_index = 1
+    viewer._person_card_body = None
+    viewer._person_dialog = None
+    viewer._refresh_person_navigation_views = lambda: calls.append("navigation")
+    viewer.refresh_views = lambda: calls.append("refresh")
+
+    monkeypatch.setattr(viewer_module.filedialog, "askopenfilename", lambda **_kwargs: "source.db")
+    monkeypatch.setattr(viewer_module.messagebox, "askyesno", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(viewer_module.messagebox, "showinfo", lambda *_args, **_kwargs: calls.append("info"))
+    monkeypatch.setattr(
+        viewer_module,
+        "restore_database",
+        lambda source, target: calls.append(("restore", source, target)),
+    )
+    monkeypatch.setattr(viewer_module, "DB_NAME", "target.db")
+
+    viewer.restore_database()
+
+    assert not viewer.undo_manager.can_undo
+    assert not viewer.undo_manager.can_redo
+    assert viewer.current_person_id is None
+    assert viewer.current_person_gedcom_id is None
+    assert viewer._person_history == []
+    assert viewer._person_history_index == -1
+    assert calls == [
+        ("restore", "source.db", "target.db"),
+        "navigation",
+        "refresh",
+        "info",
+    ]
