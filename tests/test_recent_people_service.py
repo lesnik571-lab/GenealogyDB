@@ -73,8 +73,10 @@ def test_viewer_registers_recent_people_navigation():
     assert 'label="Недавние люди"' in source
     assert "def open_recent_people(self):" in source
     assert "def _add_selected_recent_to_favorites(self):" in source
+    assert "def _set_selected_recent_as_home(self):" in source
     assert "def _remove_selected_recent_person(self):" in source
     assert 'text="Удалить из недавних"' in source
+    assert "command=self._set_selected_recent_as_home" in source
     assert 'listbox.bind("<Return>", lambda _event: self._open_selected_recent_person())' in source
 
 
@@ -125,3 +127,16 @@ def test_recent_person_can_be_added_to_favorites_without_toggling():
     assert not viewer._add_selected_recent_to_favorites()
     assert viewer.person_favorites_service.ids == [42]
     assert viewer.status_label.text == "Человек уже в избранном."
+
+
+def test_recent_person_can_be_set_as_home_person():
+    viewer = GenealogyViewer.__new__(GenealogyViewer)
+    viewer._recent_people_listbox = _UnselectedRecentListbox()
+    viewer._recent_person_ids = [42]
+    calls = []
+    viewer._set_home_person = lambda person_id, **kwargs: calls.append(
+        (person_id, kwargs)
+    ) or person_id
+
+    assert viewer._set_selected_recent_as_home() == 42
+    assert calls == [(42, {"refresh_card": True})]

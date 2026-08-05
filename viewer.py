@@ -6478,7 +6478,7 @@ class GenealogyViewer:
 
         window = self._create_dialog()
         window.title("Недавние люди")
-        window.geometry("620x440")
+        window.geometry("820x440")
         window.protocol("WM_DELETE_WINDOW", self._close_recent_people)
         self._recent_people_window = window
 
@@ -6507,6 +6507,11 @@ class GenealogyViewer:
             actions,
             text="Добавить в избранное",
             command=self._add_selected_recent_to_favorites,
+        ).pack(side="left", padx=(8, 0))
+        tk.Button(
+            actions,
+            text="Сделать главным",
+            command=self._set_selected_recent_as_home,
         ).pack(side="left", padx=(8, 0))
         tk.Button(
             actions,
@@ -6560,6 +6565,13 @@ class GenealogyViewer:
         self._refresh_favorites_window()
         self._refresh_visible_person_navigation_markers()
         return added
+
+    def _set_selected_recent_as_home(self):
+        person_id = self._selected_recent_person_id()
+        if person_id is None:
+            messagebox.showwarning("Недавние люди", "Сначала выберите человека.")
+            return
+        return self._set_home_person(person_id, refresh_card=True)
 
     def _remove_selected_recent_person(self):
         person_id = self._selected_recent_person_id()
