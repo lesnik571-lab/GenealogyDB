@@ -76,6 +76,7 @@ from merge_service import MergeService
 from plugin_manager import PluginApp, PluginManager, ReadOnlyPluginData
 from performance_service import PerformanceService
 from person_favorites_service import PersonFavoritesService
+from recent_people_service import RecentPeopleService
 from recovery_wizard_service import RecoveryRecord, RecoveryWizardService
 from release_center_service import ReleaseCenterService
 from research_workspace_service import TASK_STATUSES, ResearchWorkspaceService
@@ -544,6 +545,14 @@ class GenealogyViewer:
         self._favorites_listbox = None
         self._favorite_person_ids = []
         self._favorites_status_label = None
+        self.recent_people_service = RecentPeopleService(
+            DATA_DIR / "recent_people.json",
+            database_scope=str(self.repository.db_name),
+        )
+        self._recent_people_window = None
+        self._recent_people_listbox = None
+        self._recent_person_ids = []
+        self._recent_people_status_label = None
         self._advanced_search_vars = {}
         self._advanced_search_results = ()
         self._advanced_search_after_id = None
@@ -5033,6 +5042,7 @@ class GenealogyViewer:
         workspace_menu.add_command(label="Диагностика интеграции", command=self.open_integration_diagnostics)
         workspace_menu.add_separator()
         workspace_menu.add_command(label="Избранные люди", command=self.open_favorites)
+        workspace_menu.add_command(label="Недавние люди", command=self.open_recent_people)
         workspace_menu.add_command(
             label="Добавить/убрать выбранного",
             command=self.toggle_selected_favorite,
@@ -6388,6 +6398,123 @@ class GenealogyViewer:
             messagebox.showwarning("Избранные люди", "Сначала выберите человека.")
             return
         return self._toggle_person_favorite(person_id)
+
+    def _recent_service(self):
+        service = getattr(self, "recent_people_service", None)
+        if service is None:
+            repository = getattr(self, "repository", None)
+            database_scope = str(getattr(repository, "db_name", DB_NAME))
+            service = RecentPeopleService(
+                DATA_DIR / "recent_people.json",
+                database_scope=database_scope,
+            )
+            self.recent_people_service = service
+        return service
+
+    def _refresh_recent_people_window(self):
+        listbox = getattr(self, "_recent_people_listbox", None)
+        if listbox is None:
+            return
+        listbox.delete(0, "end")
+        self._recent_person_ids = []
+        service = self._recent_service()
+        stored_person_ids = service.list_ids()
+        for person_id in stored_person_ids:
+            label = self._favorite_person_label(person_id)
+            if label is None:
+                continue
+            self._recent_person_ids.append(person_id)
+            listbox.insert("end", label)
+        if len(self._recent_person_ids) != len(stored_person_ids):
+            service.prune(self._recent_person_ids)
+        status = getattr(self, "_recent_people_status_label", None)
+        if status is not None:
+            status.config(text=f"Недавних людей: {len(self._recent_person_ids)}")
+
+    def _close_recent_people(self):
+        window = getattr(self, "_recent_people_window", None)
+        self._recent_people_window = None
+        self._recent_people_listbox = None
+        self._recent_person_ids = []
+        self._recent_people_status_label = None
+        if window is not None:
+            try:
+                window.destroy()
+            except Exception:
+                pass
+
+    def open_recent_people(self):
+        window = getattr(self, "_recent_people_window", None)
+        if window is not None:
+            self._refresh_recent_people_window()
+            for method_name in ("lift", "focus_set"):
+                method = getattr(window, method_name, None)
+                if callable(method):
+                    method()
+            return window
+
+        window = self._create_dialog()
+        window.title("Недавние люди")
+        window.geometry("620x440")
+        window.protocol("WM_DELETE_WINDOW", self._close_recent_people)
+        self._recent_people_window = window
+
+        tk.Label(
+            window,
+            text="Последние открытые карточки",
+            font=("default", 13, "bold"),
+        ).pack(anchor="w", padx=12, pady=(12, 6))
+        listbox = tk.Listbox(window)
+        listbox.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        listbox.bind("<Double-1>", lambda _event: self._open_selected_recent_person())
+        listbox.bind("<Return>", lambda _event: self._open_selected_recent_person())
+        self._recent_people_listbox = listbox
+
+        self._recent_people_status_label = tk.Label(window, anchor="w")
+        self._recent_people_status_label.pack(fill="x", padx=12)
+
+        actions = tk.Frame(window)
+        actions.pack(fill="x", padx=12, pady=12)
+        tk.Button(
+            actions,
+            text="Открыть карточку",
+            command=self._open_selected_recent_person,
+        ).pack(side="left")
+        tk.Button(
+            actions,
+            text="Очистить список",
+            command=self._clear_recent_people,
+        ).pack(side="left", padx=(8, 0))
+        tk.Button(actions, text="Закрыть", command=self._close_recent_people).pack(side="right")
+        self._refresh_recent_people_window()
+        return window
+
+    def _selected_recent_person_id(self):
+        listbox = getattr(self, "_recent_people_listbox", None)
+        if listbox is None:
+            return None
+        selection = listbox.curselection()
+        if not selection:
+            if len(self._recent_person_ids) != 1:
+                return None
+            index = 0
+        else:
+            index = int(selection[0])
+        if index >= len(self._recent_person_ids):
+            return None
+        return self._recent_person_ids[index]
+
+    def _open_selected_recent_person(self):
+        person_id = self._selected_recent_person_id()
+        if person_id is None:
+            messagebox.showwarning("Недавние люди", "Сначала выберите человека.")
+            return
+        self.show_person(person_id)
+
+    def _clear_recent_people(self):
+        if messagebox.askyesno("Недавние люди", "Очистить список недавно просмотренных людей?"):
+            self._recent_service().clear()
+            self._refresh_recent_people_window()
 
     def _clear_tree(self):
         for item in self.tree.get_children():
@@ -9806,6 +9933,8 @@ class GenealogyViewer:
             self._set_workspace_person(person_id, "main")
         if add_to_history:
             self._push_person_history(person_id)
+            self._recent_service().record(person_id)
+            self._refresh_recent_people_window()
 
         dialog = self._person_dialog
         if dialog is None:

@@ -1,0 +1,73 @@
+import json
+from pathlib import Path
+
+from recent_people_service import RecentPeopleService
+from viewer import GenealogyViewer
+
+
+def test_recent_people_are_most_recent_first_and_bounded(tmp_path):
+    service = RecentPeopleService(
+        tmp_path / "recent_people.json",
+        database_scope="database-a",
+        limit=3,
+    )
+
+    assert service.record(1) == (1,)
+    assert service.record(2) == (2, 1)
+    assert service.record(3) == (3, 2, 1)
+    assert service.record(2) == (2, 3, 1)
+    assert service.record(4) == (4, 2, 3)
+    assert service.list_ids() == (4, 2, 3)
+
+
+def test_recent_people_are_isolated_by_database(tmp_path):
+    path = tmp_path / "recent_people.json"
+    first = RecentPeopleService(path, database_scope="database-a")
+    second = RecentPeopleService(path, database_scope="database-b")
+
+    first.record(7)
+    second.record(9)
+
+    assert first.list_ids() == (7,)
+    assert second.list_ids() == (9,)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["databases"] == {"database-a": [7], "database-b": [9]}
+
+
+def test_recent_people_prune_clear_and_ignore_invalid_saved_ids(tmp_path):
+    path = tmp_path / "recent_people.json"
+    path.write_text(
+        json.dumps({
+            "version": 1,
+            "databases": {"database-a": [4, "5", 4, -1, True, "bad"]},
+        }),
+        encoding="utf-8",
+    )
+    service = RecentPeopleService(path, database_scope="database-a")
+
+    assert service.list_ids() == (4, 5)
+    assert service.prune((5, 8)) == (5,)
+    service.clear()
+    assert service.list_ids() == ()
+
+
+def test_viewer_registers_recent_people_navigation():
+    source = Path("viewer.py").read_text(encoding="utf-8")
+
+    assert "from recent_people_service import RecentPeopleService" in source
+    assert 'label="Недавние люди"' in source
+    assert "def open_recent_people(self):" in source
+    assert 'listbox.bind("<Return>", lambda _event: self._open_selected_recent_person())' in source
+
+
+class _UnselectedRecentListbox:
+    def curselection(self):
+        return ()
+
+
+def test_selected_recent_person_falls_back_to_only_recent_person():
+    viewer = GenealogyViewer.__new__(GenealogyViewer)
+    viewer._recent_people_listbox = _UnselectedRecentListbox()
+    viewer._recent_person_ids = [42]
+
+    assert viewer._selected_recent_person_id() == 42
