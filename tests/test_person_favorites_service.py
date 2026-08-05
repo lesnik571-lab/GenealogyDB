@@ -84,3 +84,53 @@ def test_selected_person_falls_back_to_only_visible_result():
     viewer.tree = _SingleResultTree()
 
     assert viewer._selected_person_id() == 42
+
+
+class _FavoritesRepository:
+    def get_person(self, person_id):
+        people = {
+            2: ("@I2@", "Коэн", "Анна", "F", "1950", "", "", ""),
+            6: ("@I6@", "Леви", "Давид", "M", "1948", "", "2020", ""),
+        }
+        return people.get(person_id)
+
+
+class _FavoritesListbox:
+    def __init__(self):
+        self.rows = []
+
+    def delete(self, _start, _end):
+        self.rows.clear()
+
+    def insert(self, _index, value):
+        self.rows.append(value)
+
+
+class _FavoritesStatus:
+    def __init__(self):
+        self.text = ""
+
+    def config(self, *, text):
+        self.text = text
+
+
+def test_refresh_favorites_prunes_people_missing_from_database(tmp_path):
+    service = PersonFavoritesService(tmp_path / "person_favorites.json")
+    for person_id in (2, 4, 6):
+        service.add(person_id)
+
+    viewer = GenealogyViewer.__new__(GenealogyViewer)
+    viewer.repository = _FavoritesRepository()
+    viewer.person_favorites_service = service
+    viewer._favorites_listbox = _FavoritesListbox()
+    viewer._favorites_status_label = _FavoritesStatus()
+
+    viewer._refresh_favorites_window()
+
+    assert service.list_ids() == (2, 6)
+    assert viewer._favorite_person_ids == [2, 6]
+    assert viewer._favorites_listbox.rows == [
+        "Коэн Анна, 1950 (ID 2)",
+        "Леви Давид, 1948 — 2020 (ID 6)",
+    ]
+    assert viewer._favorites_status_label.text == "Избранных людей: 2"

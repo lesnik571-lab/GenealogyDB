@@ -6263,12 +6263,16 @@ class GenealogyViewer:
             return
         listbox.delete(0, "end")
         self._favorite_person_ids = []
-        for person_id in self._favorite_service().list_ids():
+        service = self._favorite_service()
+        stored_person_ids = service.list_ids()
+        for person_id in stored_person_ids:
             label = self._favorite_person_label(person_id)
             if label is None:
                 continue
             self._favorite_person_ids.append(person_id)
             listbox.insert("end", label)
+        if len(self._favorite_person_ids) != len(stored_person_ids):
+            service.prune(self._favorite_person_ids)
         status = getattr(self, "_favorites_status_label", None)
         if status is not None:
             status.config(text=f"Избранных людей: {len(self._favorite_person_ids)}")
