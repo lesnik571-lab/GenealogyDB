@@ -43,6 +43,7 @@ from collaboration_service import CollaborationService
 from conflict_resolution_service import ConflictResolutionService
 from change_exchange_service import ChangeExchangeService
 from history_browser_service import HistoryBrowserService
+from home_person_service import HomePersonService
 from project_merge_service import ProjectMergeService
 from workflow_automation_service import DRY_RUN, FULL_RUN, READ_ONLY_RUN, WorkflowAutomationService
 from rc_validation_service import RCValidationService
@@ -553,6 +554,10 @@ class GenealogyViewer:
         self._recent_people_listbox = None
         self._recent_person_ids = []
         self._recent_people_status_label = None
+        self.home_person_service = HomePersonService(
+            DATA_DIR / "home_person.json",
+            database_scope=str(self.repository.db_name),
+        )
         self._advanced_search_vars = {}
         self._advanced_search_results = ()
         self._advanced_search_after_id = None
@@ -5043,6 +5048,8 @@ class GenealogyViewer:
         workspace_menu.add_separator()
         workspace_menu.add_command(label="Избранные люди", command=self.open_favorites)
         workspace_menu.add_command(label="Недавние люди", command=self.open_recent_people)
+        workspace_menu.add_command(label="Открыть главного человека", command=self.open_home_person)
+        workspace_menu.add_command(label="Сделать выбранного главным", command=self.set_selected_home_person)
         workspace_menu.add_command(
             label="Добавить/убрать выбранного",
             command=self.toggle_selected_favorite,
@@ -6550,6 +6557,45 @@ class GenealogyViewer:
         if messagebox.askyesno("Недавние люди", "Очистить список недавно просмотренных людей?"):
             self._recent_service().clear()
             self._refresh_recent_people_window()
+
+    def _home_service(self):
+        service = getattr(self, "home_person_service", None)
+        if service is None:
+            repository = getattr(self, "repository", None)
+            database_scope = str(getattr(repository, "db_name", DB_NAME))
+            service = HomePersonService(
+                DATA_DIR / "home_person.json",
+                database_scope=database_scope,
+            )
+            self.home_person_service = service
+        return service
+
+    def set_selected_home_person(self):
+        person_id = self._selected_person_id()
+        if person_id is None:
+            messagebox.showwarning("Главный человек", "Сначала выберите человека.")
+            return
+        self._home_service().set_id(person_id)
+        status = getattr(self, "status_label", None)
+        if status is not None:
+            status.config(text="Главный человек сохранён.")
+        return person_id
+
+    def open_home_person(self):
+        service = self._home_service()
+        person_id = service.get_id()
+        if person_id is None:
+            messagebox.showwarning("Главный человек", "Главный человек ещё не выбран.")
+            return
+        if not self.repository.get_person(person_id):
+            service.clear()
+            messagebox.showwarning(
+                "Главный человек",
+                "Сохранённая карточка больше не существует. Выберите главного человека заново.",
+            )
+            return
+        self.show_person(person_id)
+        return person_id
 
     def _clear_tree(self):
         for item in self.tree.get_children():
