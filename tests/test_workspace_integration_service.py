@@ -67,6 +67,21 @@ def test_viewer_workspace_shortcuts_are_registered_without_creating_tk_windows()
         assert shortcut in source
 
 
+def test_workspace_main_shortcut_falls_back_to_home_person():
+    viewer = GenealogyViewer.__new__(GenealogyViewer)
+    opened = []
+    viewer.show_person = lambda person_id: opened.append(("current", person_id))
+    viewer.open_home_person = lambda: opened.append(("home", None))
+
+    viewer.current_person_id = None
+    assert viewer._workspace_open_main() == "break"
+    assert opened == [("home", None)]
+
+    viewer.current_person_id = 12
+    assert viewer._workspace_open_main() == "break"
+    assert opened == [("home", None), ("current", 12)]
+
+
 def test_unified_error_is_single_dialog_and_status_is_contextual(monkeypatch, tmp_path):
     viewer = GenealogyViewer.__new__(GenealogyViewer)
     viewer.root = object()

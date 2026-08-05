@@ -863,6 +863,8 @@ class GenealogyViewer:
     def _workspace_open_main(self, _event=None):
         if self.current_person_id is not None:
             self.show_person(self.current_person_id)
+        else:
+            self.open_home_person()
         return "break"
 
     def _workspace_open(self, opener, _event=None):
