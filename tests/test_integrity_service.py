@@ -24,6 +24,13 @@ def test_integrity_duplicate_detection(tmp_path):
 
     assert report["duplicates"]
     assert any(item["left_person_id"] and item["right_person_id"] for item in report["duplicates"])
+    duplicate = report["duplicates"][0]
+    assert duplicate["match_score"] == 95
+    assert duplicate["match_reasons"] == [
+        "same name",
+        "same birth year: 1900",
+        "same birth place",
+    ]
     repo.close()
 
 
