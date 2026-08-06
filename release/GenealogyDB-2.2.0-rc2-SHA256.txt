@@ -1,0 +1,2 @@
+2fa7ac6c7ad880b80f49d5e02c5b61d06be2d706e14399cafca96f9ad8d0ff67  GenealogyDB.exe
+4209ac02009cd690e53a6802efa815ae68e2e2a0ae2663ff5064a135dd3dd9ba  GenealogyDB-2.2.0-rc2-Setup.exe
