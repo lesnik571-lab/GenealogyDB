@@ -10,6 +10,7 @@ from datetime import date
 from pathlib import Path
 
 from config import DATA_DIR
+from person_duplicate_service import PersonDuplicateService
 from repository.person_repository import PersonRepository
 
 
@@ -300,6 +301,9 @@ class IntegrityCheckService:
                     if left_place and right_place and left_place != right_place:
                         continue
 
+                    assessment = PersonDuplicateService._compare(
+                        left["raw"], right["raw"]
+                    )
                     findings.append(
                         {
                             "severity": "Предупреждение",
@@ -311,6 +315,8 @@ class IntegrityCheckService:
                             "right_name": self._full_name(right["raw"]),
                             "left_birth": left["raw"].get("birth_date", ""),
                             "right_birth": right["raw"].get("birth_date", ""),
+                            "match_score": assessment.score if assessment else 0,
+                            "match_reasons": list(assessment.reasons) if assessment else [],
                         }
                     )
 
