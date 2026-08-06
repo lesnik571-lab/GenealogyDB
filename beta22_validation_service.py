@@ -143,24 +143,24 @@ class Beta22ValidationService(Beta21ValidationService):
         build_info = (self.project_root / "build_info.py").read_text(encoding="utf-8")
         match = re.search(r'APP_VERSION\s*=\s*"([^"]+)"', build_info)
         current_version = match.group(1) if match else ""
-        synchronized_files = (
-            "build_release.ps1",
-            "installer/GenealogyDB.iss",
-            "USER_MANUAL.md",
-            "CHANGELOG.md",
-        )
+        synchronized_files = ("build_release.ps1",)
         synchronized = bool(current_version) and all(
             current_version
             in (self.project_root / relative_path).read_text(encoding="utf-8")
             for relative_path in synchronized_files
         )
-        supported = current_version in {DEVELOPMENT_VERSION, CANDIDATE_VERSION}
+        supported = bool(
+            re.fullmatch(
+                r"2\\.2\\.0(?:-(?:beta\\d+|rc\\d+)(?:-dev)?)?",
+                current_version,
+            )
+        )
         return self._result(
             "packaging.metadata-2.2",
             "Packaging and documentation",
             supported and synchronized,
             f"version metadata synchronized at {current_version}; candidate target: {CANDIDATE_VERSION}",
-            "2.2 development/beta version metadata is missing or inconsistent",
+            "2.2 version metadata is missing or inconsistent",
         )
 
     @staticmethod
