@@ -7,6 +7,16 @@ import unicodedata
 from dataclasses import dataclass
 
 
+TRANSLIT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e",
+    "ё": "e", "ж": "zh", "з": "z", "и": "i", "й": "i", "к": "k",
+    "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r",
+    "с": "s", "т": "t", "у": "u", "ф": "f", "х": "h", "ц": "ts",
+    "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "", "ы": "y", "ь": "",
+    "э": "e", "ю": "yu", "я": "ya",
+}
+
+
 @dataclass(frozen=True)
 class DuplicateCandidate:
     """One possible duplicate pair with explainable matching evidence."""
@@ -92,7 +102,8 @@ class PersonDuplicateService:
 
     @staticmethod
     def _normalize_text(value):
-        text = str(value or "").strip().lower().replace("ё", "е")
+        text = str(value or "").strip().lower()
+        text = "".join(TRANSLIT.get(char, char) for char in text)
         text = unicodedata.normalize("NFKD", text)
         text = "".join(char for char in text if not unicodedata.combining(char))
         text = re.sub(r"[^\w\s]", " ", text)
