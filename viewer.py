@@ -8765,6 +8765,10 @@ class GenealogyViewer:
         self._load_family_timeline()
 
     def open_timeline_studio(self):
+        selected_person_id = self._selected_person_id()
+        if selected_person_id is not None:
+            self.current_person_id = selected_person_id
+
         if self._timeline_studio_window is not None:
             try:
                 self._timeline_studio_window.lift()
