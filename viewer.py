@@ -1580,6 +1580,16 @@ class GenealogyViewer:
         if primary_id is None or duplicate_id is None:
             messagebox.showerror("Объединить людей", "Человек не найден.", parent=self.root)
             return
+        return self._open_merge_wizard_for_ids(primary_id, duplicate_id)
+
+    def _open_merge_wizard_for_ids(self, primary_id, duplicate_id):
+        if primary_id is None or duplicate_id is None or primary_id == duplicate_id:
+            messagebox.showerror(
+                "Объединить людей",
+                "Для сравнения нужны две разные карточки.",
+                parent=self.root,
+            )
+            return
         return self._submit_repository_task(
             "Подготовка объединения людей",
             lambda repository, _context: MergeService(repository).plan_merge(
@@ -2964,6 +2974,11 @@ class GenealogyViewer:
             right_id = item.get("right_person_id")
             tk.Button(actions, text="Открыть 1", command=lambda person_id=left_id: self.show_person(person_id)).pack(side="left")
             tk.Button(actions, text="Открыть 2", command=lambda person_id=right_id: self.show_person(person_id)).pack(side="left", padx=(6, 0))
+            tk.Button(
+                actions,
+                text="Сравнить/объединить",
+                command=lambda l_id=left_id, r_id=right_id: self._open_merge_wizard_for_ids(l_id, r_id),
+            ).pack(side="left", padx=(6, 0))
             tk.Button(
                 actions,
                 text="Не дубликаты",
