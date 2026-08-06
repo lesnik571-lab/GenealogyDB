@@ -46,7 +46,7 @@ from history_browser_service import HistoryBrowserService
 from home_person_service import HomePersonService
 from project_merge_service import ProjectMergeService
 from workflow_automation_service import DRY_RUN, FULL_RUN, READ_ONLY_RUN, WorkflowAutomationService
-from rc_validation_service import RCValidationService
+from rc22_validation_service import RC22ValidationService
 from data_quality_service import CATEGORY_DEFINITIONS, DataQualityService
 from validation_center_service import ValidationCenterService, ValidationFixCommand
 from database import backup_database, initialize_database, restore_database
@@ -5788,7 +5788,7 @@ class GenealogyViewer:
             status.config(text="Проверка RC1 выполняется на временных базах данных и служебных файлах.")
             return self._submit_repository_task(
                 "Проверка RC1",
-                lambda repository, _context: RCValidationService(repository.db_name).validate(),
+                lambda repository, _context: RC22ValidationService(repository.db_name).validate(),
                 lambda report: render(report),
                 on_error=lambda error: self._show_unified_error("Проверка RC1", error),
                 cancellable=True,
@@ -5796,9 +5796,9 @@ class GenealogyViewer:
 
         def render(report):
             body.config(state="normal"); body.delete("1.0", "end")
-            body.insert("1.0", RCValidationService._markdown(report)); body.config(state="disabled")
-            recommendation = RCValidationService.recommendation_label(report.recommendation)
-            status.config(text=f"{recommendation}; отчёты: release/rc1-validation/")
+            body.insert("1.0", RC22ValidationService._markdown(report)); body.config(state="disabled")
+            recommendation = RC22ValidationService.recommendation_label(report.recommendation)
+            status.config(text=f"{recommendation}; отчёты: release/2.2-rc1-validation/")
 
         controls = tk.Frame(dialog); controls.pack(fill="x", padx=12, pady=(0, 12))
         tk.Button(controls, text="Запустить проверку", command=run).pack(side="left")
