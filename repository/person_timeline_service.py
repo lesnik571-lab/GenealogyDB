@@ -324,6 +324,17 @@ class PersonTimelineService:
         if not clean:
             return None
 
+        numeric_match = re.fullmatch(r"(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})", clean)
+        if numeric_match:
+            day = int(numeric_match.group(1))
+            month = int(numeric_match.group(2))
+            year = int(numeric_match.group(3))
+            try:
+                parsed_date = date(year, month, day)
+            except ValueError:
+                return None
+            return (parsed_date, parsed_date)
+
         full_match = re.search(r"\b(\d{1,2})\s+([A-Z]{3})\s+(\d{4})\b", clean)
         if full_match:
             day = int(full_match.group(1))
