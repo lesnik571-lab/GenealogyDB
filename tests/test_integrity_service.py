@@ -34,6 +34,22 @@ def test_integrity_duplicate_detection(tmp_path):
     repo.close()
 
 
+def test_integrity_duplicates_are_ranked_by_match_confidence(tmp_path):
+    repo = _build_repo(tmp_path, "ranked-duplicates.db")
+    repo.create_person({"gedcom_id": "I1", "first_name": "Boris", "last_name": "Lesnik", "sex": "M", "birth_date": "1 JAN 1900", "birth_place": "Moscow", "death_date": "", "death_place": "", "occupation": "", "note": ""})
+    repo.create_person({"gedcom_id": "I2", "first_name": "Борис", "last_name": "Лесник", "sex": "M", "birth_date": "1900", "birth_place": "Moscow", "death_date": "", "death_place": "", "occupation": "", "note": ""})
+    repo.create_person({"gedcom_id": "I3", "first_name": "BORIS", "last_name": "LESNIK", "sex": "M", "birth_date": "1900", "birth_place": "", "death_date": "", "death_place": "", "occupation": "", "note": ""})
+
+    service = IntegrityCheckService(repo, data_dir=tmp_path / "data")
+    duplicates = service.run_checks()["duplicates"]
+    scores = [item["match_score"] for item in duplicates]
+
+    assert scores == sorted(scores, reverse=True)
+    assert scores[0] == 95
+    assert scores[-1] == 80
+    repo.close()
+
+
 def test_integrity_contradictory_dates(tmp_path):
     repo = _build_repo(tmp_path, "dates.db")
 
