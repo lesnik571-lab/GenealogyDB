@@ -9,12 +9,23 @@ from beta22_validation_service import (
 from database import initialize_database
 
 
-def test_beta22_validation_covers_navigation_and_preserves_configured_database(tmp_path):
+def test_beta22_validation_covers_navigation_and_preserves_configured_database(tmp_path, monkeypatch):
     configured = tmp_path / "configured.db"
     initialize_database(configured)
     before = configured.read_bytes()
     service = Beta22ValidationService(configured, project_root=Path.cwd())
     service.report_dir = tmp_path / "reports"
+    monkeypatch.setattr(
+        service,
+        "_packaging_check",
+        lambda: BetaValidationCheck(
+            "packaging.metadata-2.2",
+            "Packaging and documentation",
+            PASS,
+            "covered independently",
+            "",
+        ),
+    )
 
     report = service.validate()
     checks = {check.check_id: check for check in report.checks}
