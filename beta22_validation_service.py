@@ -151,7 +151,7 @@ class Beta22ValidationService(Beta21ValidationService):
         )
         supported = bool(
             re.fullmatch(
-                r"2\\.2\\.0(?:-(?:beta\\d+|rc\\d+)(?:-dev)?)?",
+                r"2\.2\.0(?:-(?:beta\d+|rc\d+)(?:-dev)?)?",
                 current_version,
             )
         )
