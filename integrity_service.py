@@ -323,6 +323,13 @@ class IntegrityCheckService:
         if progress_callback:
             progress_callback(total_pairs, total_pairs)
 
+        findings.sort(
+            key=lambda item: (
+                -item.get("match_score", 0),
+                item.get("left_person_id", 0),
+                item.get("right_person_id", 0),
+            )
+        )
         return findings
 
     def _find_date_problems(self, people_by_id, people_by_gedcom, families, family_children, events, progress_callback=None, cancel_event=None):
