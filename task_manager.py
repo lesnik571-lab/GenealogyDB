@@ -129,7 +129,7 @@ class TaskManager:
         self._closed = False
         self._dispatcher = threading.Thread(target=self._dispatch, name="task-manager", daemon=True)
         self._dispatcher.start()
-        self.root.after(self.poll_interval_ms, self._poll_events)
+        self._poll_after_id = self.root.after(self.poll_interval_ms, self._poll_events)
 
     def submit(
         self,
@@ -168,6 +168,14 @@ class TaskManager:
 
     def shutdown(self) -> None:
         self._closed = True
+        poll_after_id = self._poll_after_id
+        self._poll_after_id = None
+        cancel_after = getattr(self.root, "after_cancel", None)
+        if poll_after_id is not None and callable(cancel_after):
+            try:
+                cancel_after(poll_after_id)
+            except tk.TclError:
+                pass
         self._pending.put(None)
 
     @staticmethod
@@ -218,6 +226,7 @@ class TaskManager:
                 task.finished.set()
 
     def _poll_events(self) -> None:
+        self._poll_after_id = None
         while True:
             try:
                 event = self._events.get_nowait()
@@ -259,4 +268,4 @@ class TaskManager:
                     elapsed,
                 )
         if not self._closed:
-            self.root.after(self.poll_interval_ms, self._poll_events)
+            self._poll_after_id = self.root.after(self.poll_interval_ms, self._poll_events)
