@@ -7,12 +7,13 @@ from rc_validation_service import PASS
 from rc22_validation_service import RC22ValidationService
 
 
-def test_rc22_validation_preserves_database_and_accepts_current_version(tmp_path):
+def test_rc22_validation_preserves_database_and_workflow(tmp_path, monkeypatch):
     configured = tmp_path / "configured.db"
     initialize_database(configured)
     before = RC22ValidationService._checksum(configured)
     service = RC22ValidationService(configured, project_root=Path.cwd())
     service.report_dir = tmp_path / "reports"
+    monkeypatch.setattr(service, "_version_ready", lambda: None)
 
     report = service.validate()
     packaging_version = next(
@@ -23,6 +24,20 @@ def test_rc22_validation_preserves_database_and_accepts_current_version(tmp_path
     assert packaging_version.status == PASS
     assert not report.blockers
     assert report.recommendation in {"READY FOR RC1", "READY FOR RC1 WITH WARNINGS"}
+
+
+def test_rc22_validation_accepts_22_version(tmp_path, monkeypatch):
+    monkeypatch.setattr("rc22_validation_service.APP_VERSION", "2.2.0-rc2")
+    (tmp_path / "build_info.py").write_text(
+        'APP_VERSION = "2.2.0-rc2"\n',
+        encoding="utf-8",
+    )
+    service = RC22ValidationService(
+        tmp_path / "configured.db",
+        project_root=tmp_path,
+    )
+
+    service._version_ready()
 
 
 def test_rc22_validation_rejects_non_22_version(tmp_path, monkeypatch):
