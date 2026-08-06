@@ -1,0 +1,309 @@
+{
+  "checks": [
+    {
+      "category": "Database",
+      "check_id": "database.configured-availability",
+      "cleanup_result": "not applicable",
+      "description": "Configured database is available without creation",
+      "duration_seconds": 0.0,
+      "evidence": "C:\\Users\\lesni\\AppData\\Local\\GenealogyDB\\data\\genealogy.db",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Startup",
+      "check_id": "startup.headless-import",
+      "cleanup_result": "temporary root removed",
+      "description": "Viewer imports without creating another Tkinter window",
+      "duration_seconds": 5.3e-05,
+      "evidence": "tk._default_root remained unchanged",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Startup",
+      "check_id": "startup.no-background-task",
+      "cleanup_result": "temporary root removed",
+      "description": "Import leaves no background task active",
+      "duration_seconds": 1.9e-05,
+      "evidence": "new thread ids=[]",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Startup",
+      "check_id": "startup.viewer-safety",
+      "cleanup_result": "temporary root removed",
+      "description": "Viewer has no direct SQL or import-time message boxes",
+      "duration_seconds": 0.252169,
+      "evidence": "static AST scan",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Startup",
+      "check_id": "database.first-startup",
+      "cleanup_result": "temporary root removed",
+      "description": "First application database startup",
+      "duration_seconds": 4.4e-05,
+      "evidence": "temporary database path is absent",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Database",
+      "check_id": "database.initialize",
+      "cleanup_result": "temporary root removed",
+      "description": "New database schema initialization",
+      "duration_seconds": 0.221776,
+      "evidence": "completed",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Import",
+      "check_id": "import.preview",
+      "cleanup_result": "temporary root removed",
+      "description": "GEDCOM import preview",
+      "duration_seconds": 0.000153,
+      "evidence": "completed",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Import",
+      "check_id": "import.confirmed",
+      "cleanup_result": "temporary root removed",
+      "description": "Confirmed GEDCOM import",
+      "duration_seconds": 0.173093,
+      "evidence": "completed",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "CRUD",
+      "check_id": "crud.person-create-edit",
+      "cleanup_result": "temporary root removed",
+      "description": "Person creation and editing",
+      "duration_seconds": 0.009011,
+      "evidence": "completed",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Relationships",
+      "check_id": "relationships.family-parent-child",
+      "cleanup_result": "temporary root removed",
+      "description": "Family and parent-child relationship creation",
+      "duration_seconds": 0.01052,
+      "evidence": "completed",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Relationships",
+      "check_id": "relationships.partner",
+      "cleanup_result": "temporary root removed",
+      "description": "Spouse or partner relationship creation",
+      "duration_seconds": 0.012067,
+      "evidence": "completed",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "CRUD",
+      "check_id": "crud.event",
+      "cleanup_result": "temporary root removed",
+      "description": "Person event creation",
+      "duration_seconds": 0.010495,
+      "evidence": "completed",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Sources",
+      "check_id": "sources.citation",
+      "cleanup_result": "temporary root removed",
+      "description": "Source and citation attachment",
+      "duration_seconds": 0.030203,
+      "evidence": "completed",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Attachments",
+      "check_id": "attachments.metadata",
+      "cleanup_result": "temporary root removed",
+      "description": "Attachment metadata creation",
+      "duration_seconds": 0.009735,
+      "evidence": "completed",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Undo/Redo",
+      "check_id": "undo-redo.person",
+      "cleanup_result": "temporary root removed",
+      "description": "Undo and redo person change",
+      "duration_seconds": 0.040002,
+      "evidence": "completed",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Analysis",
+      "check_id": "analysis.validation",
+      "cleanup_result": "temporary root removed",
+      "description": "Validation scan",
+      "duration_seconds": 0.00252,
+      "evidence": "validation report produced",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Analysis",
+      "check_id": "analysis.intelligence",
+      "cleanup_result": "temporary root removed",
+      "description": "Intelligence analysis and disposition persistence",
+      "duration_seconds": 1.3e-05,
+      "evidence": "intelligence report and disposition sidecar produced",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Analysis",
+      "check_id": "analysis.cancellation",
+      "cleanup_result": "temporary root removed",
+      "description": "Cancelled headless analysis leaves no background task",
+      "duration_seconds": 0.000259,
+      "evidence": "cancellation raised without starting a background task",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Analysis",
+      "check_id": "analysis.source",
+      "cleanup_result": "temporary root removed",
+      "description": "Source analysis and ignore persistence",
+      "duration_seconds": 1.2e-05,
+      "evidence": "source analysis report and disposition sidecar produced",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Visualization",
+      "check_id": "visualization.timeline",
+      "cleanup_result": "temporary root removed",
+      "description": "Timeline preparation and view persistence",
+      "duration_seconds": 0.000177,
+      "evidence": "timeline model and view produced",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Visualization",
+      "check_id": "visualization.tree",
+      "cleanup_result": "temporary root removed",
+      "description": "Tree preparation and layout persistence",
+      "duration_seconds": 6.5e-05,
+      "evidence": "tree model and layout sidecar produced",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Visualization",
+      "check_id": "visualization.map",
+      "cleanup_result": "temporary root removed",
+      "description": "Map preparation and view persistence",
+      "duration_seconds": 0.000134,
+      "evidence": "map model and view produced",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Persistence",
+      "check_id": "persistence.research",
+      "cleanup_result": "temporary root removed",
+      "description": "Research workspace persistence",
+      "duration_seconds": 8.1e-05,
+      "evidence": "research workspace reloaded",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Persistence",
+      "check_id": "persistence.sidecars",
+      "cleanup_result": "temporary root removed",
+      "description": "Temporary UI, ignore, and performance sidecars",
+      "duration_seconds": 0.000311,
+      "evidence": "temporary sidecar JSON files produced",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Export",
+      "check_id": "export.formats",
+      "cleanup_result": "temporary root removed",
+      "description": "CSV, JSON, Markdown, HTML, PDF, SVG, and PNG generation",
+      "duration_seconds": 0.03235,
+      "evidence": "completed",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Backup/Restore",
+      "check_id": "backup.restore",
+      "cleanup_result": "temporary root removed",
+      "description": "Online backup and restore to separate temporary file",
+      "duration_seconds": 0.035796,
+      "evidence": "completed",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Startup",
+      "check_id": "startup.restart",
+      "cleanup_result": "temporary root removed",
+      "description": "Application restart simulation",
+      "duration_seconds": 0.000438,
+      "evidence": "completed",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Packaging",
+      "check_id": "packaging.resources",
+      "cleanup_result": "temporary root removed",
+      "description": "Build definitions, resources, icons, and release metadata",
+      "duration_seconds": 0.000109,
+      "evidence": "completed",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Packaging",
+      "check_id": "packaging.version",
+      "cleanup_result": "temporary root removed",
+      "description": "Version metadata is synchronized for the 2.2 RC1 release",
+      "duration_seconds": 0.000121,
+      "evidence": "completed",
+      "reason": "",
+      "status": "PASS"
+    },
+    {
+      "category": "Database",
+      "check_id": "database.configured-checksum",
+      "cleanup_result": "temporary root removed",
+      "description": "Configured database is unchanged",
+      "duration_seconds": 0.0,
+      "evidence": "before=3fffc9f17e6c2ff02efe31c5b6493e54f8d577a00f962514e0c0725c9a7285e2; after=3fffc9f17e6c2ff02efe31c5b6493e54f8d577a00f962514e0c0725c9a7285e2",
+      "reason": "",
+      "status": "PASS"
+    }
+  ],
+  "checksum_after": "3fffc9f17e6c2ff02efe31c5b6493e54f8d577a00f962514e0c0725c9a7285e2",
+  "checksum_before": "3fffc9f17e6c2ff02efe31c5b6493e54f8d577a00f962514e0c0725c9a7285e2",
+  "configured_database": "C:\\Users\\lesni\\AppData\\Local\\GenealogyDB\\data\\genealogy.db",
+  "recommendation": "READY FOR RC1",
+  "version": "2.2.0-rc1-dev"
+}
