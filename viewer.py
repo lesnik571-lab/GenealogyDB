@@ -2937,6 +2937,25 @@ class GenealogyViewer:
                 f"{item.get('left_name', '')} ({item.get('left_birth', '')}) ID={item.get('left_person_id', '')} ↔ "
                 f"{item.get('right_name', '')} ({item.get('right_birth', '')}) ID={item.get('right_person_id', '')}"
             )
+            score = item.get("match_score")
+            if score:
+                reason_labels = {
+                    "same name": "одинаковое имя",
+                    "same birth place": "одно место рождения",
+                    "same sex": "одинаковый пол",
+                }
+                reasons = []
+                for reason in item.get("match_reasons", []):
+                    if reason.startswith("same birth year:"):
+                        reasons.append("один год рождения: " + reason.rsplit(":", 1)[-1].strip())
+                    elif reason.startswith("same death year:"):
+                        reasons.append("один год смерти: " + reason.rsplit(":", 1)[-1].strip())
+                    else:
+                        reasons.append(reason_labels.get(reason, reason))
+                details = ", ".join(reasons)
+                text += f"\nСовпадение: {score}%"
+                if details:
+                    text += f" — {details}"
             tk.Label(row, text=text, justify="left", wraplength=700).grid(row=0, column=0, sticky="w")
 
             actions = tk.Frame(row)
