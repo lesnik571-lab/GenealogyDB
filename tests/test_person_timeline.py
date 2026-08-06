@@ -65,6 +65,15 @@ def test_timeline_approximate_gedcom_dates_sorting(tmp_path):
     repo.close()
 
 
+def test_timeline_parses_numeric_day_month_year_date():
+    parsed = PersonTimelineService._parse_gedcom_date("10.11.1957")
+
+    assert parsed.known
+    assert parsed.earliest is not None
+    assert parsed.earliest.isoformat() == "1957-11-10"
+    assert parsed.latest == parsed.earliest
+
+
 def test_timeline_unknown_dates_are_last(tmp_path):
     repo = _build_repo(tmp_path, "unknown.db")
     person_id = repo.create_person(
