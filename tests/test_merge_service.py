@@ -328,6 +328,8 @@ def test_no_dangling_person_or_event_citation_references_after_merge(tmp_path):
 def test_viewer_merge_button_conflict_preview_and_task_routing_are_wired():
     widget_source = inspect.getsource(GenealogyViewer._create_widgets)
     open_source = inspect.getsource(GenealogyViewer.open_merge_wizard)
+    pair_source = inspect.getsource(GenealogyViewer._open_merge_wizard_for_ids)
+    duplicate_source = inspect.getsource(GenealogyViewer._render_duplicate_items)
     dialog_source = inspect.getsource(GenealogyViewer._show_merge_wizard)
     scalar_source = inspect.getsource(GenealogyViewer._build_merge_scalar_tab)
     collections_source = inspect.getsource(GenealogyViewer._build_merge_collections_tab)
@@ -338,8 +340,11 @@ def test_viewer_merge_button_conflict_preview_and_task_routing_are_wired():
     assert 'text="Объединить людей"' in widget_source
     assert "command=self.open_merge_wizard" in widget_source
     assert "exclude_reference=primary_reference" in open_source
-    assert "_submit_repository_task" in open_source
-    assert "MergeService(repository).plan_merge" in open_source
+    assert "_open_merge_wizard_for_ids" in open_source
+    assert "_submit_repository_task" in pair_source
+    assert "MergeService(repository).plan_merge" in pair_source
+    assert 'text="Сравнить/объединить"' in duplicate_source
+    assert "_open_merge_wizard_for_ids" in duplicate_source
     assert '"Оставить основной"' in scalar_source
     assert '"Использовать дубликат"' in scalar_source
     assert '"Ввести вручную"' in scalar_source
