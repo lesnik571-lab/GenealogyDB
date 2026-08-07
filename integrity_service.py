@@ -417,6 +417,19 @@ class IntegrityCheckService:
                     self._issue("Ошибка", "Дата смерти раньше даты рождения.", [person_id])
                 )
 
+            if (
+                birth.year is not None
+                and death.year is not None
+                and death.year - birth.year > 120
+            ):
+                findings.append(
+                    self._issue(
+                        "Предупреждение",
+                        "Продолжительность жизни превышает 120 лет.",
+                        [person_id],
+                    )
+                )
+
             processed_steps += 1
             if progress_callback and (processed_steps % 500 == 0 or processed_steps == total_steps):
                 progress_callback(processed_steps, total_steps)
