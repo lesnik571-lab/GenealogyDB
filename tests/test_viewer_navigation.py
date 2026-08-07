@@ -257,3 +257,63 @@ def test_exclude_duplicate_pair_requires_confirmation(monkeypatch):
     viewer._exclude_duplicate_pair(4, 9)
     assert calls == [("mark", 4, 9), ("refresh",)]
 
+def test_integrity_report_filters_by_selected_severity(monkeypatch):
+    viewer = GenealogyViewer.__new__(GenealogyViewer)
+    viewer._integrity_severity_filter_var = type(
+        "FilterVar",
+        (),
+        {"get": lambda self: "Ошибки"},
+    )()
+
+    rendered_texts = []
+
+    class FakeWidget:
+        def __init__(self, *_args, **kwargs):
+            self.text = kwargs.get("text")
+            if self.text is not None:
+                rendered_texts.append(self.text)
+
+        def grid(self, *_args, **_kwargs):
+            return self
+
+        def grid_columnconfigure(self, *_args, **_kwargs):
+            return None
+
+    viewer._integrity_report_body = FakeWidget()
+    rendered_generic = []
+    rendered_duplicates = []
+    viewer._render_generic_integrity_items = lambda frame, items: rendered_generic.append(
+        (frame.text, [item["severity"] for item in items])
+    )
+    viewer._render_duplicate_items = lambda frame, items: rendered_duplicates.append(
+        (frame.text, [item["severity"] for item in items])
+    )
+
+    monkeypatch.setattr("viewer.tk.Label", FakeWidget)
+    monkeypatch.setattr("viewer.tk.LabelFrame", FakeWidget)
+
+    viewer._render_integrity_report(
+        {
+            "duplicates": [{"severity": "Информация"}],
+            "date_problems": [{"severity": "Ошибка", "message": "bad date"}],
+            "broken_relationships": [
+                {"severity": "Предупреждение", "message": "warning"}
+            ],
+            "empty_people": [{"severity": "Ошибка", "message": "empty"}],
+        }
+    )
+
+    assert (
+        "Найдено: 2 · Ошибок: 2 · Предупреждений: 0 · Информация: 0"
+        in rendered_texts
+    )
+    assert "Возможные дубликаты (0)" in rendered_texts
+    assert "Проблемы дат (1)" in rendered_texts
+    assert "Проблемы связей (0)" in rendered_texts
+    assert "Пустые записи (1)" in rendered_texts
+    assert rendered_duplicates == []
+    assert rendered_generic == [
+        ("Проблемы дат (1)", ["Ошибка"]),
+        ("Пустые записи (1)", ["Ошибка"]),
+    ]
+
