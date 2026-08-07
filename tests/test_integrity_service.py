@@ -334,3 +334,29 @@ def test_integrity_warns_about_future_person_event(tmp_path):
     )
     repo.close()
 
+def test_integrity_warns_about_lifespan_over_120_years(tmp_path):
+    repo = _build_repo(tmp_path, "long-lifespan.db")
+    person_id = repo.create_person({
+        "gedcom_id": "I1",
+        "first_name": "Long",
+        "last_name": "Life",
+        "sex": "",
+        "birth_date": "1800",
+        "birth_place": "",
+        "death_date": "1921",
+        "death_place": "",
+        "occupation": "",
+        "note": "",
+    })
+
+    service = IntegrityCheckService(repo, data_dir=tmp_path / "data")
+    report = service.run_checks()
+
+    assert any(
+        item["severity"] == "Предупреждение"
+        and item["message"] == "Продолжительность жизни превышает 120 лет."
+        and item["person_ids"] == [person_id]
+        for item in report["date_problems"]
+    )
+    repo.close()
+
