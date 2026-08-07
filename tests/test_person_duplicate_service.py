@@ -73,6 +73,25 @@ def test_same_name_without_supporting_birth_data_stays_below_default_threshold()
     assert PersonDuplicateService(repository).find_candidates() == ()
 
 
+def test_adjacent_birth_years_with_same_place_are_duplicate_candidates():
+    repository = StubPersonRepository(
+        [
+            person(1, "Boris", "Lesnik", birth_date="1900", birth_place="Moscow"),
+            person(2, "Борис", "Лесник", birth_date="1901", birth_place="Moscow"),
+        ]
+    )
+
+    candidates = PersonDuplicateService(repository).find_candidates()
+
+    assert len(candidates) == 1
+    assert candidates[0].score == 85
+    assert candidates[0].reasons == (
+        "same name",
+        "birth years differ by 1: 1900/1901",
+        "same birth place",
+    )
+
+
 def test_different_names_are_not_duplicate_candidates():
     repository = StubPersonRepository(
         [
