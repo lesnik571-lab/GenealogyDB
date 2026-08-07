@@ -50,6 +50,18 @@ def test_integrity_duplicates_are_ranked_by_match_confidence(tmp_path):
     repo.close()
 
 
+def test_integrity_ignores_low_confidence_same_name_only(tmp_path):
+    repo = _build_repo(tmp_path, "low-confidence-duplicate.db")
+    repo.create_person({"gedcom_id": "I1", "first_name": "Anna", "last_name": "Levi", "sex": "", "birth_date": "", "birth_place": "", "death_date": "", "death_place": "", "occupation": "", "note": ""})
+    repo.create_person({"gedcom_id": "I2", "first_name": "Anna", "last_name": "Levi", "sex": "", "birth_date": "", "birth_place": "", "death_date": "", "death_place": "", "occupation": "", "note": ""})
+
+    service = IntegrityCheckService(repo, data_dir=tmp_path / "data")
+    report = service.run_checks()
+
+    assert report["duplicates"] == []
+    repo.close()
+
+
 def test_integrity_contradictory_dates(tmp_path):
     repo = _build_repo(tmp_path, "dates.db")
 
