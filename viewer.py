@@ -2988,6 +2988,13 @@ class GenealogyViewer:
             ).pack(side="left", padx=(6, 0))
 
     def _exclude_duplicate_pair(self, left_person_id, right_person_id):
+        confirmed = messagebox.askyesno(
+            "Не дубликаты",
+            "Исключить эту пару из списка возможных дубликатов?",
+            parent=self.root,
+        )
+        if not confirmed:
+            return
         self.integrity_service.mark_not_duplicate(left_person_id, right_person_id)
         self._refresh_integrity_report()
 
