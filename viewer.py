@@ -2941,11 +2941,14 @@ class GenealogyViewer:
 
         row_index = 1
         for section_title, section_key in sections:
-            frame = tk.LabelFrame(self._integrity_report_body, text=section_title)
+            items = report.get(section_key, [])
+            frame = tk.LabelFrame(
+                self._integrity_report_body,
+                text=f"{section_title} ({len(items)})",
+            )
             frame.grid(row=row_index, column=0, sticky="ew", pady=(0, 10))
             frame.grid_columnconfigure(0, weight=1)
 
-            items = report.get(section_key, [])
             if not items:
                 tk.Label(frame, text="Нарушений не найдено.").grid(row=0, column=0, sticky="w", padx=8, pady=6)
             elif section_key == "duplicates":
