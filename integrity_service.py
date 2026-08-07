@@ -220,6 +220,8 @@ class IntegrityCheckService:
                 "right_name",
                 "left_birth",
                 "right_birth",
+                "match_score",
+                "match_reasons",
             ])
             for section_name, items in report.items():
                 for item in items:
@@ -234,6 +236,8 @@ class IntegrityCheckService:
                         item.get("right_name", ""),
                         item.get("left_birth", ""),
                         item.get("right_birth", ""),
+                        item.get("match_score", ""),
+                        "|".join(str(reason) for reason in item.get("match_reasons", [])),
                     ])
         return destination
 
