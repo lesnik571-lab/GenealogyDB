@@ -177,3 +177,18 @@ def test_integrity_csv_export(tmp_path):
     assert "section,severity,message" in content
     assert "duplicates" in content
     repo.close()
+
+
+def test_integrity_csv_export_includes_duplicate_confidence(tmp_path):
+    repo = _build_repo(tmp_path, "csv-confidence.db")
+    repo.create_person({"gedcom_id": "I1", "first_name": "Boris", "last_name": "Lesnik", "sex": "", "birth_date": "1900", "birth_place": "", "death_date": "", "death_place": "", "occupation": "", "note": ""})
+    repo.create_person({"gedcom_id": "I2", "first_name": "Борис", "last_name": "Лесник", "sex": "", "birth_date": "1900", "birth_place": "", "death_date": "", "death_place": "", "occupation": "", "note": ""})
+
+    service = IntegrityCheckService(repo, data_dir=tmp_path / "data")
+    report = service.run_checks()
+    output = service.export_report_csv(report, tmp_path / "report-confidence.csv")
+
+    content = output.read_text(encoding="utf-8")
+    assert "right_birth,match_score,match_reasons" in content
+    assert ",80,same name|same birth year: 1900" in content
+    repo.close()
