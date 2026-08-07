@@ -301,3 +301,36 @@ def test_integrity_reports_orphaned_person_event(tmp_path):
     )
     repo.close()
 
+def test_integrity_warns_about_future_person_event(tmp_path):
+    repo = _build_repo(tmp_path, "future-event.db")
+    person_id = repo.create_person({
+        "gedcom_id": "I1",
+        "first_name": "Future",
+        "last_name": "Event",
+        "sex": "",
+        "birth_date": "1 JAN 1900",
+        "birth_place": "",
+        "death_date": "",
+        "death_place": "",
+        "occupation": "",
+        "note": "",
+    })
+    repo.create_person_event({
+        "person_id": person_id,
+        "event_type": "custom",
+        "date": "1 JAN 2999",
+        "place": "",
+        "description": "",
+    })
+
+    service = IntegrityCheckService(repo, data_dir=tmp_path / "data")
+    report = service.run_checks()
+
+    assert any(
+        item["severity"] == "Предупреждение"
+        and item["message"] == "Дата события находится в будущем."
+        and item["person_ids"] == [person_id]
+        for item in report["date_problems"]
+    )
+    repo.close()
+
