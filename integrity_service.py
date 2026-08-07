@@ -304,6 +304,8 @@ class IntegrityCheckService:
                     assessment = PersonDuplicateService._compare(
                         left["raw"], right["raw"]
                     )
+                    if assessment is None or assessment.score < 80:
+                        continue
                     findings.append(
                         {
                             "severity": "Предупреждение",
