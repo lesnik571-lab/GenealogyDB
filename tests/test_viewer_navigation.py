@@ -317,3 +317,48 @@ def test_integrity_report_filters_by_selected_severity(monkeypatch):
         ("Пустые записи (1)", ["Ошибка"]),
     ]
 
+def test_integrity_csv_export_uses_selected_severity(monkeypatch):
+    viewer = GenealogyViewer.__new__(GenealogyViewer)
+    viewer._integrity_scan_running = False
+    viewer._integrity_severity_filter_var = type(
+        "FilterVar",
+        (),
+        {"get": lambda self: "Предупреждения"},
+    )()
+    viewer._integrity_last_report = {
+        "duplicates": [{"severity": "Информация", "left_person_id": 1}],
+        "date_problems": [
+            {"severity": "Ошибка", "message": "bad date"},
+            {"severity": "Предупреждение", "message": "check date"},
+        ],
+        "broken_relationships": [],
+        "empty_people": [],
+    }
+
+    exported = {}
+
+    class FakeIntegrityService:
+        def export_report_csv(self, report, destination):
+            exported["report"] = report
+            exported["destination"] = destination
+            return destination
+
+    viewer.integrity_service = FakeIntegrityService()
+    monkeypatch.setattr(
+        "viewer.filedialog.asksaveasfilename",
+        lambda **_kwargs: "filtered.csv",
+    )
+    monkeypatch.setattr("viewer.messagebox.showinfo", lambda *_args, **_kwargs: None)
+
+    viewer._export_integrity_report_csv()
+
+    assert exported["destination"] == "filtered.csv"
+    assert exported["report"] == {
+        "duplicates": [],
+        "date_problems": [
+            {"severity": "Предупреждение", "message": "check date"},
+        ],
+        "broken_relationships": [],
+        "empty_people": [],
+    }
+
