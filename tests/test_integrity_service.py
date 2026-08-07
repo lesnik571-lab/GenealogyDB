@@ -208,3 +208,22 @@ def test_integrity_excluded_duplicate_pair_can_be_restored(tmp_path):
     assert service.unmark_not_duplicate(9, 4) is False
     repo.close()
 
+def test_integrity_duplicate_exclusions_are_scoped_per_database(tmp_path):
+    data_dir = tmp_path / "data"
+    first_repo = _build_repo(tmp_path, "scope-first.db")
+    second_repo = _build_repo(tmp_path, "scope-second.db")
+    first_service = IntegrityCheckService(first_repo, data_dir=data_dir)
+    second_service = IntegrityCheckService(second_repo, data_dir=data_dir)
+
+    first_service.mark_not_duplicate(9, 4)
+
+    assert first_service.list_not_duplicate_pairs() == ((4, 9),)
+    assert second_service.list_not_duplicate_pairs() == ()
+
+    second_service.mark_not_duplicate(7, 3)
+
+    assert first_service.list_not_duplicate_pairs() == ((4, 9),)
+    assert second_service.list_not_duplicate_pairs() == ((3, 7),)
+    first_repo.close()
+    second_repo.close()
+
