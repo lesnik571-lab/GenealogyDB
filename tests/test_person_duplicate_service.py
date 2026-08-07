@@ -92,6 +92,33 @@ def test_adjacent_birth_years_with_same_place_are_duplicate_candidates():
     )
 
 
+def test_incompatible_birth_years_are_not_duplicate_candidates():
+    repository = StubPersonRepository(
+        [
+            person(
+                1,
+                "Boris",
+                "Lesnik",
+                sex="M",
+                birth_date="1900",
+                birth_place="Moscow",
+                death_date="1970",
+            ),
+            person(
+                2,
+                "Борис",
+                "Лесник",
+                sex="M",
+                birth_date="1902",
+                birth_place="Moscow",
+                death_date="1970",
+            ),
+        ]
+    )
+
+    assert PersonDuplicateService(repository).find_candidates(min_score=0) == ()
+
+
 def test_different_names_are_not_duplicate_candidates():
     repository = StubPersonRepository(
         [
