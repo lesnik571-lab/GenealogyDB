@@ -479,12 +479,15 @@ class IntegrityCheckService:
 
             birth = parsed_birth.get(person_id)
             death = parsed_death.get(person_id)
-            if event.get("event_type") == "marriage":
-                cmp_marriage_birth = self._compare_dates(event_date, birth)
-                if cmp_marriage_birth is not None and cmp_marriage_birth < 0:
-                    findings.append(
-                        self._issue("Ошибка", "Дата брака раньше даты рождения.", [person_id])
-                    )
+            cmp_event_birth = self._compare_dates(event_date, birth)
+            if cmp_event_birth is not None and cmp_event_birth < 0:
+                if event.get("event_type") == "marriage":
+                    message = "Дата брака раньше даты рождения."
+                else:
+                    message = "Событие датировано раньше рождения человека."
+                findings.append(
+                    self._issue("Ошибка", message, [person_id])
+                )
 
             cmp_event_death = self._compare_dates(event_date, death)
             if cmp_event_death is not None and cmp_event_death > 0:
