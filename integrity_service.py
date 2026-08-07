@@ -204,6 +204,27 @@ class IntegrityCheckService:
             exclusions.append(pair_key)
             self._save_exclusions(exclusions)
 
+    def list_not_duplicate_pairs(self):
+        pairs = []
+        for pair_key in self._load_exclusions():
+            try:
+                left_raw, right_raw = pair_key.split(":", 1)
+                left_id = int(left_raw)
+                right_id = int(right_raw)
+            except ValueError:
+                continue
+            pairs.append((min(left_id, right_id), max(left_id, right_id)))
+        return tuple(sorted(set(pairs)))
+
+    def unmark_not_duplicate(self, left_person_id, right_person_id):
+        pair_key = self._pair_key(left_person_id, right_person_id)
+        exclusions = self._load_exclusions()
+        remaining = [item for item in exclusions if item != pair_key]
+        if len(remaining) == len(exclusions):
+            return False
+        self._save_exclusions(remaining)
+        return True
+
     def export_report_csv(self, report, destination_path):
         destination = Path(destination_path).expanduser()
         destination.parent.mkdir(parents=True, exist_ok=True)
