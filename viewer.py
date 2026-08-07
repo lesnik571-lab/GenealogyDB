@@ -2919,7 +2919,27 @@ class GenealogyViewer:
             ("Пустые записи", "empty_people"),
         ]
 
-        row_index = 0
+        all_items = [
+            item
+            for _section_title, section_key in sections
+            for item in report.get(section_key, [])
+        ]
+        severity_counts = Counter(
+            self._severity_text(item.get("severity")) for item in all_items
+        )
+        summary_text = (
+            f"Найдено: {len(all_items)} · "
+            f"Ошибок: {severity_counts['Ошибка']} · "
+            f"Предупреждений: {severity_counts['Предупреждение']} · "
+            f"Информация: {severity_counts['Информация']}"
+        )
+        tk.Label(
+            self._integrity_report_body,
+            text=summary_text,
+            justify="left",
+        ).grid(row=0, column=0, sticky="w", padx=8, pady=(0, 10))
+
+        row_index = 1
         for section_title, section_key in sections:
             frame = tk.LabelFrame(self._integrity_report_body, text=section_title)
             frame.grid(row=row_index, column=0, sticky="ew", pady=(0, 10))
