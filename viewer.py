@@ -736,6 +736,7 @@ class GenealogyViewer:
         self._integrity_report_window = None
         self._integrity_report_body = None
         self._integrity_last_report = None
+        self._integrity_severity_filter_var = None
         self._integrity_scan_running = False
         self._integrity_scan_thread = None
         self._integrity_scan_queue = None
@@ -2723,6 +2724,7 @@ class GenealogyViewer:
         def close_window():
             self._integrity_report_body = None
             self._integrity_report_window = None
+            self._integrity_severity_filter_var = None
             dialog.destroy()
 
         dialog.protocol("WM_DELETE_WINDOW", close_window)
@@ -2732,6 +2734,22 @@ class GenealogyViewer:
         tk.Button(controls, text="Обновить проверку", command=self._refresh_integrity_report).pack(side="left")
         tk.Button(controls, text="Экспорт CSV", command=self._export_integrity_report_csv).pack(side="left", padx=(8, 0))
         tk.Button(controls, text="Исключённые пары", command=self._show_excluded_duplicate_pairs).pack(side="left", padx=(8, 0))
+
+        tk.Label(controls, text="Показывать:").pack(side="left", padx=(16, 4))
+        self._integrity_severity_filter_var = tk.StringVar(value="Все")
+        severity_filter = ttk.Combobox(
+            controls,
+            textvariable=self._integrity_severity_filter_var,
+            values=("Все", "Ошибки", "Предупреждения", "Информация"),
+            state="readonly",
+            width=16,
+        )
+        severity_filter.pack(side="left")
+        severity_filter.bind(
+            "<<ComboboxSelected>>",
+            lambda _event: self._rerender_integrity_report(),
+        )
+
         tk.Button(controls, text="Закрыть", command=close_window).pack(side="right")
 
         scroll_host = tk.Frame(dialog)
@@ -2749,6 +2767,16 @@ class GenealogyViewer:
         self._integrity_report_body = body
 
         self._refresh_integrity_report()
+
+    def _rerender_integrity_report(self):
+        if (
+            self._integrity_report_body is None
+            or self._integrity_last_report is None
+            or self._integrity_scan_running
+        ):
+            return
+        self._clear_integrity_report_body()
+        self._render_integrity_report(self._integrity_last_report)
 
     def _refresh_integrity_report(self):
         if self._integrity_report_body is None or self._integrity_scan_running:
@@ -2919,10 +2947,27 @@ class GenealogyViewer:
             ("Пустые записи", "empty_people"),
         ]
 
+        selected_severity = None
+        if self._integrity_severity_filter_var is not None:
+            selected_severity = {
+                "Ошибки": "Ошибка",
+                "Предупреждения": "Предупреждение",
+                "Информация": "Информация",
+            }.get(self._integrity_severity_filter_var.get())
+
+        items_by_section = {
+            section_key: [
+                item
+                for item in report.get(section_key, [])
+                if selected_severity is None
+                or self._severity_text(item.get("severity")) == selected_severity
+            ]
+            for _section_title, section_key in sections
+        }
         all_items = [
             item
             for _section_title, section_key in sections
-            for item in report.get(section_key, [])
+            for item in items_by_section[section_key]
         ]
         severity_counts = Counter(
             self._severity_text(item.get("severity")) for item in all_items
@@ -2941,7 +2986,7 @@ class GenealogyViewer:
 
         row_index = 1
         for section_title, section_key in sections:
-            items = report.get(section_key, [])
+            items = items_by_section[section_key]
             frame = tk.LabelFrame(
                 self._integrity_report_body,
                 text=f"{section_title} ({len(items)})",
