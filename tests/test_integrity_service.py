@@ -282,3 +282,22 @@ def test_integrity_flags_non_marriage_event_before_birth(tmp_path):
     )
     repo.close()
 
+def test_integrity_reports_orphaned_person_event(tmp_path):
+    repo = _build_repo(tmp_path, "orphan-event.db")
+    repo.conn.execute("PRAGMA foreign_keys = OFF")
+    repo.conn.execute(
+        "INSERT INTO person_events (person_id, event_type, event_date) VALUES (?, ?, ?)",
+        (999999, "custom", "1 JAN 1900"),
+    )
+    repo.conn.commit()
+    repo.conn.execute("PRAGMA foreign_keys = ON")
+
+    service = IntegrityCheckService(repo, data_dir=tmp_path / "data")
+    report = service.run_checks()
+
+    assert any(
+        item["message"] == "Событие ссылается на несуществующего человека."
+        for item in report["broken_relationships"]
+    )
+    repo.close()
+
