@@ -3051,9 +3051,36 @@ class GenealogyViewer:
                 listbox.delete(index)
                 self._refresh_integrity_report()
 
+        def restore_all():
+            if not pairs:
+                return
+            confirmed = messagebox.askyesno(
+                "Исключённые пары",
+                f"Вернуть все исключённые пары в список возможных дубликатов?\n\nКоличество: {len(pairs)}",
+                parent=dialog,
+            )
+            if not confirmed:
+                return
+
+            restored_count = 0
+            for left_id, right_id in list(pairs):
+                if self.integrity_service.unmark_not_duplicate(left_id, right_id):
+                    restored_count += 1
+
+            if restored_count:
+                pairs.clear()
+                listbox.delete(0, "end")
+                self._refresh_integrity_report()
+                messagebox.showinfo(
+                    "Исключённые пары",
+                    f"Возвращено пар: {restored_count}.",
+                    parent=dialog,
+                )
+
         buttons = tk.Frame(dialog)
         buttons.pack(fill="x", padx=12, pady=(0, 12))
         tk.Button(buttons, text="Вернуть выбранную", command=restore_selected).pack(side="left")
+        tk.Button(buttons, text="Вернуть все", command=restore_all).pack(side="left", padx=(8, 0))
         tk.Button(buttons, text="Закрыть", command=dialog.destroy).pack(side="right")
 
     def _render_generic_integrity_items(self, frame, items):
