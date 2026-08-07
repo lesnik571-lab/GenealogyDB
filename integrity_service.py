@@ -479,6 +479,15 @@ class IntegrityCheckService:
             event_date = self._parse_date(event.get("date", ""))
             findings.extend(self._date_parse_findings(person_id, "Дата события", event_date))
 
+            event_exact = event_date.to_date()
+            if event_date.year is not None and (
+                event_date.year > today.year
+                or (event_exact is not None and event_exact > today)
+            ):
+                findings.append(
+                    self._issue("Предупреждение", "Дата события находится в будущем.", [person_id])
+                )
+
             birth = parsed_birth.get(person_id)
             death = parsed_death.get(person_id)
             cmp_event_birth = self._compare_dates(event_date, birth)
