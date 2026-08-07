@@ -74,6 +74,9 @@ class PersonDuplicateService:
         if birth_year and birth_year == duplicate_birth_year:
             score += 20
             reasons.append(f"same birth year: {birth_year}")
+        elif birth_year and duplicate_birth_year and abs(birth_year - duplicate_birth_year) == 1:
+            score += 10
+            reasons.append(f"birth years differ by 1: {birth_year}/{duplicate_birth_year}")
 
         birth_place = cls._normalize_text(person.get("birth_place"))
         duplicate_birth_place = cls._normalize_text(duplicate.get("birth_place"))
