@@ -2731,6 +2731,7 @@ class GenealogyViewer:
         controls.pack(fill="x", padx=12, pady=(12, 8))
         tk.Button(controls, text="Обновить проверку", command=self._refresh_integrity_report).pack(side="left")
         tk.Button(controls, text="Экспорт CSV", command=self._export_integrity_report_csv).pack(side="left", padx=(8, 0))
+        tk.Button(controls, text="Исключённые пары", command=self._show_excluded_duplicate_pairs).pack(side="left", padx=(8, 0))
         tk.Button(controls, text="Закрыть", command=close_window).pack(side="right")
 
         scroll_host = tk.Frame(dialog)
@@ -2997,6 +2998,63 @@ class GenealogyViewer:
             return
         self.integrity_service.mark_not_duplicate(left_person_id, right_person_id)
         self._refresh_integrity_report()
+
+    def _show_excluded_duplicate_pairs(self):
+        pairs = list(self.integrity_service.list_not_duplicate_pairs())
+        parent = self._integrity_report_window or self.root
+        if not pairs:
+            messagebox.showinfo(
+                "Исключённые пары",
+                "Исключённых пар нет.",
+                parent=parent,
+            )
+            return
+
+        dialog = self._create_dialog()
+        dialog.title("Исключённые пары")
+        dialog.geometry("720x360")
+
+        tk.Label(
+            dialog,
+            text="Пары, ранее отмеченные как «Не дубликаты»:",
+        ).pack(anchor="w", padx=12, pady=(12, 6))
+
+        listbox = tk.Listbox(dialog)
+        listbox.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+
+        def person_text(person_id):
+            person = self.repository.get_person_record(person_id)
+            if not person:
+                return f"ID {person_id}"
+            name = self.format_name(person.get("last_name"), person.get("first_name"))
+            return f"{name or 'Без имени'} (ID {person_id})"
+
+        for left_id, right_id in pairs:
+            listbox.insert(
+                "end",
+                f"{person_text(left_id)} ↔ {person_text(right_id)}",
+            )
+
+        def restore_selected():
+            selection = listbox.curselection()
+            if not selection:
+                messagebox.showwarning(
+                    "Исключённые пары",
+                    "Выберите пару, которую нужно вернуть.",
+                    parent=dialog,
+                )
+                return
+            index = selection[0]
+            left_id, right_id = pairs[index]
+            if self.integrity_service.unmark_not_duplicate(left_id, right_id):
+                pairs.pop(index)
+                listbox.delete(index)
+                self._refresh_integrity_report()
+
+        buttons = tk.Frame(dialog)
+        buttons.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Button(buttons, text="Вернуть выбранную", command=restore_selected).pack(side="left")
+        tk.Button(buttons, text="Закрыть", command=dialog.destroy).pack(side="right")
 
     def _render_generic_integrity_items(self, frame, items):
         for index, item in enumerate(items):
