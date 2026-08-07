@@ -3104,7 +3104,19 @@ class GenealogyViewer:
         tk.Button(buttons, text="Закрыть", command=dialog.destroy).pack(side="right")
 
     def _render_generic_integrity_items(self, frame, items):
-        for index, item in enumerate(items):
+        severity_order = {
+            "Ошибка": 0,
+            "Предупреждение": 1,
+            "Информация": 2,
+        }
+        ordered_items = sorted(
+            items,
+            key=lambda item: severity_order.get(
+                self._severity_text(item.get("severity")),
+                3,
+            ),
+        )
+        for index, item in enumerate(ordered_items):
             row = tk.Frame(frame)
             row.grid(row=index, column=0, sticky="ew", padx=8, pady=6)
             row.grid_columnconfigure(0, weight=1)
