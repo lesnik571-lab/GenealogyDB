@@ -192,3 +192,19 @@ def test_integrity_csv_export_includes_duplicate_confidence(tmp_path):
     assert "right_birth,match_score,match_reasons" in content
     assert ",80,same name|same birth year: 1900" in content
     repo.close()
+
+
+def test_integrity_excluded_duplicate_pair_can_be_restored(tmp_path):
+    repo = _build_repo(tmp_path, "duplicate-exclusions.db")
+    service = IntegrityCheckService(repo, data_dir=tmp_path / "data")
+
+    assert service.list_not_duplicate_pairs() == ()
+
+    service.mark_not_duplicate(9, 4)
+
+    assert service.list_not_duplicate_pairs() == ((4, 9),)
+    assert service.unmark_not_duplicate(4, 9) is True
+    assert service.list_not_duplicate_pairs() == ()
+    assert service.unmark_not_duplicate(9, 4) is False
+    repo.close()
+
