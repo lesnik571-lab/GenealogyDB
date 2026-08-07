@@ -2930,7 +2930,8 @@ class GenealogyViewer:
         if not destination:
             return
         try:
-            saved_path = self.integrity_service.export_report_csv(self._integrity_last_report, destination)
+            report = self._filtered_integrity_report(self._integrity_last_report)
+            saved_path = self.integrity_service.export_report_csv(report, destination)
             messagebox.showinfo("Экспорт", f"Отчет сохранен: {saved_path}")
         except OSError as error:
             messagebox.showerror("Ошибка", str(error))
@@ -2938,6 +2939,27 @@ class GenealogyViewer:
     @staticmethod
     def _severity_text(severity):
         return severity or "Информация"
+
+    def _filtered_integrity_report(self, report):
+        selected_severity = None
+        if self._integrity_severity_filter_var is not None:
+            selected_severity = {
+                "Ошибки": "Ошибка",
+                "Предупреждения": "Предупреждение",
+                "Информация": "Информация",
+            }.get(self._integrity_severity_filter_var.get())
+
+        if selected_severity is None:
+            return report
+
+        return {
+            section_key: [
+                item
+                for item in items
+                if self._severity_text(item.get("severity")) == selected_severity
+            ]
+            for section_key, items in report.items()
+        }
 
     def _render_integrity_report(self, report):
         sections = [
@@ -2947,21 +2969,9 @@ class GenealogyViewer:
             ("Пустые записи", "empty_people"),
         ]
 
-        selected_severity = None
-        if self._integrity_severity_filter_var is not None:
-            selected_severity = {
-                "Ошибки": "Ошибка",
-                "Предупреждения": "Предупреждение",
-                "Информация": "Информация",
-            }.get(self._integrity_severity_filter_var.get())
-
+        visible_report = self._filtered_integrity_report(report)
         items_by_section = {
-            section_key: [
-                item
-                for item in report.get(section_key, [])
-                if selected_severity is None
-                or self._severity_text(item.get("severity")) == selected_severity
-            ]
+            section_key: visible_report.get(section_key, [])
             for _section_title, section_key in sections
         }
         all_items = [
