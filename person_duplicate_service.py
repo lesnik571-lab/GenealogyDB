@@ -71,6 +71,8 @@ class PersonDuplicateService:
 
         birth_year = cls._year(person.get("birth_date"))
         duplicate_birth_year = cls._year(duplicate.get("birth_date"))
+        if birth_year and duplicate_birth_year and abs(birth_year - duplicate_birth_year) > 1:
+            return None
         if birth_year and birth_year == duplicate_birth_year:
             score += 20
             reasons.append(f"same birth year: {birth_year}")
