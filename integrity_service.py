@@ -171,9 +171,11 @@ class IntegrityCheckService:
             completed_weight += stage_weights["Проверка дат"]
 
             report["broken_relationships"] = self._find_broken_relationships(
+                people_by_id,
                 people_by_gedcom,
                 families,
                 family_children,
+                events,
                 progress_callback=lambda processed, total: stage_progress("Проверка связей", processed, total),
                 cancel_event=cancel_event,
             )
@@ -504,11 +506,11 @@ class IntegrityCheckService:
 
         return findings
 
-    def _find_broken_relationships(self, people_by_gedcom, families, family_children, progress_callback=None, cancel_event=None):
+    def _find_broken_relationships(self, people_by_id, people_by_gedcom, families, family_children, events, progress_callback=None, cancel_event=None):
         findings = []
         family_by_gedcom = {family.get("gedcom_id", ""): family for family in families if family.get("gedcom_id")}
 
-        total_steps = len(family_children) + len(families)
+        total_steps = len(family_children) + len(families) + len(events)
         processed_steps = 0
         if progress_callback:
             progress_callback(0, total_steps)
@@ -561,6 +563,17 @@ class IntegrityCheckService:
                 if child_gid and child_gid in {husband_id, wife_id}:
                     person = people_by_gedcom.get(child_gid)
                     findings.append(self._issue("Ошибка", "Человек связан сам с собой как родитель/ребенок.", [person["id"]] if person else []))
+
+            processed_steps += 1
+            if progress_callback and (processed_steps % 500 == 0 or processed_steps == total_steps):
+                progress_callback(processed_steps, total_steps)
+
+        for event in events:
+            self._raise_if_cancelled(cancel_event)
+            if event.get("person_id") not in people_by_id:
+                findings.append(
+                    self._issue("Ошибка", "Событие ссылается на несуществующего человека.", [])
+                )
 
             processed_steps += 1
             if progress_callback and (processed_steps % 500 == 0 or processed_steps == total_steps):
