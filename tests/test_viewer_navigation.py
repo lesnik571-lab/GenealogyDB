@@ -236,3 +236,24 @@ def test_visible_navigation_markers_refresh_without_new_search():
     viewer.home_person_service.person_id = None
     viewer._refresh_visible_person_navigation_markers()
     assert viewer.tree.item("row-7")["values"][1] == "Jane Smith"
+
+def test_exclude_duplicate_pair_requires_confirmation(monkeypatch):
+    viewer = GenealogyViewer.__new__(GenealogyViewer)
+    viewer.root = object()
+    calls = []
+
+    class FakeIntegrityService:
+        def mark_not_duplicate(self, left_person_id, right_person_id):
+            calls.append(("mark", left_person_id, right_person_id))
+
+    viewer.integrity_service = FakeIntegrityService()
+    viewer._refresh_integrity_report = lambda: calls.append(("refresh",))
+
+    monkeypatch.setattr("viewer.messagebox.askyesno", lambda *args, **kwargs: False)
+    viewer._exclude_duplicate_pair(4, 9)
+    assert calls == []
+
+    monkeypatch.setattr("viewer.messagebox.askyesno", lambda *args, **kwargs: True)
+    viewer._exclude_duplicate_pair(4, 9)
+    assert calls == [("mark", 4, 9), ("refresh",)]
+
