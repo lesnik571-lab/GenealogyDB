@@ -362,6 +362,7 @@ class IntegrityCheckService:
 
     def _find_date_problems(self, people_by_id, people_by_gedcom, families, family_children, events, progress_callback=None, cancel_event=None):
         findings = []
+        today = date.today()
 
         parsed_birth = {}
         parsed_death = {}
@@ -389,6 +390,24 @@ class IntegrityCheckService:
 
             findings.extend(self._date_parse_findings(person_id, "Дата рождения", birth))
             findings.extend(self._date_parse_findings(person_id, "Дата смерти", death))
+
+            birth_exact = birth.to_date()
+            if birth.year is not None and (
+                birth.year > today.year
+                or (birth_exact is not None and birth_exact > today)
+            ):
+                findings.append(
+                    self._issue("Ошибка", "Дата рождения находится в будущем.", [person_id])
+                )
+
+            death_exact = death.to_date()
+            if death.year is not None and (
+                death.year > today.year
+                or (death_exact is not None and death_exact > today)
+            ):
+                findings.append(
+                    self._issue("Ошибка", "Дата смерти находится в будущем.", [person_id])
+                )
 
             contradiction = self._compare_dates(death, birth)
             if contradiction is not None and contradiction < 0:
