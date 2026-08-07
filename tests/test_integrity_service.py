@@ -250,3 +250,35 @@ def test_integrity_flags_future_birth_and_death_dates(tmp_path):
     assert "Дата смерти находится в будущем." in messages
     repo.close()
 
+def test_integrity_flags_non_marriage_event_before_birth(tmp_path):
+    repo = _build_repo(tmp_path, "event-before-birth.db")
+    person_id = repo.create_person({
+        "gedcom_id": "I1",
+        "first_name": "Early",
+        "last_name": "Event",
+        "sex": "",
+        "birth_date": "1 JAN 1900",
+        "birth_place": "",
+        "death_date": "",
+        "death_place": "",
+        "occupation": "",
+        "note": "",
+    })
+    repo.create_person_event({
+        "person_id": person_id,
+        "event_type": "custom",
+        "date": "1 JAN 1890",
+        "place": "",
+        "description": "",
+    })
+
+    service = IntegrityCheckService(repo, data_dir=tmp_path / "data")
+    report = service.run_checks()
+
+    assert any(
+        item["message"] == "Событие датировано раньше рождения человека."
+        and item["person_ids"] == [person_id]
+        for item in report["date_problems"]
+    )
+    repo.close()
+
