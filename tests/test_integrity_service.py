@@ -227,3 +227,26 @@ def test_integrity_duplicate_exclusions_are_scoped_per_database(tmp_path):
     first_repo.close()
     second_repo.close()
 
+def test_integrity_flags_future_birth_and_death_dates(tmp_path):
+    repo = _build_repo(tmp_path, "future-dates.db")
+    repo.create_person({
+        "gedcom_id": "I1",
+        "first_name": "Future",
+        "last_name": "Date",
+        "sex": "",
+        "birth_date": "2999",
+        "birth_place": "",
+        "death_date": "3000",
+        "death_place": "",
+        "occupation": "",
+        "note": "",
+    })
+
+    service = IntegrityCheckService(repo, data_dir=tmp_path / "data")
+    report = service.run_checks()
+    messages = {item["message"] for item in report["date_problems"]}
+
+    assert "Дата рождения находится в будущем." in messages
+    assert "Дата смерти находится в будущем." in messages
+    repo.close()
+
