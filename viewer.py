@@ -2958,6 +2958,8 @@ class GenealogyViewer:
                 for reason in item.get("match_reasons", []):
                     if reason.startswith("same birth year:"):
                         reasons.append("один год рождения: " + reason.rsplit(":", 1)[-1].strip())
+                    elif reason.startswith("birth years differ by 1:"):
+                        reasons.append("годы рождения отличаются на 1: " + reason.rsplit(":", 1)[-1].strip())
                     elif reason.startswith("same death year:"):
                         reasons.append("один год смерти: " + reason.rsplit(":", 1)[-1].strip())
                     else:
