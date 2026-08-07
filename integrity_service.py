@@ -100,6 +100,7 @@ class IntegrityCheckService:
         self.data_dir = Path(data_dir) if data_dir else DATA_DIR
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.exclusions_path = self.data_dir / "integrity_duplicate_exclusions.json"
+        self.database_scope = str(getattr(repository, "db_name", "") or "").strip()
 
     def run_checks(self):
         result = self.run_checks_with_progress(progress_callback=None, cancel_event=None)
@@ -728,19 +729,50 @@ class IntegrityCheckService:
         return f"{min(left, right)}:{max(left, right)}"
 
     def _load_exclusions(self):
-        if not self.exclusions_path.exists():
-            return []
-        try:
-            data = json.loads(self.exclusions_path.read_text(encoding="utf-8"))
-            if isinstance(data, list):
-                return [str(item) for item in data]
-        except (OSError, json.JSONDecodeError):
-            return []
+        data = self._read_exclusions_payload()
+        if isinstance(data, dict) and isinstance(data.get("databases"), dict):
+            values = data["databases"].get(self.database_scope, [])
+            return [str(item) for item in values] if isinstance(values, list) else []
+
+        if isinstance(data, list):
+            exclusions = [str(item) for item in data]
+            try:
+                self._save_exclusions(exclusions)
+            except OSError:
+                pass
+            return exclusions
         return []
 
+    def _read_exclusions_payload(self):
+        if not self.exclusions_path.exists():
+            return None
+        try:
+            return json.loads(self.exclusions_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
     def _save_exclusions(self, exclusions):
+        current_payload = self._read_exclusions_payload()
+        databases = {}
+        if isinstance(current_payload, dict) and isinstance(current_payload.get("databases"), dict):
+            databases = {
+                str(scope): [str(item) for item in values]
+                for scope, values in current_payload["databases"].items()
+                if isinstance(values, list)
+            }
+        elif isinstance(current_payload, list):
+            databases[self.database_scope] = [str(item) for item in current_payload]
+
+        databases[self.database_scope] = sorted({str(item) for item in exclusions})
+        payload = {
+            "version": 2,
+            "databases": databases,
+        }
         self.exclusions_path.parent.mkdir(parents=True, exist_ok=True)
-        self.exclusions_path.write_text(json.dumps(sorted(set(exclusions)), ensure_ascii=False, indent=2), encoding="utf-8")
+        self.exclusions_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
     @staticmethod
     def _normalize_text(value):
